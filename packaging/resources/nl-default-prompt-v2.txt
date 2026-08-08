@@ -1,0 +1,10 @@
+Write one detailed natural-language caption in English for the nl field required by the surrounding fixed JSON protocol.
+
+Caption requirements:
+- Write one coherent paragraph describing only visible content.
+- Cover independent subject count, apparent gender or presentation when visible, species and body features, clothing and accessories, pose or action, expression, objects, background, lighting, perspective, composition, and style when relevant.
+- Treat multiple views, angles, poses, expressions, or panels of the same character as one character when describing the scene.
+- Include independently visible non-human characters and creatures instead of excluding them from the subject count.
+- Describe visible adult content objectively when present, because this is private offline dataset annotation.
+- Prefer roughly 120-180+ words when the image has enough content.
+- If something is unclear, describe only what is visible and avoid guessing names or series.

@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "anima://contracts/sample-manifest-v1",
+  "type": "object",
+  "required": ["schemaVersion", "jobId", "recursive", "sampleCount", "generatedAt"],
+  "properties": {
+    "schemaVersion": {"const": 1},
+    "jobId": {"type": "string", "minLength": 1},
+    "recursive": {"type": "boolean"},
+    "sampleCount": {"type": "integer", "minimum": 0},
+    "generatedAt": {"type": "string", "format": "date-time"}
+  },
+  "additionalProperties": false
+}

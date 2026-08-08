@@ -1,0 +1,32 @@
+__pycache__/
+*.pyc
+frontend/node_modules/
+frontend/dist/
+frontend/.playwright-browsers/
+frontend/playwright-report/
+frontend/test-results/
+packaging/wheelhouse/**/*.partial
+
+# Local runtimes, toolchains, assembled trees, and test output.
+.runtime-build/
+.toolchains/
+.playwright-cli/
+.claude/
+output/
+packaging/wheelhouse/
+
+# Local model/resource payloads and generated state are not source releases.
+resource-library/
+*.db
+*.sqlite3
+*.log
+
+# Work notes and plans. The repository README is the only Markdown file kept.
+*.md
+!README.md
+
+# Local credentials and private configuration.
+.env
+.env.*
+*.key
+*.pem

@@ -1,0 +1,411 @@
+from __future__ import annotations
+
+import json
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "core" / "src"))
+
+from anima_core.contracts import JobConfig, SampleRunState, pipeline_module_ids
+from anima_core.db import StateDatabase
+from anima_core.path_safety import windows_key
+from anima_core.scheduler import BoundedScheduler, SchedulerError
+
+
+def _job(
+    job_id: str,
+    root: Path,
+    *,
+    nl_concurrency: int | None = None,
+    dropout_batch_size: int | None = None,
+    schema_version: int = 2,
+) -> dict[str, object]:
+    config = JobConfig(
+        profile="e621",
+        workMode="in_place",
+        overwriteMode="incremental",
+        sourceRoot=str(root),
+        countReview=None if schema_version == 2 else {"enabled": True, "protocolVersion": "count-review-v1"},
+        schemaVersion=schema_version,
+    )
+    if schema_version == 2:
+        config.nl["promptVersion"] = "nl-default-prompt-v1"
+    if nl_concurrency is not None:
+        config.nl["apiPolicy"] = {"concurrency": nl_concurrency}
+    if dropout_batch_size is not None:
+        config.dropout["quality"]["batchSize"] = dropout_batch_size
+    return {
+        "job_id": job_id, "config_schema_version": schema_version, "config_json": json.dumps(config.to_dict()),
+        "config_hash": config.config_hash, "profile": "e621", "work_mode": "in_place", "overwrite_mode": "incremental",
+        "source_root": str(root), "output_root": None, "dataset_root": str(root), "dataset_root_key": windows_key(root),
+        "manifest_schema_version": 1, "recursive": 0, "sample_count": 0, "manifest_generated_at": None,
+        "status": "ready", "current_module_id": None, "last_event_id": 0, "pinned": 0,
+        "api_budget_extra": 0, "api_budget_revision": 0, "overlay_root": None, "commit_journal_path": None,
+        "resume_status": None, "created_at": "2026-07-23T00:00:00Z", "started_at": None,
+        "cancel_requested_at": None, "finished_at": None,
+    }
+
+
+def _samples(count: int) -> list[dict[str, object]]:
+    return [
+        {
+            "sample_id": index, "relative_image_path": f"{index}.png", "annotation_key": str(index), "source": "e621",
+            "in_processing_scope": True, "image_format": "png", "image_frame_count": 1,
+            "original_txt_state": "missing_or_blank", "original_json_state": "missing_or_blank",
+        }
+        for index in range(1, count + 1)
+    ]
+
+
+class SchedulerTests(unittest.TestCase):
+    def _database(
+        self,
+        root: Path,
+        count: int = 70,
+        *,
+        nl_concurrency: int | None = None,
+        dropout_batch_size: int | None = None,
+        schema_version: int = 2,
+    ) -> StateDatabase:
+        database = StateDatabase.open(root / "state.db")
+        database.insert_job(_job(
+            "job-1",
+            root,
+            nl_concurrency=nl_concurrency,
+            dropout_batch_size=dropout_batch_size,
+            schema_version=schema_version,
+        ))
+        database.insert_samples("job-1", _samples(count))
+        return database
+
+    @staticmethod
+    def _prime_predecessors(database: StateDatabase, target: str) -> None:
+        order = ("caption", "classify", "replace", "nl", "dropout", "export")
+        predecessors = order[:order.index(target)]
+        for module_id in predecessors:
+            database.initialize_module_summary("job-1", module_id, total=0, status="completed")
+        if predecessors:
+            current = predecessors[-1]
+            database.connection.execute(
+                "UPDATE sample_state SET current_module_id=?,status='completed' WHERE job_id='job-1'",
+                (current,),
+            )
+            database.set_job_status("job-1", "running", current_module_id=current)
+
+    def test_caption_is_bounded(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            database = self._database(Path(temporary))
+            try:
+                scheduler = BoundedScheduler(database, lease_id_factory=(lambda values=iter(f"lease-{index}" for index in range(1, 200)): next(values)))
+                self.assertEqual("running", scheduler.start_module("job-1", "caption", enabled=True, profile="e621"))
+                config_hash = database.get_job("job-1")["config_hash"]
+                leases = scheduler.claim_batch("job-1", "caption", "worker-1", config_hash)
+                self.assertEqual(64, len(leases))
+                self.assertEqual(64, len({lease.sampleId for lease in leases}))
+                self.assertEqual([], scheduler.claim_batch("job-1", "caption", "worker-1", config_hash))
+                with self.assertRaises(SchedulerError):
+                    scheduler.claim_batch("job-1", "caption", "worker-2", config_hash)
+                with self.assertRaises(SchedulerError):
+                    scheduler.claim_batch("job-1", "caption", "worker-1", config_hash, limit=65)
+                self.assertEqual(64, scheduler.heartbeat("job-1", "worker-1", [lease.leaseId for lease in leases if lease.leaseId]))
+            finally:
+                database.close()
+
+    def test_module_order_profile_and_dropout_are_enforced(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            database = self._database(Path(temporary), count=1)
+            try:
+                scheduler = BoundedScheduler(database)
+                with self.assertRaises(SchedulerError):
+                    scheduler.start_module("job-1", "classify", enabled=True, profile="e621")
+                with self.assertRaises(SchedulerError):
+                    scheduler.start_module("job-1", "caption", enabled=True, profile="danbooru")
+                self.assertEqual("skipped", scheduler.start_module("job-1", "caption", enabled=False, profile="e621"))
+                self.assertEqual("skipped", scheduler.start_module("job-1", "classify", enabled=False, profile="e621"))
+                self.assertEqual("skipped", scheduler.start_module("job-1", "replace", enabled=False, profile="e621"))
+                self.assertEqual("skipped", scheduler.start_module("job-1", "nl", enabled=False, profile="e621"))
+                self.assertEqual("running", scheduler.start_module("job-1", "dropout", enabled=True, profile="e621"))
+                lease = scheduler.claim_batch(
+                    "job-1", "dropout", "policy-worker", database.get_job("job-1")["config_hash"]
+                )
+                self.assertEqual(1, len(lease))
+            finally:
+                database.close()
+
+    def test_disabled_nl_records_v3_not_requested_observations_in_pages(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            database = self._database(Path(temporary), count=1001, schema_version=3)
+            try:
+                scheduler = BoundedScheduler(database)
+                self.assertEqual("skipped", scheduler.start_module("job-1", "caption", enabled=False, profile="e621"))
+                self.assertEqual("skipped", scheduler.start_module("job-1", "classify", enabled=False, profile="e621"))
+                self.assertEqual("skipped", scheduler.start_module("job-1", "replace", enabled=False, profile="e621"))
+                self.assertEqual("skipped", scheduler.start_module("job-1", "nl", enabled=False, profile="e621"))
+                rows = database.connection.execute(
+                    "SELECT status,not_requested_reason FROM count_observations WHERE job_id='job-1' ORDER BY sample_id"
+                ).fetchall()
+                self.assertEqual(1001, len(rows))
+                self.assertEqual({("not_requested", "nl_disabled")}, {(row["status"], row["not_requested_reason"]) for row in rows})
+            finally:
+                database.close()
+
+    def test_dropout_queue_uses_frozen_batch_size_and_one_worker(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            database = self._database(Path(temporary), count=20, dropout_batch_size=6)
+            try:
+                self._prime_predecessors(database, "dropout")
+                lease_ids = iter(f"policy-{index}" for index in range(1, 40))
+                scheduler = BoundedScheduler(database, lease_id_factory=lease_ids.__next__)
+                self.assertEqual("running", scheduler.start_module("job-1", "dropout", enabled=True, profile="e621"))
+                config_hash = database.get_job("job-1")["config_hash"]
+                self.assertEqual(6, len(scheduler.claim_batch("job-1", "dropout", "worker-1", config_hash)))
+                self.assertEqual([], scheduler.claim_batch("job-1", "dropout", "worker-1", config_hash))
+                with self.assertRaises(SchedulerError):
+                    scheduler.claim_batch("job-1", "dropout", "worker-2", config_hash)
+                with self.assertRaises(SchedulerError):
+                    scheduler.claim_batch("job-1", "dropout", "worker-1", config_hash, limit=7)
+            finally:
+                database.close()
+
+    def test_two_page_modules_enforce_total_resident_capacity(self) -> None:
+        for module_id in ("classify", "replace", "export"):
+            with self.subTest(module_id=module_id), tempfile.TemporaryDirectory() as temporary:
+                database = self._database(Path(temporary), count=1_101)
+                try:
+                    self._prime_predecessors(database, module_id)
+                    lease_ids = iter(f"{module_id}-{index}" for index in range(1, 1_500))
+                    scheduler = BoundedScheduler(database, lease_id_factory=lease_ids.__next__)
+                    self.assertEqual("running", scheduler.start_module("job-1", module_id, enabled=True, profile="e621"))
+                    config_hash = database.get_job("job-1")["config_hash"]
+                    first = scheduler.claim_batch("job-1", module_id, "worker-1", config_hash)
+                    second = scheduler.claim_batch("job-1", module_id, "worker-2", config_hash)
+                    third = scheduler.claim_batch("job-1", module_id, "worker-3", config_hash)
+                    self.assertEqual((500, 500, 0), (len(first), len(second), len(third)))
+                finally:
+                    database.close()
+
+    def test_nl_queue_uses_frozen_concurrency(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            database = self._database(Path(temporary), count=40, nl_concurrency=3)
+            try:
+                self._prime_predecessors(database, "nl")
+                lease_ids = iter(f"nl-{index}" for index in range(1, 100))
+                scheduler = BoundedScheduler(database, lease_id_factory=lease_ids.__next__)
+                scheduler.start_module("job-1", "nl", enabled=True, profile="e621")
+                config_hash = database.get_job("job-1")["config_hash"]
+                self.assertEqual(6, len(scheduler.claim_batch("job-1", "nl", "worker-1", config_hash)))
+                self.assertEqual([], scheduler.claim_batch("job-1", "nl", "worker-2", config_hash))
+            finally:
+                database.close()
+
+    def test_worker_restart_budget_and_cancellation_barrier(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            database = self._database(Path(temporary), count=1)
+            try:
+                scheduler = BoundedScheduler(database)
+                scheduler.start_module("job-1", "caption", enabled=True, profile="e621")
+                self.assertTrue(scheduler.worker_exited("job-1", "caption", abnormal=True))
+                self.assertTrue(scheduler.worker_exited("job-1", "caption", abnormal=True))
+                self.assertFalse(scheduler.worker_exited("job-1", "caption", abnormal=True))
+                self.assertEqual("failed", database.get_job("job-1")["status"])
+                database.set_job_status("job-1", "running", current_module_id="caption")
+                scheduler.begin_cancellation("job-1")
+                self.assertEqual(
+                    [],
+                    scheduler.claim_batch(
+                        "job-1", "caption", "worker-after-cancel", database.get_job("job-1")["config_hash"]
+                    ),
+                )
+                scheduler.settle_cancellation("job-1")
+                self.assertEqual("cancelled_recoverable", database.get_job("job-1")["status"])
+            finally:
+                database.close()
+
+    def test_module_cannot_finish_until_all_work_is_settled(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            database = self._database(Path(temporary), count=1)
+            try:
+                scheduler = BoundedScheduler(database, lease_id_factory=lambda: "only-lease")
+                scheduler.start_module("job-1", "caption", enabled=True, profile="e621")
+                with self.assertRaises(SchedulerError):
+                    scheduler.finish_module("job-1", "caption")
+                config_hash = database.get_job("job-1")["config_hash"]
+                lease = scheduler.claim_batch("job-1", "caption", "worker-1", config_hash)[0]
+                scheduler.complete(lease)
+                self.assertEqual("completed", scheduler.finish_module("job-1", "caption"))
+            finally:
+                database.close()
+
+    def test_manual_recovery_only_returns_safe_work(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            database = self._database(Path(temporary), count=3)
+            try:
+                scheduler = BoundedScheduler(database, lease_id_factory=(lambda values=iter(["lease-a", "lease-b", "lease-c"]): next(values)))
+                scheduler.start_module("job-1", "caption", enabled=True, profile="e621")
+                config_hash = database.get_job("job-1")["config_hash"]
+                first, second, third = scheduler.claim_batch("job-1", "caption", "worker-1", config_hash, limit=3)
+                scheduler.stage_prepared(first, relative_path="prepared\\caption\\lease-a.txt", sha256="a" * 64)
+                database.set_sample_state(
+                    "job-1", third.sampleId,
+                    SampleRunState(
+                        sampleId=third.sampleId, currentModuleId="caption", status="request_started", attempt=1,
+                        leaseId=third.leaseId, workerInstanceId="worker-1", leaseExpiresAt="2030-01-01T00:00:00Z",
+                    ),
+                )
+                database.mark_interrupted("job-1")
+                with self.assertRaises(SchedulerError):
+                    scheduler.recover(
+                        "job-1", confirmed=False, expected_config_hash=config_hash, manifest_schema_version=1,
+                        protocol_version="1.0", verify_source_fingerprints=lambda: True, commit_prepared=lambda *_: True,
+                    )
+                report = scheduler.recover(
+                    "job-1", confirmed=True, expected_config_hash=config_hash, manifest_schema_version=1,
+                    protocol_version="1.0", verify_source_fingerprints=lambda: True, commit_prepared=lambda *_: True,
+                )
+                self.assertEqual(1, report.returnedLeases)
+                self.assertEqual(1, report.committedPrepared)
+                self.assertEqual(1, report.pendingApiDecisions)
+                self.assertEqual("completed", database.get_sample_state("job-1", first.sampleId)["status"])
+                self.assertEqual("pending", database.get_sample_state("job-1", second.sampleId)["status"])
+                self.assertEqual("request_started", database.get_sample_state("job-1", third.sampleId)["status"])
+            finally:
+                database.close()
+
+    def test_expired_leases_are_reclaimed_before_the_next_claim(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            database = self._database(Path(temporary), count=2)
+            try:
+                lease_ids = iter(f"expire-{index}" for index in range(1, 10))
+                scheduler = BoundedScheduler(database, lease_id_factory=lease_ids.__next__)
+                scheduler.start_module("job-1", "caption", enabled=True, profile="e621")
+                config_hash = database.get_job("job-1")["config_hash"]
+                self.assertEqual(2, len(scheduler.claim_batch("job-1", "caption", "dead-worker", config_hash)))
+                database.connection.execute(
+                    "UPDATE sample_state SET lease_expires_at='2000-01-01T00:00:00Z' WHERE job_id='job-1'"
+                )
+                # Without the reclaim the dead worker still owns both leases and
+                # the replacement worker is rejected as a second caption worker.
+                replacements = scheduler.claim_batch("job-1", "caption", "new-worker", config_hash)
+                self.assertEqual({1, 2}, {lease.sampleId for lease in replacements})
+                self.assertEqual(
+                    "new-worker", database.get_sample_state("job-1", 1)["worker_instance_id"]
+                )
+            finally:
+                database.close()
+
+    def test_export_carries_samples_that_failed_in_earlier_modules_as_skips(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            database = self._database(Path(temporary), count=3)
+            try:
+                self._prime_predecessors(database, "export")
+                database.connection.execute(
+                    "UPDATE sample_state SET status='failed' WHERE job_id='job-1' AND sample_id=2"
+                )
+                lease_ids = iter(f"export-{index}" for index in range(1, 10))
+                scheduler = BoundedScheduler(database, lease_id_factory=lease_ids.__next__)
+                self.assertEqual("running", scheduler.start_module("job-1", "export", enabled=True, profile="e621"))
+                summary = database.module_summary("job-1", "export")
+                self.assertEqual((3, 1), (int(summary["total"]), int(summary["skipped"])))
+                state = database.get_sample_state("job-1", 2)
+                self.assertEqual(("export", "skipped"), (state["current_module_id"], state["status"]))
+                config_hash = database.get_job("job-1")["config_hash"]
+                self.assertEqual(
+                    {1, 3},
+                    {lease.sampleId for lease in scheduler.claim_batch("job-1", "export", "worker", config_hash)},
+                )
+                # The commit projection must stop demanding artifacts for a
+                # sample Export intentionally skipped.
+                self.assertEqual(
+                    {1, 3},
+                    {int(row["sample_id"]) for row in database.page_export_artifact_groups("job-1")},
+                )
+            finally:
+                database.close()
+
+    def test_repair_modules_only_lease_targets_until_full_export(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            database = self._database(Path(temporary), count=3)
+            try:
+                database.insert_job(_job("repair-1", Path(temporary)))
+                database.insert_samples("repair-1", _samples(3))
+                database.create_repair_link("repair-1", "job-1")
+                database.connection.executemany(
+                    "INSERT INTO repair_targets(repair_job_id,sample_id,repair_start_module) VALUES (?,?,?)",
+                    [("repair-1", 1, "classify"), ("repair-1", 2, "nl"), ("repair-1", 3, "dropout")],
+                )
+                scheduler = BoundedScheduler(database, lease_id_factory=iter(tuple(f"repair-lease-{index}" for index in range(1, 10))).__next__)
+                self.assertEqual("skipped", scheduler.start_module("repair-1", "caption", enabled=False, profile="e621"))
+                self.assertEqual(0, database.module_summary("repair-1", "caption")["total"])
+                self.assertEqual("running", scheduler.start_module("repair-1", "classify", enabled=True, profile="e621"))
+                self.assertEqual(1, database.module_summary("repair-1", "classify")["total"])
+                config_hash = database.get_job("repair-1")["config_hash"]
+                self.assertEqual([1], [lease.sampleId for lease in scheduler.claim_batch("repair-1", "classify", "worker", config_hash)])
+                database.connection.execute("UPDATE sample_state SET current_module_id='classify',status='completed' WHERE job_id='repair-1' AND sample_id=1")
+                database.set_module_summary("repair-1", "classify", status="completed", completed=1, finished=True)
+                database.set_job_status("repair-1", "running", current_module_id="classify")
+                self.assertEqual("skipped", scheduler.start_module("repair-1", "replace", enabled=False, profile="e621"))
+                self.assertEqual("running", scheduler.start_module("repair-1", "nl", enabled=True, profile="e621"))
+                self.assertEqual({1, 2}, {lease.sampleId for lease in scheduler.claim_batch("repair-1", "nl", "worker", config_hash)})
+                database.connection.execute("UPDATE sample_state SET current_module_id='nl',status='completed' WHERE job_id='repair-1' AND sample_id IN (1,2)")
+                database.set_module_summary("repair-1", "nl", status="completed", completed=2, finished=True)
+                database.set_job_status("repair-1", "running", current_module_id="nl")
+                self.assertEqual("running", scheduler.start_module("repair-1", "dropout", enabled=True, profile="e621"))
+                self.assertEqual(3, database.module_summary("repair-1", "dropout")["total"])
+                self.assertEqual({1, 2, 3}, {lease.sampleId for lease in scheduler.claim_batch("repair-1", "dropout", "worker", config_hash)})
+                database.connection.execute("UPDATE sample_state SET current_module_id='dropout',status='completed' WHERE job_id='repair-1' AND sample_id IN (1,2,3)")
+                database.set_module_summary("repair-1", "dropout", status="completed", completed=3, finished=True)
+                database.set_job_status("repair-1", "running", current_module_id="dropout")
+                self.assertEqual("running", scheduler.start_module("repair-1", "export", enabled=True, profile="e621"))
+                self.assertEqual(3, database.module_summary("repair-1", "export")["total"])
+                self.assertEqual({1, 2, 3}, {lease.sampleId for lease in scheduler.claim_batch("repair-1", "export", "worker", config_hash)})
+            finally:
+                database.close()
+
+    def test_v5_ocr_has_an_independent_single_worker_queue_and_disabled_is_skipped(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            database = self._database(Path(temporary), count=2, schema_version=5)
+            try:
+                lease_ids = iter(("ocr-lease-1", "ocr-lease-2"))
+                scheduler = BoundedScheduler(database, lease_id_factory=lease_ids.__next__)
+                for module_id in ("caption", "classify", "replace"):
+                    self.assertEqual("skipped", scheduler.start_module("job-1", module_id, enabled=False, profile="e621"))
+
+                self.assertEqual("running", scheduler.start_module("job-1", "ocr", enabled=True, profile="e621"))
+                config_hash = str(database.get_job("job-1")["config_hash"])
+                first = scheduler.claim_batch("job-1", "ocr", "ocr-worker-1", config_hash)
+                self.assertEqual([1], [lease.sampleId for lease in first])
+                with self.assertRaises(SchedulerError):
+                    scheduler.claim_batch("job-1", "ocr", "ocr-worker-2", config_hash)
+                with self.assertRaises(SchedulerError):
+                    scheduler.claim_batch("job-1", "ocr", "ocr-worker-1", config_hash, limit=2)
+                scheduler.complete(first[0])
+                second = scheduler.claim_batch("job-1", "ocr", "ocr-worker-1", config_hash)
+                self.assertEqual([2], [lease.sampleId for lease in second])
+                scheduler.complete(second[0])
+                self.assertEqual("completed", scheduler.finish_module("job-1", "ocr"))
+
+                try:
+                    nl_status = scheduler.start_module("job-1", "nl", enabled=False, profile="e621")
+                except ValueError as exc:
+                    self.fail(f"v5 disabled NL must be a normal skipped module: {exc}")
+                self.assertEqual("skipped", nl_status)
+                summary = database.module_summary("job-1", "nl")
+                self.assertEqual(("skipped", 2), (summary["status"], int(summary["skipped"])))
+            finally:
+                database.close()
+
+    def test_v6_places_token_budget_after_dropout_and_before_export(self) -> None:
+        try:
+            modules = pipeline_module_ids(6)
+        except ValueError as exc:
+            self.fail(f"JobConfig v6 route is missing: {exc}")
+        self.assertEqual(
+            ("caption", "classify", "replace", "ocr", "nl", "count_review", "dropout", "token_budget", "export"),
+            modules,
+        )
+
+
+if __name__ == "__main__":
+    unittest.main()

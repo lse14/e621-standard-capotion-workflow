@@ -1,0 +1,9 @@
+{
+  "protocolVersion": "1.0",
+  "kind": "request",
+  "messageId": "hello-1",
+  "runtimeId": "caption-e621",
+  "owner": "caption",
+  "method": "hello",
+  "payload": {}
+}

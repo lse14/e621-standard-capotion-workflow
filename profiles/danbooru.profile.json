@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "profile": "danbooru",
+  "available": true,
+  "reason": null,
+  "taggerOutputRoute": "direct_to_classify",
+  "tagNormalization": "none",
+  "replacement": "skipped_by_profile",
+  "runtimeIds": ["caption-e621", "classify-e621", "nl", "policy", "export"]
+}

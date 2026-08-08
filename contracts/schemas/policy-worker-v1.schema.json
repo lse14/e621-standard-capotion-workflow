@@ -1,0 +1,184 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "anima://contracts/policy-worker-v1",
+  "$defs": {
+    "identifier": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"},
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "probability": {"type": "number", "minimum": 0, "maximum": 1},
+    "relativePath": {"type": "string", "minLength": 1, "maxLength": 16384, "pattern": "^[^\\u0000]+$"},
+    "absolutePath": {"type": "string", "minLength": 1, "maxLength": 16384, "pattern": "^[^\\u0000]+$"},
+    "coupled": {
+      "type": "object",
+      "required": ["dropNl", "dropAppearance"],
+      "properties": {"dropNl": {"$ref": "#/$defs/probability"}, "dropAppearance": {"$ref": "#/$defs/probability"}},
+      "additionalProperties": false
+    },
+    "policyConfig": {
+      "type": "object",
+      "description": "Frozen dataset-batch policy. dropNl + dropAppearance must not exceed 1 in any count group; JSON Schema cannot express that sum, workers/policy/.../policy.py enforces it.",
+      "required": ["policyVersion", "seed", "artist", "quality", "appearanceNl"],
+      "properties": {
+        "policyVersion": {"const": "dataset-batch-policy-v1"},
+        "seed": {"type": "string", "minLength": 1, "maxLength": 256},
+        "artist": {
+          "type": "object",
+          "required": ["enabled", "dropoutProbability"],
+          "properties": {"enabled": {"type": "boolean"}, "dropoutProbability": {"$ref": "#/$defs/probability"}},
+          "additionalProperties": false
+        },
+        "quality": {
+          "type": "object",
+          "required": ["enabled", "dropoutProbability", "device", "batchSize"],
+          "properties": {
+            "enabled": {"type": "boolean"},
+            "dropoutProbability": {"$ref": "#/$defs/probability"},
+            "device": {"enum": ["auto", "cuda", "cpu"]},
+            "batchSize": {"type": "integer", "minimum": 1, "maximum": 16},
+            "resourceId": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,127}$"}
+          },
+          "allOf": [
+            {"if": {"properties": {"enabled": {"const": true}}, "required": ["enabled"]}, "then": {"required": ["resourceId"]}}
+          ],
+          "additionalProperties": false
+        },
+        "appearanceNl": {
+          "type": "object",
+          "required": ["enabled", "solo", "nonSolo", "unknown"],
+          "properties": {
+            "enabled": {"type": "boolean"},
+            "solo": {"$ref": "#/$defs/coupled"},
+            "nonSolo": {"$ref": "#/$defs/coupled"},
+            "unknown": {"$ref": "#/$defs/coupled"}
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "workItem": {
+      "type": "object",
+      "required": ["schemaVersion", "sampleId", "leaseId", "relativeImagePath", "annotationKey", "imageSize", "imageMtimeNs", "imageFileId"],
+      "properties": {
+        "schemaVersion": {"const": 1},
+        "sampleId": {"type": "integer", "minimum": 1},
+        "leaseId": {"$ref": "#/$defs/identifier"},
+        "relativeImagePath": {"$ref": "#/$defs/relativePath"},
+        "annotationKey": {"$ref": "#/$defs/relativePath"},
+        "imageSize": {"type": "integer", "minimum": 1},
+        "imageMtimeNs": {"type": "integer", "minimum": 0},
+        "imageFileId": {"type": ["null", "string"], "maxLength": 512}
+      },
+      "additionalProperties": false
+    },
+    "preparedOutcome": {
+      "type": "object",
+      "required": ["schemaVersion", "status", "sampleId", "leaseId", "relativeImagePath", "preparedRelativePath", "sha256", "aestheticScore", "quality", "decision"],
+      "properties": {
+        "schemaVersion": {"const": 1},
+        "status": {"const": "prepared"},
+        "sampleId": {"type": "integer", "minimum": 1},
+        "leaseId": {"$ref": "#/$defs/identifier"},
+        "relativeImagePath": {"$ref": "#/$defs/relativePath"},
+        "preparedRelativePath": {"$ref": "#/$defs/relativePath"},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "aestheticScore": {"type": ["null", "number"]},
+        "quality": {
+          "type": "array",
+          "maxItems": 2,
+          "items": {"enum": ["low quality", "normal quality", "good quality", "masterpiece", "best quality"]}
+        },
+        "decision": {
+          "type": "object",
+          "required": ["artistDropped", "qualityDropped", "appearanceNlAction"],
+          "properties": {
+            "artistDropped": {"type": "boolean"},
+            "qualityDropped": {"type": "boolean"},
+            "appearanceNlAction": {"enum": ["drop_nl", "drop_appearance", "keep_both", "unchanged"]}
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "issueOutcome": {
+      "type": "object",
+      "required": ["schemaVersion", "status", "sampleId", "leaseId", "relativeImagePath", "code", "message", "retriable", "repairStartModule"],
+      "properties": {
+        "schemaVersion": {"const": 1},
+        "status": {"const": "issue"},
+        "sampleId": {"type": "integer", "minimum": 1},
+        "leaseId": {"$ref": "#/$defs/identifier"},
+        "relativeImagePath": {"$ref": "#/$defs/relativePath"},
+        "code": {
+          "description": "Per-sample codes the worker can attach to an outcome; core accepts any bounded policy_* code.",
+          "enum": [
+            "policy_json_missing", "policy_json_invalid", "policy_json_read_failed", "policy_path_invalid",
+            "policy_source_fingerprint_mismatch", "policy_image_decode_failed", "policy_inference_failed"
+          ]
+        },
+        "message": {"type": "string", "minLength": 1, "maxLength": 1024},
+        "retriable": {"type": "boolean"},
+        "repairStartModule": {"enum": ["classify", "dropout"]}
+      },
+      "additionalProperties": false
+    }
+  },
+  "oneOf": [
+    {
+      "type": "object",
+      "required": ["schemaVersion", "payloadType", "jobId", "configHash", "datasetRoot", "overlayRoot", "resourceManifestRelativePath", "resourceFingerprint", "policy"],
+      "properties": {
+        "schemaVersion": {"const": 1},
+        "payloadType": {"const": "policy_hello_request"},
+        "jobId": {"$ref": "#/$defs/identifier"},
+        "configHash": {"$ref": "#/$defs/sha256"},
+        "datasetRoot": {"$ref": "#/$defs/absolutePath"},
+        "overlayRoot": {"$ref": "#/$defs/absolutePath"},
+        "resourceManifestRelativePath": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/relativePath"}]},
+        "resourceFingerprint": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/sha256"}]},
+        "policy": {"$ref": "#/$defs/policyConfig"}
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["schemaVersion", "payloadType", "ready", "qualityEnabled", "device", "modelLoadCount", "resourceFingerprint"],
+      "properties": {
+        "schemaVersion": {"const": 1},
+        "payloadType": {"const": "policy_hello_result"},
+        "ready": {"const": true},
+        "qualityEnabled": {"type": "boolean"},
+        "device": {"type": ["null", "string"], "maxLength": 128},
+        "modelLoadCount": {"type": "integer", "minimum": 0, "maximum": 1},
+        "resourceFingerprint": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/sha256"}]}
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["schemaVersion", "payloadType", "items"],
+      "properties": {
+        "schemaVersion": {"const": 1},
+        "payloadType": {"const": "policy_process_request"},
+        "items": {"type": "array", "minItems": 1, "maxItems": 16, "items": {"$ref": "#/$defs/workItem"}}
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["schemaVersion", "payloadType", "outcomes", "modelLoadCount"],
+      "properties": {
+        "schemaVersion": {"const": 1},
+        "payloadType": {"const": "policy_batch_result"},
+        "outcomes": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "items": {"oneOf": [{"$ref": "#/$defs/preparedOutcome"}, {"$ref": "#/$defs/issueOutcome"}]}
+        },
+        "modelLoadCount": {"type": "integer", "minimum": 0, "maximum": 1}
+      },
+      "additionalProperties": false
+    }
+  ]
+}

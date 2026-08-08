@@ -1,0 +1,178 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "anima://contracts/caption-worker-v1",
+  "$defs": {
+    "threshold": {"type": "number", "minimum": 0, "maximum": 1},
+    "score": {"type": "number", "minimum": 0, "maximum": 1},
+    "thresholdPolicy": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["mode"],
+          "properties": {"mode": {"const": "model_default"}},
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["mode", "uniformThreshold"],
+          "properties": {
+            "mode": {"const": "uniform"},
+            "uniformThreshold": {"$ref": "#/$defs/threshold"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["mode", "categoryThresholds"],
+          "properties": {
+            "mode": {"const": "per_category"},
+            "categoryThresholds": {
+              "type": "object",
+              "minProperties": 1,
+              "maxProperties": 64,
+              "propertyNames": {"pattern": "^[a-z][a-z0-9_]{0,63}$"},
+              "additionalProperties": {"$ref": "#/$defs/threshold"}
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "captionFormat": {
+      "type": "object",
+      "required": ["replaceUnderscoresWithSpaces", "preserveEscapes", "triggersEnabled", "triggerTerms"],
+      "properties": {
+        "replaceUnderscoresWithSpaces": {"type": "boolean"},
+        "preserveEscapes": {"type": "boolean"},
+        "triggersEnabled": {"type": "boolean"},
+        "triggerTerms": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {"type": "string", "minLength": 1, "maxLength": 512, "pattern": "^[^,\\r\\n\\u0000]+$"}
+        }
+      },
+      "additionalProperties": false
+    },
+    "imageDecode": {
+      "type": "object",
+      "required": ["extensions", "rejectMultiFrame", "applyExifTranspose", "alphaBackground"],
+      "properties": {
+        "extensions": {"const": [".jpg", ".jpeg", ".png", ".webp", ".bmp"]},
+        "rejectMultiFrame": {"const": true},
+        "applyExifTranspose": {"const": true},
+        "alphaBackground": {"const": "#FFFFFF"}
+      },
+      "additionalProperties": false
+    },
+    "workItem": {
+      "type": "object",
+      "required": ["schemaVersion", "sampleId", "leaseId", "source", "relativeImagePath", "annotationKey", "imageFormat", "imageFrameCount", "imageSize", "imageMtimeNs"],
+      "properties": {
+        "schemaVersion": {"const": 1},
+        "sampleId": {"type": "integer", "minimum": 1},
+        "leaseId": {"type": "string", "minLength": 1, "maxLength": 128},
+        "source": {"enum": ["e621", "danbooru"]},
+        "relativeImagePath": {"type": "string", "minLength": 1, "maxLength": 16384},
+        "annotationKey": {"type": "string", "minLength": 1, "maxLength": 16384},
+        "imageFormat": {"enum": ["jpeg", "png", "webp", "bmp"]},
+        "imageFrameCount": {"const": 1},
+        "imageFileId": {"type": "string", "minLength": 1, "maxLength": 128},
+        "imageSize": {"type": "integer", "minimum": 1},
+        "imageMtimeNs": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": false
+    },
+    "tag": {
+      "type": "object",
+      "required": ["rawTag", "score", "category"],
+      "properties": {
+        "rawTag": {"type": "string", "minLength": 1, "maxLength": 512},
+        "score": {"$ref": "#/$defs/score"},
+        "category": {"type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$"}
+      },
+      "additionalProperties": false
+    }
+  },
+  "oneOf": [
+    {
+      "type": "object",
+      "required": ["schemaVersion", "payloadType", "jobId", "configHash", "profile", "datasetRoot", "resourceManifestRelativePath", "resourceFingerprint", "thresholdPolicy", "captionFormat", "imageDecode"],
+      "properties": {
+        "schemaVersion": {"const": 1},
+        "payloadType": {"const": "caption_hello_request"},
+        "jobId": {"type": "string", "minLength": 1, "maxLength": 128},
+        "configHash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "profile": {"enum": ["e621", "danbooru"]},
+        "datasetRoot": {"type": "string", "minLength": 1, "maxLength": 16384},
+        "resourceManifestRelativePath": {"type": "string", "minLength": 1, "maxLength": 16384},
+        "resourceFingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "thresholdPolicy": {"$ref": "#/$defs/thresholdPolicy"},
+        "captionFormat": {"$ref": "#/$defs/captionFormat"},
+        "imageDecode": {"$ref": "#/$defs/imageDecode"}
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["schemaVersion", "payloadType", "executable", "pythonVersion", "ready", "provider", "modelSessionLoads", "tagCount", "resourceFingerprint"],
+      "properties": {
+        "schemaVersion": {"const": 1},
+        "payloadType": {"const": "caption_hello_result"},
+        "executable": {"type": "string", "minLength": 1, "maxLength": 16384},
+        "pythonVersion": {"const": "3.11.15"},
+        "ready": {"const": true},
+        "provider": {"type": "string", "minLength": 1, "maxLength": 64},
+        "modelSessionLoads": {"const": 1},
+        "tagCount": {"type": "integer", "minimum": 1, "maximum": 1000000},
+        "resourceFingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["schemaVersion", "payloadType", "items"],
+      "properties": {
+        "schemaVersion": {"const": 1},
+        "payloadType": {"const": "caption_process_request"},
+        "items": {"type": "array", "minItems": 1, "maxItems": 1, "items": {"$ref": "#/$defs/workItem"}}
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["schemaVersion", "payloadType", "sampleId", "leaseId", "source", "relativeImagePath", "tags", "formattedTxt", "provider", "modelSessionLoads"],
+      "properties": {
+        "schemaVersion": {"const": 1},
+        "payloadType": {"const": "caption_result"},
+        "sampleId": {"type": "integer", "minimum": 1},
+        "leaseId": {"type": "string", "minLength": 1, "maxLength": 128},
+        "source": {"enum": ["e621", "danbooru"]},
+        "relativeImagePath": {"type": "string", "minLength": 1, "maxLength": 16384},
+        "tags": {"type": "array", "minItems": 1, "maxItems": 1000000, "items": {"$ref": "#/$defs/tag"}},
+        "formattedTxt": {"type": "string", "minLength": 1, "maxLength": 262144},
+        "provider": {"type": "string", "minLength": 1, "maxLength": 64},
+        "modelSessionLoads": {"const": 1}
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["schemaVersion", "payloadType", "sampleId", "leaseId", "source", "relativeImagePath", "code", "severity", "blocking", "retriable", "message"],
+      "properties": {
+        "schemaVersion": {"const": 1},
+        "payloadType": {"const": "caption_issue"},
+        "sampleId": {"type": "integer", "minimum": 1},
+        "leaseId": {"type": "string", "minLength": 1, "maxLength": 128},
+        "source": {"enum": ["e621", "danbooru"]},
+        "relativeImagePath": {"type": "string", "minLength": 1, "maxLength": 16384},
+        "code": {"enum": ["caption_image_decode_failed", "caption_inference_failed", "caption_no_tags"]},
+        "severity": {"const": "error"},
+        "blocking": {"const": true},
+        "retriable": {"type": "boolean"},
+        "repairStartModule": {"const": "caption"},
+        "message": {"type": "string", "minLength": 1, "maxLength": 1024}
+      },
+      "additionalProperties": false
+    }
+  ]
+}

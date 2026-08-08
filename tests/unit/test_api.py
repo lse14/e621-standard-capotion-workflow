@@ -1,0 +1,963 @@
+from __future__ import annotations
+
+import importlib
+import inspect
+import json
+import sys
+import tempfile
+import time
+import unittest
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
+
+
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "core" / "src"))
+
+from fastapi import HTTPException
+from fastapi.routing import APIRoute
+from pydantic import SecretStr
+from starlette.routing import Mount
+
+from anima_core.api import (
+    _AmountBody, _ConfirmBody, _PinBody, _PreflightBody, _ProfileBody, _SecretBody, _ShutdownBody,
+    _TokenBudgetApplyBody, _TokenBudgetRecountBody, _TokenBudgetRewriteShortBody, _WorkspaceBody,
+    build_control_app,
+)
+from anima_core.api_token_budget import _IsolatedShortRewriter
+from anima_core.token_budget_review import TokenBudgetReviewConflictError, TokenBudgetReviewError
+from anima_core.commit_journal import CommitJournal, write as write_journal
+from anima_core.job_preflight import JobPreparationService
+from anima_core.contracts import JobConfig, ProgressEvent, SampleIssue, pipeline_module_ids, sha256_json
+from anima_core.credentials import DpapiCredentialStore
+from anima_core.db import StateDatabase
+from anima_core.nl_profiles import NlApiProfileStore
+from anima_core.nl_prompt_presets import NlPromptPresetStore
+from anima_core.path_safety import windows_key
+from anima_core.pipeline import PipelineError, PipelineService
+from anima_core.scheduler import BoundedScheduler
+from anima_core.annotation_backup import write_backup
+from anima_core.overlay import OverlayLayout
+from anima_core.ocr_runtime_binding import OcrRuntimeBindingV1, write_runtime_binding
+from anima_core.worker_protocol import ProtocolEnvelopeV1
+
+
+EXPECTED_BUILD_PARAMETERS = (
+    "database_path", "profile_store", "credential_store", "prompt_preset_store", "nl_diagnostic_client", "preparation_service",
+    "pipeline_service", "repair_service", "resource_catalog", "static_root",
+    "shutdown_token", "shutdown_callback",
+)
+
+EXPECTED_CONTROL_ROUTES = {
+    ("GET", "/health"),
+    ("GET", "/api/health"),
+    ("GET", "/api/resources"),
+    ("GET", "/api/jobs"),
+    ("GET", "/api/jobs/{job_id}"),
+    ("POST", "/api/jobs/preflight"),
+    ("POST", "/api/jobs/{job_id}/confirm-workspace"),
+    ("POST", "/api/jobs/{job_id}/start"),
+    ("GET", "/api/jobs/{job_id}/token-budget/reviews"),
+    ("POST", "/api/jobs/{job_id}/token-budget/recount"),
+    ("POST", "/api/jobs/{job_id}/token-budget/rewrite-short"),
+    ("POST", "/api/jobs/{job_id}/token-budget/apply"),
+    ("GET", "/api/jobs/{job_id}/count-review"),
+    ("GET", "/api/jobs/{job_id}/count-review/{sample_id}/image"),
+    ("PUT", "/api/jobs/{job_id}/count-review/{sample_id}"),
+    ("POST", "/api/jobs/{job_id}/count-review/batch"),
+    ("POST", "/api/jobs/{job_id}/count-review/confirm"),
+    ("POST", "/api/jobs/{job_id}/repair"),
+    ("POST", "/api/jobs/{job_id}/recover"),
+    ("POST", "/api/jobs/{job_id}/cancel"),
+    ("PUT", "/api/jobs/{job_id}/pin"),
+    ("POST", "/api/jobs/{job_id}/discard"),
+    ("POST", "/api/jobs/{job_id}/restore-original-annotations"),
+    ("GET", "/api/nl/default-prompt"),
+    ("GET", "/api/nl/prompt-presets"),
+    ("GET", "/api/nl/prompt-presets/{preset_id}"),
+    ("POST", "/api/nl/prompt-presets"),
+    ("PUT", "/api/nl/prompt-presets/{preset_id}"),
+    ("DELETE", "/api/nl/prompt-presets/{preset_id}"),
+    ("POST", "/api/nl/diagnostics/models"),
+    ("POST", "/api/nl/diagnostics/test-message"),
+    ("GET", "/api/nl/profiles"),
+    ("PUT", "/api/nl/profiles/{profile_id}"),
+    ("DELETE", "/api/nl/profiles/{profile_id}"),
+    ("PUT", "/api/nl/credentials/{reference}"),
+    ("DELETE", "/api/nl/credentials/{reference}"),
+    ("POST", "/api/jobs/{job_id}/nl/pause"),
+    ("POST", "/api/jobs/{job_id}/nl/resume"),
+    ("POST", "/api/jobs/{job_id}/nl/api-budget"),
+    ("POST", "/api/jobs/{job_id}/nl/confirm-api-outcomes"),
+    ("POST", "/api/jobs/{job_id}/policy/pause"),
+    ("POST", "/api/jobs/{job_id}/policy/resume"),
+    ("POST", "/api/application/shutdown"),
+}
+
+
+def _endpoint(app, path: str, method: str):
+    for route in app.routes:
+        if getattr(route, "path", None) == path and method in getattr(route, "methods", set()):
+            return route.endpoint
+    raise AssertionError(f"route not found: {method} {path}")
+
+
+class FakeNlDiagnosticClient:
+    def __init__(self) -> None:
+        self.model_calls: list[dict[str, str]] = []
+        self.message_calls: list[dict[str, str]] = []
+
+    def discover_models(self, *, endpoint: str, api_key: str) -> dict[str, object]:
+        self.model_calls.append({"endpoint": endpoint, "api_key": api_key})
+        return {"ok": True, "latencyMs": 12, "models": ["alpha", "Beta"], "errorCode": None, "errorReason": None}
+
+    def test_message(self, *, endpoint: str, model: str, api_key: str, base_prompt: str) -> dict[str, object]:
+        self.message_calls.append({"endpoint": endpoint, "model": model, "api_key": api_key, "base_prompt": base_prompt})
+        return {"ok": True, "latencyMs": 34, "actualModel": model, "replyText": "Connected.", "usage": {"promptTokens": 3, "completionTokens": 4, "totalTokens": 7}, "errorCode": None, "errorReason": None}
+
+
+class ControlPlaneApiTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        root = Path(self.temporary.name)
+        self.database_path = root / "state.db"
+        self.profiles = NlApiProfileStore(root / "profiles.json")
+        self.credentials = DpapiCredentialStore(root / "credentials")
+        database = StateDatabase.open(self.database_path)
+        dataset = root / "dataset"
+        dataset.mkdir()
+        config = JobConfig(profile="e621", workMode="in_place", overwriteMode="incremental", sourceRoot=str(dataset))
+        config.caption["enabled"] = config.classify["enabled"] = config.replace["enabled"] = False
+        config.countReview["enabled"] = False  # type: ignore[index]
+        database.insert_job({"job_id": "job-api", "config_schema_version": config.schemaVersion, "config_json": json.dumps(config.to_dict()), "config_hash": config.config_hash, "profile": "e621", "work_mode": "in_place", "overwrite_mode": "incremental", "source_root": str(dataset), "output_root": None, "dataset_root": str(dataset), "dataset_root_key": windows_key(dataset), "manifest_schema_version": 1, "recursive": 0, "sample_count": 1, "manifest_generated_at": "2026-07-24T00:00:00Z", "status": "ready", "current_module_id": None, "last_event_id": 0, "pinned": 0, "api_budget_extra": 0, "api_budget_revision": 0, "overlay_root": None, "commit_journal_path": None, "resume_status": None, "created_at": "2026-07-24T00:00:00Z", "started_at": None, "cancel_requested_at": None, "finished_at": None})
+        database.insert_samples("job-api", [{"sample_id": 1, "relative_image_path": "image.png", "annotation_key": "image", "source": "e621", "in_processing_scope": True, "image_format": "png", "image_frame_count": 1, "original_txt_state": "missing_or_blank", "original_json_state": "missing_or_blank", "image_file_id": "volume:1", "image_size": 1, "image_mtime_ns": 1}])
+        database.close()
+        self.preparation = JobPreparationService(self.database_path)
+        # Startup recovery freezes every job an earlier process left mid-flight, so the app is
+        # built while the fixture job is still `ready` and only then started.
+        self.app = build_control_app(database_path=self.database_path, profile_store=self.profiles, credential_store=self.credentials, preparation_service=self.preparation)
+        database = StateDatabase.open(self.database_path)
+        scheduler = BoundedScheduler(database)
+        for module in ("caption", "classify", "replace"):
+            scheduler.start_module("job-api", module, enabled=False, profile="e621")
+        scheduler.start_module("job-api", "nl", enabled=True, profile="e621")
+        database.close()
+
+    def tearDown(self) -> None:
+        self.preparation.close()
+        self.temporary.cleanup()
+
+    def test_build_signature_and_route_inventory_are_frozen(self) -> None:
+        self.assertEqual(EXPECTED_BUILD_PARAMETERS, tuple(inspect.signature(build_control_app).parameters))
+        actual = {
+            (method, route.path)
+            for route in self.app.routes
+            if isinstance(route, APIRoute)
+            for method in route.methods
+        }
+        self.assertEqual(EXPECTED_CONTROL_ROUTES, actual)
+        self.assertEqual(
+            len(actual),
+            sum(len(route.methods) for route in self.app.routes if isinstance(route, APIRoute)),
+        )
+
+    def test_v7_create_request_accepts_envelope_and_legacy_config_without_changing_canonical_bytes(self) -> None:
+        models = importlib.import_module("anima_core.api_models")
+        parser = getattr(models, "parse_create_job_body", None)
+        self.assertIsNotNone(parser, "Task 3.4 requires create-job envelope normalization")
+        if parser is None:
+            return
+        config = JobConfig(
+            profile="e621", workMode="in_place", overwriteMode="incremental",
+            sourceRoot=str(Path(self.temporary.name) / "dataset"), schemaVersion=7,
+        )
+        before = config.to_dict()
+        for body in (
+            before,
+            {
+                "config": before,
+                "ocrExecution": {
+                    "textDetLimitSideLen": {"mode": "manual", "value": 2304},
+                    "textBatchSize": {"mode": "manual", "value": 2},
+                },
+            },
+        ):
+            with self.subTest(envelope="config" in body):
+                parsed = parser(body)
+                self.assertEqual(before, parsed.config)
+                self.assertEqual(config.config_hash, sha256_json(parsed.config))
+        legacy = parser(before)
+        self.assertEqual({"mode": "auto", "value": None}, legacy.ocrExecution.to_dict()["textDetLimitSideLen"])
+        self.assertEqual({"mode": "auto", "value": None}, legacy.ocrExecution.to_dict()["textBatchSize"])
+
+    def test_snapshot_exposes_only_compact_bound_ocr_runtime_status(self) -> None:
+        database = StateDatabase.open(self.database_path)
+        try:
+            dataset = Path(self.temporary.name) / "dataset"
+            layout = OverlayLayout.create(dataset, "job-api")
+            config = JobConfig(
+                profile="e621", workMode="in_place", overwriteMode="incremental",
+                sourceRoot=str(dataset), schemaVersion=7,
+            )
+            config.ocr.update({"enabled": True, "device": "auto"})
+            frozen = config.to_dict()
+            database.connection.execute(
+                "UPDATE jobs SET config_schema_version=?,config_json=?,config_hash=?,overlay_root=? WHERE job_id=?",
+                (7, json.dumps(frozen), sha256_json(frozen), str(layout.root), "job-api"),
+            )
+            binding = OcrRuntimeBindingV1.from_dict({
+                "schemaVersion": 1,
+                "requested": {
+                    "device": "auto",
+                    "textDetLimitSideLen": {"mode": "auto", "value": None},
+                    "textBatchSize": {"mode": "auto", "value": None},
+                },
+                "recommended": {
+                    "source": "gpu_vram_table", "totalVramBytes": 24 * 1024 ** 3,
+                    "textDetLimitSideLen": 2560, "textBatchSize": 4,
+                },
+                "effective": {"textDetLimitSideLen": 2560, "textBatchSize": 4},
+                "runtime": {
+                    "runtimeId": "ocr-paddle-gpu", "runtimeFingerprint": "a" * 64,
+                    "observedDevice": "cuda", "paddleVersion": "3.2.2", "compiledWithCuda": True,
+                    "cudaVersion": "12.6", "gpuName": "NVIDIA Test GPU",
+                },
+                "resourceFingerprint": "b" * 64,
+                "startupReason": None,
+            })
+            write_runtime_binding(layout.resource_path("ocr-runtime-binding-v1.json"), binding)
+        finally:
+            database.close()
+        snapshot = _endpoint(self.app, "/api/jobs/{job_id}", "GET")(
+            "job-api", afterEventId=0, issueAfterSampleId=0, issueAfterIssueId=None, limit=100,
+        )
+        runtime = snapshot.get("ocrRuntime")
+        self.assertEqual(
+            {
+                "availability": "available", "runtimeId": "ocr-paddle-gpu",
+                "gpuName": "NVIDIA Test GPU", "totalVramBytes": 24 * 1024 ** 3,
+                "requestedDevice": "auto", "observedDevice": "cuda",
+                "recommended": {"textDetLimitSideLen": 2560, "textBatchSize": 4},
+                "effective": {"textDetLimitSideLen": 2560, "textBatchSize": 4},
+                "startupReason": None,
+            },
+            runtime,
+        )
+
+    def test_profile_and_credential_responses_never_echo_secret(self) -> None:
+        save_credential = _endpoint(self.app, "/api/nl/credentials/{reference}", "PUT")
+        save_profile = _endpoint(self.app, "/api/nl/profiles/{profile_id}", "PUT")
+        profiles = _endpoint(self.app, "/api/nl/profiles", "GET")
+        self.assertEqual({"stored": True}, save_credential("key-a", _SecretBody(secret="top-secret")))
+        body = _ProfileBody(endpoint="https://example.test/v1", model="main", backupModel=None, apiCredentialRef="key-a", systemPrompt="describe", apiPolicy={"maxRequestsPerMinute": 60})
+        saved = save_profile("profile-a", body)
+        self.assertTrue(saved["hasCredential"])
+        response = profiles()
+        self.assertNotIn("top-secret", json.dumps(response))
+        self.assertTrue(response["profiles"][0]["hasCredential"])
+
+    def test_prompt_presets_and_diagnostics_are_isolated_from_profiles_and_credentials(self) -> None:
+        parameters = inspect.signature(build_control_app).parameters
+        self.assertTrue({"prompt_preset_store", "nl_diagnostic_client"} <= set(parameters))
+        models = importlib.import_module("anima_core.api_models")
+        body_names = ("_NlPromptPresetBody", "_NlModelDiscoveryBody", "_NlTestMessageBody")
+        for name in body_names:
+            self.assertTrue(hasattr(models, name), name)
+        preset_body = getattr(models, "_NlPromptPresetBody", None)
+        discovery_body = getattr(models, "_NlModelDiscoveryBody", None)
+        message_body = getattr(models, "_NlTestMessageBody", None)
+        if not all((preset_body, discovery_body, message_body)):
+            return
+        prompt_store = NlPromptPresetStore(Path(self.temporary.name) / "prompt-presets.json")
+        diagnostic = FakeNlDiagnosticClient()
+        app = build_control_app(
+            database_path=self.database_path,
+            profile_store=self.profiles,
+            credential_store=self.credentials,
+            prompt_preset_store=prompt_store,
+            nl_diagnostic_client=diagnostic,
+            preparation_service=self.preparation,
+        )
+        list_presets = _endpoint(app, "/api/nl/prompt-presets", "GET")
+        get_preset = _endpoint(app, "/api/nl/prompt-presets/{preset_id}", "GET")
+        create_preset = _endpoint(app, "/api/nl/prompt-presets", "POST")
+        update_preset = _endpoint(app, "/api/nl/prompt-presets/{preset_id}", "PUT")
+        delete_preset = _endpoint(app, "/api/nl/prompt-presets/{preset_id}", "DELETE")
+        discover = _endpoint(app, "/api/nl/diagnostics/models", "POST")
+        test_message = _endpoint(app, "/api/nl/diagnostics/test-message", "POST")
+
+        built_in = list_presets()["presets"]
+        self.assertEqual("builtin:nl-default-prompt-v4-base", built_in[0]["presetId"])
+        self.assertTrue(built_in[0]["builtIn"])
+        self.assertIn("complete visible text", get_preset(built_in[0]["presetId"])["basePrompt"])
+        created = create_preset(preset_body(name="Custom", basePrompt="Base A"))
+        self.assertFalse(created["builtIn"])
+        updated = update_preset(created["presetId"], preset_body(name="Renamed", basePrompt="Base B"))
+        self.assertEqual(("Renamed", "Base B"), (updated["name"], updated["basePrompt"]))
+        with self.assertRaises(HTTPException) as built_in_conflict:
+            update_preset(built_in[0]["presetId"], preset_body(name="No", basePrompt="No"))
+        self.assertEqual(409, built_in_conflict.exception.status_code)
+        self.assertEqual({"deleted": True}, delete_preset(created["presetId"]))
+        with self.assertRaises(HTTPException) as missing:
+            get_preset(created["presetId"])
+        self.assertEqual(404, missing.exception.status_code)
+        with self.assertRaises(Exception):
+            preset_body.model_validate({"name": "No", "basePrompt": "No", "extra": True})
+
+        self.credentials.save("saved-ref", "dpapi-saved-key")
+        transient = discover(discovery_body(endpoint="https://example.test/v1", apiCredentialRef="saved-ref", apiKey=SecretStr("transient-key")))
+        self.assertEqual("transient-key", diagnostic.model_calls[-1]["api_key"])
+        self.assertNotIn("transient-key", json.dumps(transient))
+        saved = discover(discovery_body(endpoint="https://example.test/v1", apiCredentialRef="saved-ref", apiKey=SecretStr("  ")))
+        self.assertEqual("dpapi-saved-key", diagnostic.model_calls[-1]["api_key"])
+        self.assertTrue(saved["ok"])
+        feedback = test_message(message_body(endpoint="https://example.test/v1", apiCredentialRef="saved-ref", apiKey=SecretStr("transient-key"), model="unsaved-model", basePrompt="Unsaved base"))
+        self.assertEqual(
+            {"endpoint": "https://example.test/v1", "model": "unsaved-model", "api_key": "transient-key", "base_prompt": "Unsaved base"},
+            diagnostic.message_calls[-1],
+        )
+        self.assertNotIn("transient-key", json.dumps(feedback))
+        before_missing = len(diagnostic.model_calls)
+        unavailable = discover(discovery_body(endpoint="https://example.test/v1", apiCredentialRef="missing-ref", apiKey=None))
+        self.assertEqual((False, "credential_unavailable", before_missing), (unavailable["ok"], unavailable["errorCode"], len(diagnostic.model_calls)))
+        self.assertEqual((), self.profiles.load_all())
+
+    def test_resource_endpoint_reuses_the_preparation_service_catalog(self) -> None:
+        catalog = self.preparation.resource_catalog
+        original_scan = catalog.scan
+        marker = {"schemaVersion": 1, "defaults": {"marker": "shared"}, "resources": [], "invalidResources": []}
+        catalog.scan = lambda: SimpleNamespace(api_dict=lambda: marker)  # type: ignore[method-assign]
+        try:
+            self.assertEqual(marker, _endpoint(self.app, "/api/resources", "GET")())
+        finally:
+            catalog.scan = original_scan  # type: ignore[method-assign]
+
+    def test_snapshot_exposes_caption_raw_e621_conversion_count(self) -> None:
+        database = StateDatabase.open(self.database_path)
+        try:
+            database.increment_module_diagnostic(
+                "job-api", "caption", "e621_raw_json_converted", severity="info", amount=2,
+            )
+        finally:
+            database.close()
+        snapshot = _endpoint(self.app, "/api/jobs/{job_id}", "GET")(
+            "job-api", afterEventId=0, issueAfterSampleId=0, issueAfterIssueId=None, limit=200,
+        )
+        diagnostics = snapshot["captionDiagnostics"]
+        self.assertEqual(1, len(diagnostics))
+        self.assertEqual(
+            ("e621_raw_json_converted", "info", 2),
+            (diagnostics[0]["code"], diagnostics[0]["severity"], diagnostics[0]["count"]),
+        )
+
+    def test_snapshot_exposes_ocr_diagnostics_from_the_existing_module_counter(self) -> None:
+        database = StateDatabase.open(self.database_path)
+        try:
+            for code, amount in (
+                ("ocr_total", 4), ("ocr_new", 2), ("ocr_reused", 2),
+                ("ocr_success", 1), ("ocr_no_text", 2), ("ocr_failed", 1),
+                ("ocr_text_items", 7), ("ocr_included_for_llm", 5),
+            ):
+                database.increment_module_diagnostic("job-api", "ocr", code, severity="info", amount=amount)
+            database.increment_module_diagnostic(
+                "job-api", "nl", "nl_ocr_context_omitted_too_large", severity="warning", amount=1,
+            )
+        finally:
+            database.close()
+
+        snapshot = _endpoint(self.app, "/api/jobs/{job_id}", "GET")(
+            "job-api", afterEventId=0, issueAfterSampleId=0, issueAfterIssueId=None, limit=200,
+        )
+        self.assertIn("ocrDiagnostics", snapshot)
+        self.assertEqual(
+            {
+                "ocr_total": 4, "ocr_new": 2, "ocr_reused": 2, "ocr_success": 1,
+                "ocr_no_text": 2, "ocr_failed": 1, "ocr_text_items": 7,
+                "ocr_included_for_llm": 5, "nl_ocr_context_omitted_too_large": 1,
+            },
+            {item["code"]: item["count"] for item in snapshot["ocrDiagnostics"]},
+        )
+
+    def test_snapshot_budget_pause_resume_and_confirm_are_control_plane_only(self) -> None:
+        class ResumePipeline:
+            def __init__(self) -> None:
+                self.resumed: list[str] = []
+
+            def startup_recovery(self) -> dict[str, int]:
+                return {"interruptedJobs": 0, "clearedDatasetClaims": 0, "deletedJobs": 0, "deletedOverlays": 0}
+
+            def resume(self, job_id: str) -> bool:
+                self.resumed.append(job_id)
+                return True
+
+        pipeline = ResumePipeline()
+        app = build_control_app(
+            database_path=self.database_path, profile_store=self.profiles, credential_store=self.credentials,
+            preparation_service=self.preparation, pipeline_service=pipeline,  # type: ignore[arg-type]
+        )
+        snapshot = _endpoint(app, "/api/jobs/{job_id}", "GET")
+        pause = _endpoint(app, "/api/jobs/{job_id}/nl/pause", "POST")
+        resume = _endpoint(app, "/api/jobs/{job_id}/nl/resume", "POST")
+        budget = _endpoint(app, "/api/jobs/{job_id}/nl/api-budget", "POST")
+        confirm = _endpoint(app, "/api/jobs/{job_id}/nl/confirm-api-outcomes", "POST")
+        initial = snapshot("job-api", afterEventId=0, issueAfterSampleId=0, issueAfterIssueId=None, limit=200)
+        self.assertEqual(("running", "nl"), (initial["job"]["status"], initial["job"]["currentModuleId"]))
+        self.assertEqual({"status": "paused"}, pause("job-api"))
+        self.assertEqual({"apiBudgetExtra": 5, "apiBudgetRevision": 1}, budget("job-api", _AmountBody(amount=5)))
+        with self.assertRaises(HTTPException):
+            confirm("job-api", _ConfirmBody(confirmed=False))
+        self.assertEqual({"status": "running"}, resume("job-api"))
+        self.assertEqual(["job-api"], pipeline.resumed)
+        after = snapshot("job-api", afterEventId=0, issueAfterSampleId=0, issueAfterIssueId=None, limit=200)
+        self.assertEqual((5, 1), (after["job"]["apiBudgetExtra"], after["job"]["apiBudgetRevision"]))
+
+    def test_reviewing_token_budget_uses_a_safe_existing_resume_entry(self) -> None:
+        """Apply may only reopen Export through a public PipelineService entry."""
+        database = StateDatabase.open(self.database_path)
+        try:
+            dataset = Path(self.temporary.name) / "dataset"
+            config = JobConfig(profile="e621", workMode="in_place", overwriteMode="incremental", sourceRoot=str(dataset), schemaVersion=6)
+            config.caption["enabled"] = config.classify["enabled"] = config.replace["enabled"] = False
+            config.countReview["enabled"] = False  # type: ignore[index]
+            config.tokenBudget.update({  # type: ignore[union-attr]
+                "resourceManifestRelativePath": "tokenizers\\anima\\resource.json",
+                "resourceFingerprint": "a" * 64,
+                "contextLimit": 40960,
+            })
+            database.connection.execute(
+                "UPDATE jobs SET config_schema_version=?,config_json=?,config_hash=? WHERE job_id=?",
+                (6, json.dumps(config.to_dict()), config.config_hash, "job-api"),
+            )
+            for module_id in pipeline_module_ids(6):
+                if module_id == "export":
+                    continue
+                database.initialize_module_summary("job-api", module_id, total=1)
+                database.set_module_summary(
+                    "job-api", module_id,
+                    status="completed_with_issues" if module_id == "token_budget" else "completed",
+                    finished=True,
+                )
+            database.set_job_status("job-api", "reviewing", current_module_id="token_budget")
+        finally:
+            database.close()
+        pipeline = PipelineService(self.database_path)
+        try:
+            pipeline._token_budget_export_gate = lambda *_: True  # type: ignore[method-assign]
+            pipeline._thread_main = lambda *_: None  # type: ignore[method-assign]
+            self.assertTrue(pipeline.resume("job-api"))
+        finally:
+            pipeline.close()
+
+    def test_snapshot_exposes_versioned_module_order_without_display_numbers(self) -> None:
+        snapshot = _endpoint(self.app, "/api/jobs/{job_id}", "GET")
+        arguments = {
+            "afterEventId": 0,
+            "issueAfterSampleId": 0,
+            "issueAfterIssueId": None,
+            "limit": 200,
+        }
+        current = snapshot("job-api", **arguments)
+        self.assertEqual(("e621", 3), (current["job"]["profile"], current["job"]["configSchemaVersion"]))
+        self.assertEqual(
+            ["caption", "classify", "replace", "nl", "count_review", "dropout", "export"],
+            current["moduleOrder"],
+        )
+
+        dataset = Path(self.temporary.name) / "dataset"
+        legacy = JobConfig(
+            profile="e621",
+            workMode="in_place",
+            overwriteMode="incremental",
+            sourceRoot=str(dataset),
+            countReview=None,
+            schemaVersion=2,
+        )
+        legacy.nl["promptVersion"] = "nl-default-prompt-v1"
+        database = StateDatabase.open(self.database_path)
+        try:
+            database.connection.execute(
+                "UPDATE jobs SET config_schema_version=?,config_json=?,config_hash=? WHERE job_id=?",
+                (2, json.dumps(legacy.to_dict()), legacy.config_hash, "job-api"),
+            )
+        finally:
+            database.close()
+        frozen_legacy = snapshot("job-api", **arguments)
+        self.assertEqual(("e621", 2), (frozen_legacy["job"]["profile"], frozen_legacy["job"]["configSchemaVersion"]))
+        self.assertEqual(
+            ["caption", "classify", "replace", "nl", "dropout", "export"],
+            frozen_legacy["moduleOrder"],
+        )
+
+    def test_policy_pause_and_resume_forward_to_the_pipeline(self) -> None:
+        class ResumePipeline:
+            def __init__(self) -> None:
+                self.resumed: list[str] = []
+
+            def startup_recovery(self) -> dict[str, int]:
+                return {"interruptedJobs": 0, "clearedDatasetClaims": 0, "deletedJobs": 0, "deletedOverlays": 0}
+
+            def resume(self, job_id: str) -> bool:
+                self.resumed.append(job_id)
+                return True
+
+        database = StateDatabase.open(self.database_path)
+        try:
+            database.initialize_module_summary("job-api", "dropout", total=1, status="running")
+            database.set_job_status("job-api", "running", current_module_id="dropout")
+        finally:
+            database.close()
+        pipeline = ResumePipeline()
+        app = build_control_app(
+            database_path=self.database_path, profile_store=self.profiles, credential_store=self.credentials,
+            preparation_service=self.preparation, pipeline_service=pipeline,  # type: ignore[arg-type]
+        )
+        pause = _endpoint(app, "/api/jobs/{job_id}/policy/pause", "POST")
+        resume = _endpoint(app, "/api/jobs/{job_id}/policy/resume", "POST")
+        self.assertEqual({"status": "paused"}, pause("job-api"))
+        self.assertEqual({"status": "running"}, resume("job-api"))
+        self.assertEqual(["job-api"], pipeline.resumed)
+
+    def test_token_budget_routes_use_the_review_service_and_public_resume_only(self) -> None:
+        class ResumePipeline:
+            def __init__(self) -> None:
+                self.resumed: list[str] = []
+
+            def startup_recovery(self) -> dict[str, int]:
+                return {"interruptedJobs": 0, "clearedDatasetClaims": 0, "deletedJobs": 0, "deletedOverlays": 0}
+
+            def resume(self, job_id: str) -> bool:
+                self.resumed.append(job_id)
+                return False
+
+        class ReviewService:
+            def page(self, *, after_sample_id, limit):
+                return {"items": [], "targetCount": 0, "nextAfterSampleId": None}
+
+            def recount(self, sample_id: int, *, expected_version: int, annotation: dict[str, object]):
+                if sample_id == 400:
+                    raise TokenBudgetReviewError("Token Budget overflow review is unavailable")
+                return {"sampleId": sample_id, "version": expected_version + 1, "annotation": annotation}
+
+            def rewrite_short(self, *, sample_ids, expected_versions):
+                return {"operationId": "a" * 64, "sampleIds": sample_ids, "proposals": []}
+
+            def apply(self, sample_id: int, *, expected_version: int):
+                if expected_version == 99:
+                    raise TokenBudgetReviewConflictError("version conflict")
+                return {"sampleId": sample_id, "status": "within_budget"}
+
+        pipeline = ResumePipeline()
+        app = build_control_app(
+            database_path=self.database_path,
+            profile_store=self.profiles,
+            credential_store=self.credentials,
+            preparation_service=self.preparation,
+            pipeline_service=pipeline,  # type: ignore[arg-type]
+        )
+        service = ReviewService()
+        with patch("anima_core.api_token_budget._service", return_value=service):
+            reviews = _endpoint(app, "/api/jobs/{job_id}/token-budget/reviews", "GET")
+            recount = _endpoint(app, "/api/jobs/{job_id}/token-budget/recount", "POST")
+            rewrite = _endpoint(app, "/api/jobs/{job_id}/token-budget/rewrite-short", "POST")
+            apply = _endpoint(app, "/api/jobs/{job_id}/token-budget/apply", "POST")
+            self.assertEqual(0, reviews("job-api", afterSampleId=0, limit=1)["targetCount"])
+            self.assertEqual(2, recount("job-api", _TokenBudgetRecountBody(sampleId=1, expectedVersion=1, annotation={})) ["proposal"]["version"])
+            with self.assertRaises(HTTPException) as bad_recount:
+                recount("job-api", _TokenBudgetRecountBody(sampleId=400, expectedVersion=1, annotation={}))
+            self.assertEqual([1], rewrite("job-api", _TokenBudgetRewriteShortBody(sampleIds=[1], expectedVersions={"1": 1})) ["sampleIds"])
+            response = apply("job-api", _TokenBudgetApplyBody(sampleId=1, expectedVersion=2))
+            self.assertEqual(("within_budget", False), (response["record"]["status"], response["exportStarted"]))
+            with self.assertRaises(HTTPException) as raised:
+                apply("job-api", _TokenBudgetApplyBody(sampleId=1, expectedVersion=99))
+        self.assertEqual(409, raised.exception.status_code)
+        self.assertEqual(400, bad_recount.exception.status_code)
+        self.assertEqual(["job-api"], pipeline.resumed)
+
+    def test_token_budget_apply_keeps_the_durable_record_when_public_resume_cannot_start(self) -> None:
+        class ResumePipeline:
+            def startup_recovery(self) -> dict[str, int]:
+                return {"interruptedJobs": 0, "clearedDatasetClaims": 0, "deletedJobs": 0, "deletedOverlays": 0}
+
+            def resume(self, job_id: str) -> bool:
+                raise PipelineError("token budget blockers remain")
+
+        class ReviewService:
+            def apply(self, sample_id: int, *, expected_version: int) -> dict[str, object]:
+                return {"sampleId": sample_id, "status": "within_budget"}
+
+        app = build_control_app(
+            database_path=self.database_path,
+            profile_store=self.profiles,
+            credential_store=self.credentials,
+            preparation_service=self.preparation,
+            pipeline_service=ResumePipeline(),  # type: ignore[arg-type]
+        )
+        with patch("anima_core.api_token_budget._service", return_value=ReviewService()):
+            apply = _endpoint(app, "/api/jobs/{job_id}/token-budget/apply", "POST")
+            response = apply("job-api", _TokenBudgetApplyBody(sampleId=1, expectedVersion=1))
+        self.assertEqual(("within_budget", False), (response["record"]["status"], response["exportStarted"]))
+
+    def test_short_rewriter_rejects_a_hello_with_forged_runtime_identity_before_processing(self) -> None:
+        class FakeTransport:
+            requests: list[ProtocolEnvelopeV1] = []
+
+            def __init__(self, _: object) -> None:
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_: object) -> None:
+                return None
+
+            def exchange(self, request: ProtocolEnvelopeV1) -> ProtocolEnvelopeV1:
+                self.requests.append(request)
+                return ProtocolEnvelopeV1(
+                    "1.0", "response", "nl-forged", "forged-runtime", "nl", "hello",
+                    {"schemaVersion": 1, "payloadType": "nl_hello_result", "ready": True, "concurrency": 3},
+                    replyTo=request.messageId, jobId="job-api", configHash="a" * 64,
+                )
+
+        database = StateDatabase.open(self.database_path)
+        try:
+            database.connection.execute(
+                "UPDATE jobs SET config_json=?,config_hash=? WHERE job_id='job-api'",
+                (json.dumps({"nl": {"apiProfileId": "profile-review", "systemPrompt": "", "apiPolicy": {"maxHttpAttempts": 1}}}), "a" * 64),
+            )
+            profile = SimpleNamespace(
+                profileId="profile-review", endpoint="https://loopback.invalid", model="test", backupModel=None,
+                apiCredentialRef="review-credential",
+            )
+            context = SimpleNamespace(
+                profile_store=SimpleNamespace(load_all=lambda: [profile]),
+                credential_store=SimpleNamespace(load=lambda _: "secret"),
+                pipeline_service=SimpleNamespace(
+                    install_root=Path(self.temporary.name),
+                    launcher_factory=lambda _: SimpleNamespace(spawn=lambda *_args, **_kwargs: object()),
+                ),
+            )
+            rewriter = _IsolatedShortRewriter(context, database, "job-api")
+            item = {
+                "schemaVersion": 1, "sampleId": 1, "leaseId": "review-rewrite-1-1",
+                "relativeImagePath": "image.png", "imagePath": None, "captionPreset": "general",
+                "lengthTier": "short", "primaryCharacterName": None, "userSupplement": "",
+                "jsonContext": "{}", "ocrContext": None, "currentNl": "",
+            }
+            with patch("anima_core.api_token_budget.StdioJsonlTransport", FakeTransport):
+                with self.assertRaisesRegex(RuntimeError, "NL short rewrite failed"):
+                    rewriter(item)
+        finally:
+            database.close()
+        self.assertEqual(["hello"], [request.method for request in FakeTransport.requests])
+
+    def test_recover_route_forwards_explicit_confirmation_to_pipeline_service(self) -> None:
+        class RecoveryPipeline:
+            def __init__(self) -> None:
+                self.calls: list[tuple[str, bool]] = []
+
+            def startup_recovery(self) -> dict[str, int]:
+                return {"interruptedJobs": 0, "clearedDatasetClaims": 0, "deletedJobs": 0, "deletedOverlays": 0}
+
+            def recover_job(self, job_id: str, *, confirmed: bool) -> dict[str, object]:
+                self.calls.append((job_id, confirmed))
+                return {"jobId": job_id, "started": False, "status": "interrupted", "pendingApiDecisions": 1}
+
+        pipeline = RecoveryPipeline()
+        app = build_control_app(
+            database_path=self.database_path, profile_store=self.profiles, credential_store=self.credentials,
+            preparation_service=self.preparation, pipeline_service=pipeline,  # type: ignore[arg-type]
+        )
+        recover = _endpoint(app, "/api/jobs/{job_id}/recover", "POST")
+        self.assertEqual("interrupted", recover("job-api", _ConfirmBody(confirmed=True))["status"])
+        self.assertEqual([("job-api", True)], pipeline.calls)
+
+    def test_repair_route_starts_the_new_task_and_snapshot_exposes_aggregate_preview(self) -> None:
+        class RepairService:
+            def __init__(self) -> None:
+                self.calls: list[str] = []
+
+            def prepare(self, job_id: str):
+                self.calls.append(job_id)
+                from anima_core.repair import RepairPreparationResult
+                return RepairPreparationResult("repair-api", job_id, 3, "dataset", "overlay")
+
+        class RepairPipeline:
+            def __init__(self) -> None:
+                self.started: list[str] = []
+
+            def startup_recovery(self) -> dict[str, int]:
+                return {"interruptedJobs": 0, "clearedDatasetClaims": 0, "deletedJobs": 0, "deletedOverlays": 0}
+
+            def start(self, job_id: str) -> None:
+                self.started.append(job_id)
+
+        repair = RepairService()
+        pipeline = RepairPipeline()
+        app = build_control_app(
+            database_path=self.database_path, profile_store=self.profiles, credential_store=self.credentials,
+            preparation_service=self.preparation, pipeline_service=pipeline, repair_service=repair,  # type: ignore[arg-type]
+        )
+        repair_route = _endpoint(app, "/api/jobs/{job_id}/repair", "POST")
+        response = repair_route("job-api")
+        self.assertEqual(("repair-api", "job-api", 0, True), (response["jobId"], response["parentJobId"], response["estimatedApiRequests"], response["started"]))
+        self.assertEqual((["job-api"], ["repair-api"]), (repair.calls, pipeline.started))
+        snapshot = _endpoint(self.app, "/api/jobs/{job_id}", "GET")("job-api", afterEventId=0, issueAfterSampleId=0, issueAfterIssueId=None, limit=200)
+        self.assertEqual({"eligibleTargetCount": 0, "estimatedApiRequests": 0}, snapshot["repairPreview"])
+
+    def test_preflight_and_workspace_confirmation_are_separate_calls(self) -> None:
+        preflight = _endpoint(self.app, "/api/jobs/preflight", "POST")
+        confirm = _endpoint(self.app, "/api/jobs/{job_id}/confirm-workspace", "POST")
+        config = JobConfig(profile="e621", workMode="in_place", overwriteMode="incremental", sourceRoot=str(Path(self.temporary.name) / "dataset"))
+        config.nl["systemPrompt"] = "describe"
+        result = preflight(_PreflightBody(config=config.to_dict()))
+        self.assertEqual(0, result["sampleCount"])
+        with self.assertRaises(HTTPException):
+            confirm(result["jobId"], _WorkspaceBody(confirmed=False, confirmedRebuild=False))
+        workspace = confirm(result["jobId"], _WorkspaceBody(confirmed=True, confirmedRebuild=False))
+        self.assertEqual("preparing_workspace", workspace["status"])
+
+    def test_start_requires_confirmed_workspace_and_runs_mandatory_export(self) -> None:
+        preflight = _endpoint(self.app, "/api/jobs/preflight", "POST")
+        confirm = _endpoint(self.app, "/api/jobs/{job_id}/confirm-workspace", "POST")
+        start = _endpoint(self.app, "/api/jobs/{job_id}/start", "POST")
+        config = JobConfig(profile="e621", workMode="in_place", overwriteMode="incremental", sourceRoot=str(Path(self.temporary.name) / "dataset"))
+        config.caption["enabled"] = config.classify["enabled"] = config.replace["enabled"] = config.nl["enabled"] = False
+        config.countReview["enabled"] = False  # type: ignore[index]
+        job_id = preflight(_PreflightBody(config=config.to_dict()))["jobId"]
+        with self.assertRaises(HTTPException):
+            start(job_id)
+        confirm(job_id, _WorkspaceBody(confirmed=True, confirmedRebuild=False))
+        self.assertEqual({"jobId": job_id, "started": True}, start(job_id))
+        for _ in range(100):
+            database = StateDatabase.open(self.database_path)
+            try:
+                if database.get_job(job_id)["status"] == "succeeded":
+                    self.assertEqual(7, len(database.module_summaries(job_id)))
+                    break
+            finally:
+                database.close()
+            time.sleep(0.01)
+        else:
+            self.fail("disabled module pipeline did not reach successful export")
+
+    def test_restore_original_annotations_requires_confirmation_and_uses_task_backup(self) -> None:
+        restore = _endpoint(self.app, "/api/jobs/{job_id}/restore-original-annotations", "POST")
+        dataset = Path(self.temporary.name) / "dataset"
+        original_json, original_txt = b'{"tags":["original"]}\n', b"original\n"
+        (dataset / "image.json").write_bytes(original_json)
+        (dataset / "image.txt").write_bytes(original_txt)
+        backup_dir = dataset.parent / ".dataset.anima-backups"
+        backup_dir.mkdir()
+        write_backup(dataset, backup_dir / "job-api.zip", lambda cursor: [{"sample_id": 1, "annotation_key": "image", "in_processing_scope": True}] if cursor is None else [])
+        (dataset / "image.json").write_bytes(b'{"tags":["new"]}\n')
+        (dataset / "image.txt").write_bytes(b"new\n")
+        database = StateDatabase.open(self.database_path)
+        try:
+            # A committed task keeps no overlay (F10), so restoration must not depend on one.
+            database.connection.execute("UPDATE jobs SET overlay_root=NULL,dataset_root=?,status='succeeded' WHERE job_id='job-api'", (str(dataset),))
+        finally:
+            database.close()
+        with self.assertRaises(HTTPException):
+            restore("job-api", _ConfirmBody(confirmed=False))
+        response = restore("job-api", _ConfirmBody(confirmed=True))
+        self.assertEqual(("job-api", 2), (response["jobId"], response["restored"]))
+        self.assertEqual(original_json, (dataset / "image.json").read_bytes())
+        self.assertEqual(original_txt, (dataset / "image.txt").read_bytes())
+
+    def test_snapshot_exposes_bounded_export_summary_without_issue_payload(self) -> None:
+        dataset = Path(self.temporary.name) / "dataset"
+        layout = OverlayLayout.create(dataset, "job-api")
+        database = StateDatabase.open(self.database_path)
+        try:
+            database.connection.execute("UPDATE jobs SET overlay_root=?, status='exporting', current_module_id='export' WHERE job_id='job-api'", (str(layout.root),))
+            database.connection.execute("INSERT INTO module_summary(job_id,module_id,status,completed,failed,skipped,issue_count) VALUES('job-api','export','completed',12,3,4,3)")
+            write_journal(layout, CommitJournal("job-api", "backup_verified", dataset, dataset.parent / ".dataset.anima-stage-jobapi", dataset.parent / ".dataset.anima-rollback-jobapi", dataset.parent / ".dataset.anima-backups" / "job-api.zip"))
+        finally:
+            database.close()
+        snapshot = _endpoint(self.app, "/api/jobs/{job_id}", "GET")("job-api", afterEventId=0, issueAfterSampleId=0, issueAfterIssueId=None, limit=200)
+        self.assertEqual({"format":"both","commitStatus":"backup_verified","scanned":19,"valid":12,"invalid":3,"exported":0,"skipped":4,"issueCount":3,"issuesPageEndpoint":"/api/jobs/job-api?issueAfterSampleId=0","convertedSamples":0,"conversions":{}}, snapshot["exportSummary"])
+
+    def test_snapshot_uses_event_cursor_and_keyset_paged_issues_with_attempts(self) -> None:
+        database = StateDatabase.open(self.database_path)
+        try:
+            config_hash = str(database.get_job("job-api")["config_hash"])
+            for event_id in (1, 2, 3):
+                database.append_event(ProgressEvent("job-api", event_id, "nl", "running", event_id, 3, config_hash, event_id))
+            # The production ring retains a bounded suffix. Simulate that truncation directly.
+            database.connection.execute("DELETE FROM event_ring WHERE job_id='job-api' AND event_id=1")
+            for sample_id, attempt in ((1, 1), (2, 2), (3, 3)):
+                database.upsert_issue(SampleIssue(
+                    issueId=f"issue-{sample_id}", jobId="job-api", sampleId=sample_id,
+                    relativeImagePath=f"{sample_id}.png", moduleId="nl", code="api_retry",
+                    severity="error", blocking=True, retriable=True, message="retry", attempt=attempt,
+                    repairStartModule="nl",
+                ))
+        finally:
+            database.close()
+
+        snapshot = _endpoint(self.app, "/api/jobs/{job_id}", "GET")
+        first = snapshot("job-api", afterEventId=0, issueAfterSampleId=0, issueAfterIssueId=None, limit=2)
+        self.assertTrue(first["snapshotRequired"])
+        self.assertEqual([2, 3], [event["event_id"] for event in first["events"]])
+        self.assertEqual([(1, 1), (2, 2)], [(issue["sample_id"], issue["attempt"]) for issue in first["issues"]])
+        self.assertEqual(2, first["nextIssueAfterSampleId"])
+        second = snapshot("job-api", afterEventId=first["nextAfterEventId"], issueAfterSampleId=first["nextIssueAfterSampleId"], issueAfterIssueId=first["nextIssueAfterIssueId"], limit=2)
+        self.assertFalse(second["snapshotRequired"])
+        self.assertEqual([(3, 3)], [(issue["sample_id"], issue["attempt"]) for issue in second["issues"]])
+
+    def test_pin_cancel_and_discard_use_persisted_lifecycle_guards(self) -> None:
+        pin = _endpoint(self.app, "/api/jobs/{job_id}/pin", "PUT")
+        cancel = _endpoint(self.app, "/api/jobs/{job_id}/cancel", "POST")
+        discard = _endpoint(self.app, "/api/jobs/{job_id}/discard", "POST")
+        self.assertEqual({"pinned": True}, pin("job-api", _PinBody(pinned=True)))
+        self.assertEqual({"status": "cancelled_recoverable"}, cancel("job-api"))
+        with self.assertRaises(HTTPException):
+            discard("job-api", _ConfirmBody(confirmed=False))
+        self.assertEqual({"jobId": "job-api", "overlayDeleted": False}, discard("job-api", _ConfirmBody(confirmed=True)))
+
+    def test_startup_freezes_jobs_an_earlier_process_left_running(self) -> None:
+        # F15: the control plane must run the whole startup recovery sequence, not only
+        # `recover_pending_commits`, which never marked an abandoned job as interrupted.
+        build_control_app(
+            database_path=self.database_path, profile_store=self.profiles,
+            credential_store=self.credentials, preparation_service=self.preparation,
+        )
+        database = StateDatabase.open(self.database_path)
+        try:
+            job = database.get_job("job-api")
+            self.assertEqual(("interrupted", "running"), (job["status"], job["resume_status"]))
+        finally:
+            database.close()
+
+    def test_snapshot_exposes_frozen_job_state_fields_and_pending_api_decisions(self) -> None:
+        # F41 / F28: ROADMAP.md:1233-1246 JobState fields plus the possibly-billed request count.
+        database = StateDatabase.open(self.database_path)
+        try:
+            config_hash = str(database.get_job("job-api")["config_hash"])
+            database.connection.execute(
+                "UPDATE sample_state SET current_module_id='nl',status='request_started' WHERE job_id='job-api'"
+            )
+        finally:
+            database.close()
+        snapshot = _endpoint(self.app, "/api/jobs/{job_id}", "GET")("job-api", afterEventId=0, issueAfterSampleId=0, issueAfterIssueId=None, limit=200)
+        self.assertEqual(1, snapshot["nlPendingApiDecisions"])
+        job = snapshot["job"]
+        self.assertEqual((config_hash, 1, "2026-07-24T00:00:00Z"), (job["configHash"], job["manifestSchemaVersion"], job["createdAt"]))
+        self.assertIsNotNone(job["startedAt"])
+        self.assertEqual((None, None), (job["cancelRequestedAt"], job["finishedAt"]))
+
+    def test_snapshot_pages_issues_by_the_composite_sample_and_issue_cursor(self) -> None:
+        # F33: two issues on one sample used to lose the second one at a page boundary.
+        database = StateDatabase.open(self.database_path)
+        try:
+            for issue_id, code in (("issue-a", "api_retry"), ("issue-b", "api_timeout")):
+                database.upsert_issue(SampleIssue(
+                    issueId=issue_id, jobId="job-api", sampleId=1, relativeImagePath="image.png",
+                    moduleId="nl", code=code, severity="error", blocking=True, retriable=True,
+                    message="retry", attempt=1, repairStartModule="nl",
+                ))
+        finally:
+            database.close()
+        snapshot = _endpoint(self.app, "/api/jobs/{job_id}", "GET")
+        first = snapshot("job-api", afterEventId=0, issueAfterSampleId=0, issueAfterIssueId=None, limit=1)
+        self.assertEqual([("issue-a", 1)], [(issue["issue_id"], issue["sample_id"]) for issue in first["issues"]])
+        self.assertEqual((1, "issue-a"), (first["nextIssueAfterSampleId"], first["nextIssueAfterIssueId"]))
+        second = snapshot(
+            "job-api", afterEventId=0, issueAfterSampleId=first["nextIssueAfterSampleId"],
+            issueAfterIssueId=first["nextIssueAfterIssueId"], limit=1,
+        )
+        self.assertEqual(["issue-b"], [issue["issue_id"] for issue in second["issues"]])
+
+    def test_snapshot_treats_a_released_overlay_as_a_normal_terminal_state(self) -> None:
+        # F10: a succeeded task whose overlay was discarded must not turn the snapshot into a 400.
+        database = StateDatabase.open(self.database_path)
+        try:
+            database.connection.execute(
+                "UPDATE jobs SET overlay_root=?,status='succeeded' WHERE job_id='job-api'",
+                (str(Path(self.temporary.name) / "gone" / ".dataset.anima-overlay-job-api"),),
+            )
+        finally:
+            database.close()
+        snapshot = _endpoint(self.app, "/api/jobs/{job_id}", "GET")("job-api", afterEventId=0, issueAfterSampleId=0, issueAfterIssueId=None, limit=200)
+        self.assertEqual("succeeded", snapshot["job"]["status"])
+        self.assertEqual("committed", snapshot["exportSummary"]["commitStatus"])
+
+    def test_job_list_pages_newest_first_by_a_composite_cursor(self) -> None:
+        # F40: without a task list a refreshed page can only retype a 32 hex-digit jobId.
+        database = StateDatabase.open(self.database_path)
+        try:
+            template = dict(database.get_job("job-api"))
+            for job_id, created_at in (("job-older", "2026-07-23T00:00:00Z"), ("job-newer", "2026-07-25T00:00:00Z")):
+                database.insert_job({**template, "job_id": job_id, "created_at": created_at, "status": "succeeded"})
+        finally:
+            database.close()
+        listing = _endpoint(self.app, "/api/jobs", "GET")
+        first = listing(afterCreatedAt=None, afterJobId=None, limit=2)
+        self.assertEqual(["job-newer", "job-api"], [job["jobId"] for job in first["jobs"]])
+        self.assertEqual(["e621", "e621"], [job["profile"] for job in first["jobs"]])
+        self.assertEqual(("2026-07-24T00:00:00Z", "job-api"), (first["nextAfterCreatedAt"], first["nextAfterJobId"]))
+        second = listing(afterCreatedAt=first["nextAfterCreatedAt"], afterJobId=first["nextAfterJobId"], limit=2)
+        self.assertEqual(["job-older"], [job["jobId"] for job in second["jobs"]])
+        self.assertEqual((None, None), (second["nextAfterCreatedAt"], second["nextAfterJobId"]))
+        with self.assertRaises(HTTPException):
+            listing(afterCreatedAt="2026-07-24T00:00:00Z", afterJobId=None, limit=2)
+
+    def test_preflight_response_exposes_every_frozen_preflight_page_field(self) -> None:
+        # F39: ROADMAP.md:1224 requires blank counts, projection, estimates and API bounds.
+        preflight = _endpoint(self.app, "/api/jobs/preflight", "POST")
+        config = JobConfig(profile="e621", workMode="in_place", overwriteMode="incremental", sourceRoot=str(Path(self.temporary.name) / "dataset"))
+        config.nl["systemPrompt"] = "describe"
+        result = preflight(_PreflightBody(config=config.to_dict()))
+        self.assertLessEqual(
+            {"blankTxtCount", "blankJsonCount", "annotationKeyCollisionCount", "imageIssueCount", "projection", "estimate", "api"},
+            set(result),
+        )
+        self.assertEqual("both", result["projection"]["format"])
+        self.assertIn("incrementalWriteBytes", result["estimate"])
+        self.assertIn("httpAttemptBudget", result["api"])
+
+    def test_default_nl_prompt_endpoint_serves_the_version_frozen_resource(self) -> None:
+        # F25: the editor default and "restore default" have exactly one source of truth.
+        prompt = _endpoint(self.app, "/api/nl/default-prompt", "GET")()
+        self.assertEqual("nl-default-prompt-v2", prompt["promptVersion"])
+        self.assertEqual(64, len(str(prompt["sha256"])))
+        self.assertIn("120-180+ words", str(prompt["systemPrompt"]))
+
+    def test_default_nl_prompt_endpoint_keeps_v2_default_and_allows_explicit_v3(self) -> None:
+        endpoint = _endpoint(self.app, "/api/nl/default-prompt", "GET")
+        self.assertIn("promptVersion", inspect.signature(endpoint).parameters)
+        v2 = endpoint()
+        v3 = endpoint(promptVersion="nl-default-prompt-v3")
+        self.assertEqual("nl-default-prompt-v2", v2["promptVersion"])
+        self.assertEqual("nl-default-prompt-v3", v3["promptVersion"])
+        self.assertNotIn("120-180+ words", str(v3["systemPrompt"]))
+
+    def test_desktop_shutdown_is_token_gated_and_static_files_follow_api_routes(self) -> None:
+        static_root = Path(self.temporary.name) / "frontend"
+        static_root.mkdir()
+        (static_root / "index.html").write_text("<!doctype html><title>Anima</title>", encoding="utf-8")
+        callbacks: list[str] = []
+        app = build_control_app(
+            database_path=self.database_path, profile_store=self.profiles, credential_store=self.credentials,
+            preparation_service=self.preparation, static_root=static_root, shutdown_token="a" * 64,
+            shutdown_callback=lambda: callbacks.append("called"),
+        )
+        shutdown = _endpoint(app, "/api/application/shutdown", "POST")
+        with self.assertRaises(HTTPException) as rejected:
+            shutdown(_ShutdownBody(token="b" * 64))
+        self.assertEqual(404, rejected.exception.status_code)
+        self.assertEqual({"accepted": True}, shutdown(_ShutdownBody(token="a" * 64)))
+        self.assertEqual(["called"], callbacks)
+        mount = next(route for route in app.routes if isinstance(route, Mount))
+        self.assertEqual("", mount.path)
+        self.assertIs(app.routes[-1], mount)
+        with self.assertRaisesRegex(ValueError, "index.html"):
+            build_control_app(
+                database_path=self.database_path, profile_store=self.profiles, credential_store=self.credentials,
+                preparation_service=self.preparation, static_root=Path(self.temporary.name) / "missing",
+            )
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -1,0 +1,309 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "anima://contracts/ocr-worker-v1",
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "inference": {
+      "type": "object",
+      "required": [
+        "useDocOrientationClassify",
+        "useDocUnwarping",
+        "useTextlineOrientation",
+        "textRecScoreThresh",
+        "textDetLimitSideLen",
+        "textDetLimitType"
+      ],
+      "properties": {
+        "useDocOrientationClassify": {"type": "boolean", "const": false},
+        "useDocUnwarping": {"type": "boolean", "const": false},
+        "useTextlineOrientation": {"type": "boolean", "const": true},
+        "textRecScoreThresh": {"type": "number", "const": 0},
+        "textDetLimitSideLen": {"type": "integer", "minimum": 1920, "maximum": 3840, "multipleOf": 32},
+        "textDetLimitType": {"type": "string", "const": "max"}
+      },
+      "additionalProperties": false
+    },
+    "executionTuning": {
+      "type": "object",
+      "required": ["textDetLimitSideLen", "textBatchSize"],
+      "properties": {
+        "textDetLimitSideLen": {"type": "integer", "minimum": 1920, "maximum": 3840, "multipleOf": 32},
+        "textBatchSize": {"type": "integer", "minimum": 1, "maximum": 8}
+      },
+      "additionalProperties": false
+    },
+    "image": {
+      "type": "object",
+      "required": ["width", "height", "sizeBytes", "sha256"],
+      "properties": {
+        "width": {"type": "integer", "minimum": 1, "maximum": 1000000},
+        "height": {"type": "integer", "minimum": 1, "maximum": 1000000},
+        "sizeBytes": {"type": "integer", "minimum": 1},
+        "sha256": {"$ref": "#/$defs/sha256"}
+      },
+      "additionalProperties": false
+    },
+    "point": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "items": {"type": "number"}
+    },
+    "rawItem": {
+      "type": "object",
+      "required": ["text", "confidence", "polygonPixels", "bboxPixels", "textlineOrientationDegrees"],
+      "properties": {
+        "text": {"type": "string", "minLength": 1, "maxLength": 16384},
+        "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+        "polygonPixels": {
+          "type": "array",
+          "minItems": 4,
+          "maxItems": 4,
+          "items": {"$ref": "#/$defs/point"}
+        },
+        "bboxPixels": {
+          "type": "array",
+          "minItems": 4,
+          "maxItems": 4,
+          "items": {"type": "number"}
+        },
+        "textlineOrientationDegrees": {"type": "number"}
+      },
+      "additionalProperties": false
+    },
+    "workItem": {
+      "type": "object",
+      "required": [
+        "schemaVersion",
+        "sampleId",
+        "leaseId",
+        "relativeImagePath",
+        "imagePath",
+        "imageSize",
+        "imageSha256"
+      ],
+      "properties": {
+        "schemaVersion": {"const": 1},
+        "sampleId": {"type": "integer", "minimum": 1},
+        "leaseId": {"type": "string", "minLength": 1, "maxLength": 128},
+        "relativeImagePath": {"type": "string", "minLength": 1, "maxLength": 16384},
+        "imagePath": {"type": "string", "minLength": 1, "maxLength": 16384},
+        "imageSize": {"type": "integer", "minimum": 1},
+        "imageSha256": {"$ref": "#/$defs/sha256"}
+      },
+      "additionalProperties": false
+    },
+    "inferenceFailure": {
+      "type": "object",
+      "required": ["code", "message", "retriable"],
+      "properties": {
+        "code": {"const": "ocr_inference_failed"},
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024,
+          "pattern": "^(?!.*(?:[A-Za-z]:[\\\\/]|\\\\\\\\)).*$"
+        },
+        "retriable": {"const": true}
+      },
+      "additionalProperties": false
+    },
+    "imageTooLargeDetails": {
+      "type": "object",
+      "required": ["actualPixels", "maxPixels", "maxSide"],
+      "properties": {
+        "actualPixels": {"type": "integer", "minimum": 0},
+        "maxPixels": {"type": "integer", "const": 40000000},
+        "maxSide": {"type": "integer", "const": 16384}
+      },
+      "additionalProperties": false
+    },
+    "imageTooLargeFailure": {
+      "type": "object",
+      "required": ["code", "message", "retriable", "details"],
+      "properties": {
+        "code": {"const": "ocr_image_too_large"},
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024,
+          "pattern": "^(?!.*(?:[A-Za-z]:[\\\\/]|\\\\\\\\)).*$"
+        },
+        "retriable": {"const": false},
+        "details": {"$ref": "#/$defs/imageTooLargeDetails"}
+      },
+      "additionalProperties": false
+    },
+    "failure": {
+      "oneOf": [
+        {"$ref": "#/$defs/inferenceFailure"},
+        {"$ref": "#/$defs/imageTooLargeFailure"}
+      ]
+    },
+    "outcomeIdentity": {
+      "type": "object",
+      "required": [
+        "schemaVersion",
+        "status",
+        "sampleId",
+        "leaseId",
+        "relativeImagePath",
+        "image",
+        "items"
+      ],
+      "properties": {
+        "schemaVersion": {"const": 1},
+        "sampleId": {"type": "integer", "minimum": 1},
+        "leaseId": {"type": "string", "minLength": 1, "maxLength": 128},
+        "relativeImagePath": {"type": "string", "minLength": 1, "maxLength": 16384},
+        "image": {"$ref": "#/$defs/image"}
+      }
+    },
+    "successOutcome": {
+      "allOf": [
+        {"$ref": "#/$defs/outcomeIdentity"},
+        {
+          "type": "object",
+          "required": ["schemaVersion", "status", "sampleId", "leaseId", "relativeImagePath", "image", "items"],
+          "properties": {
+            "schemaVersion": {"const": 1},
+            "status": {"const": "success"},
+            "sampleId": {"type": "integer", "minimum": 1},
+            "leaseId": {"type": "string", "minLength": 1, "maxLength": 128},
+            "relativeImagePath": {"type": "string", "minLength": 1, "maxLength": 16384},
+            "image": {"$ref": "#/$defs/image"},
+            "items": {"type": "array", "minItems": 1, "maxItems": 1024, "items": {"$ref": "#/$defs/rawItem"}}
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "noTextOutcome": {
+      "allOf": [
+        {"$ref": "#/$defs/outcomeIdentity"},
+        {
+          "type": "object",
+          "required": ["schemaVersion", "status", "sampleId", "leaseId", "relativeImagePath", "image", "items"],
+          "properties": {
+            "schemaVersion": {"const": 1},
+            "status": {"const": "no_text"},
+            "sampleId": {"type": "integer", "minimum": 1},
+            "leaseId": {"type": "string", "minLength": 1, "maxLength": 128},
+            "relativeImagePath": {"type": "string", "minLength": 1, "maxLength": 16384},
+            "image": {"$ref": "#/$defs/image"},
+            "items": {"type": "array", "minItems": 0, "maxItems": 0}
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "failedOutcome": {
+      "allOf": [
+        {"$ref": "#/$defs/outcomeIdentity"},
+        {
+          "type": "object",
+          "required": ["schemaVersion", "status", "sampleId", "leaseId", "relativeImagePath", "image", "items", "error"],
+          "properties": {
+            "schemaVersion": {"const": 1},
+            "status": {"const": "failed"},
+            "sampleId": {"type": "integer", "minimum": 1},
+            "leaseId": {"type": "string", "minLength": 1, "maxLength": 128},
+            "relativeImagePath": {"type": "string", "minLength": 1, "maxLength": 16384},
+            "image": {"$ref": "#/$defs/image"},
+            "items": {"type": "array", "minItems": 0, "maxItems": 0},
+            "error": {"$ref": "#/$defs/failure"}
+          },
+          "additionalProperties": false
+        }
+      ]
+    }
+  },
+  "oneOf": [
+    {
+      "type": "object",
+      "required": ["schemaVersion", "payloadType", "jobId", "configHash", "resourceId", "resourceManifestRelativePath", "resourceFingerprint", "inference"],
+      "properties": {
+        "schemaVersion": {"const": 1},
+        "payloadType": {"const": "ocr_hello_request"},
+        "jobId": {"type": "string", "minLength": 1, "maxLength": 128},
+        "configHash": {"$ref": "#/$defs/sha256"},
+        "resourceId": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,127}$"},
+        "resourceManifestRelativePath": {"type": "string", "minLength": 1, "maxLength": 16384},
+        "resourceFingerprint": {"$ref": "#/$defs/sha256"},
+        "inference": {"$ref": "#/$defs/inference"},
+        "executionTuning": {"$ref": "#/$defs/executionTuning"},
+        "requestedDevice": {"enum": ["auto", "cuda", "cpu"]},
+        "expectedRuntimeId": {"enum": ["ocr-paddle", "ocr-paddle-gpu"]},
+        "expectedRuntimeFingerprint": {"$ref": "#/$defs/sha256"}
+      },
+      "allOf": [
+        {"if": {"anyOf": [{"required": ["requestedDevice"]}, {"required": ["expectedRuntimeId"]}, {"required": ["expectedRuntimeFingerprint"]}]}, "then": {"required": ["requestedDevice", "expectedRuntimeId", "expectedRuntimeFingerprint"]}},
+        {"if": {"properties": {"requestedDevice": {"const": "cuda"}}, "required": ["requestedDevice"]}, "then": {"properties": {"expectedRuntimeId": {"const": "ocr-paddle-gpu"}}}},
+        {"if": {"properties": {"requestedDevice": {"const": "cpu"}}, "required": ["requestedDevice"]}, "then": {"properties": {"expectedRuntimeId": {"const": "ocr-paddle"}}}}
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["schemaVersion", "payloadType", "ready", "executable", "pythonVersion", "modelSessionLoads", "resourceFingerprint"],
+      "properties": {
+        "schemaVersion": {"const": 1},
+        "payloadType": {"const": "ocr_hello_result"},
+        "ready": {"const": true},
+        "executable": {"type": "string", "minLength": 1, "maxLength": 16384},
+        "pythonVersion": {"const": "3.11.15"},
+        "modelSessionLoads": {"const": 1},
+        "resourceFingerprint": {"$ref": "#/$defs/sha256"},
+        "requestedDevice": {"enum": ["auto", "cuda", "cpu"]},
+        "observedDevice": {"enum": ["cpu", "cuda"]},
+        "runtimeId": {"enum": ["ocr-paddle", "ocr-paddle-gpu"]},
+        "runtimeFingerprint": {"$ref": "#/$defs/sha256"},
+        "paddleVersion": {"type": "string", "minLength": 1, "maxLength": 128},
+        "compiledWithCuda": {"type": "boolean"},
+        "cudaVersion": {"type": ["null", "string"], "maxLength": 128},
+        "gpuName": {"type": ["null", "string"], "maxLength": 256},
+        "totalVramBytes": {"type": ["null", "integer"], "minimum": 0}
+      },
+      "allOf": [
+        {"if": {"anyOf": [{"required": ["requestedDevice"]}, {"required": ["observedDevice"]}, {"required": ["runtimeId"]}, {"required": ["runtimeFingerprint"]}, {"required": ["paddleVersion"]}, {"required": ["compiledWithCuda"]}, {"required": ["cudaVersion"]}, {"required": ["gpuName"]}, {"required": ["totalVramBytes"]}]}, "then": {"required": ["requestedDevice", "observedDevice", "runtimeId", "runtimeFingerprint", "paddleVersion", "compiledWithCuda", "cudaVersion", "gpuName", "totalVramBytes"]}},
+        {"if": {"properties": {"observedDevice": {"const": "cpu"}}, "required": ["observedDevice"]}, "then": {"properties": {"runtimeId": {"const": "ocr-paddle"}, "compiledWithCuda": {"const": false}, "cudaVersion": {"type": "null"}, "gpuName": {"type": "null"}, "totalVramBytes": {"type": "null"}}}},
+        {"if": {"properties": {"observedDevice": {"const": "cuda"}}, "required": ["observedDevice"]}, "then": {"properties": {"runtimeId": {"const": "ocr-paddle-gpu"}, "compiledWithCuda": {"const": true}, "cudaVersion": {"type": "string", "minLength": 1, "maxLength": 128}, "gpuName": {"type": "string", "minLength": 1, "maxLength": 256}}}}
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["schemaVersion", "payloadType", "items"],
+      "properties": {
+        "schemaVersion": {"const": 1},
+        "payloadType": {"const": "ocr_process_request"},
+        "items": {"type": "array", "minItems": 1, "maxItems": 1024, "items": {"$ref": "#/$defs/workItem"}}
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["schemaVersion", "payloadType", "items"],
+      "properties": {
+        "schemaVersion": {"const": 1},
+        "payloadType": {"const": "ocr_process_result"},
+        "items": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1024,
+          "items": {
+            "oneOf": [
+              {"$ref": "#/$defs/successOutcome"},
+              {"$ref": "#/$defs/noTextOutcome"},
+              {"$ref": "#/$defs/failedOutcome"}
+            ]
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  ]
+}

@@ -1,0 +1,167 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "anima://contracts/classify-worker-v1",
+  "$defs": {
+    "captionFormat": {
+      "type": "object",
+      "required": ["replaceUnderscoresWithSpaces", "preserveEscapes", "triggersEnabled", "triggerTerms"],
+      "properties": {
+        "replaceUnderscoresWithSpaces": {"type": "boolean"},
+        "preserveEscapes": {"type": "boolean"},
+        "triggersEnabled": {"type": "boolean"},
+        "triggerTerms": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {"type": "string", "minLength": 1, "maxLength": 512, "pattern": "^[^,\\r\\n\\u0000]+$"}
+        }
+      },
+      "additionalProperties": false
+    },
+    "workItem": {
+      "type": "object",
+      "required": ["schemaVersion", "sampleId", "leaseId", "source", "relativeImagePath", "annotationKey", "txtText", "txtProvenance", "originalCount"],
+      "properties": {
+        "schemaVersion": {"const": 1},
+        "sampleId": {"type": "integer", "minimum": 1},
+        "leaseId": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"},
+        "source": {"enum": ["e621", "danbooru"]},
+        "relativeImagePath": {"type": "string", "minLength": 1, "maxLength": 16384},
+        "annotationKey": {"type": "string", "minLength": 1, "maxLength": 16384},
+        "txtText": {"type": "string", "minLength": 1, "maxLength": 262144},
+        "txtProvenance": {"enum": ["missing", "original_preserved", "module1_written"]},
+        "originalCount": {"type": ["null", "string", "integer"]}
+      },
+      "additionalProperties": false
+    },
+    "projection": {
+      "type": "object",
+      "required": ["quality", "count", "character", "series", "artist", "appearance", "tags", "environment", "nl"],
+      "properties": {
+        "quality": {"const": []},
+        "count": {"enum": ["", "solo", "duo", "trio", "group"]},
+        "character": {"type": "string"},
+        "series": {"type": "string", "maxLength": 262144, "pattern": "^[^\\r\\n\\u0000]*$"},
+        "artist": {"const": ""},
+        "appearance": {"$ref": "#/$defs/tagArray"},
+        "tags": {"$ref": "#/$defs/tagArray"},
+        "environment": {"$ref": "#/$defs/tagArray"},
+        "nl": {"const": ""}
+      },
+      "additionalProperties": false
+    },
+    "tagArray": {
+      "type": "array",
+      "maxItems": 16384,
+      "uniqueItems": true,
+      "items": {"type": "string", "minLength": 1, "maxLength": 512, "pattern": "^[^,\\r\\n\\u0000]+$"}
+    },
+    "countDecision": {
+      "type": "object",
+      "required": ["value", "baseValue", "selectedSource", "originalRaw", "originalNormalized", "wikiValue", "matchedTags", "conflict", "issueCodes", "warnings", "appliedLowerBounds"],
+      "properties": {
+        "value": {"enum": ["", "solo", "duo", "trio", "group"]},
+        "baseValue": {"enum": ["", "solo", "duo", "trio", "group"]},
+        "selectedSource": {"enum": ["original_json", "wiki_tags", "none"]},
+        "originalRaw": {"type": ["null", "string", "integer"]},
+        "originalNormalized": {"type": ["null", "string"], "enum": [null, "solo", "duo", "trio", "group"]},
+        "wikiValue": {"type": ["null", "string"], "enum": [null, "solo", "duo", "trio", "group"]},
+        "matchedTags": {"$ref": "#/$defs/tagArray"},
+        "conflict": {"type": "boolean"},
+        "issueCodes": {"$ref": "#/$defs/codeArray"},
+        "warnings": {"$ref": "#/$defs/codeArray"},
+        "appliedLowerBounds": {"type": "array", "maxItems": 3, "uniqueItems": true, "items": {"enum": ["character", "e621_relationship", "danbooru_girl", "danbooru_boy", "danbooru_other"]}}
+      },
+      "additionalProperties": false
+    },
+    "codeArray": {
+      "type": "array",
+      "maxItems": 64,
+      "uniqueItems": true,
+      "items": {"type": "string", "minLength": 1, "maxLength": 1024, "pattern": "^[^\\r\\n\\u0000]+$"}
+    }
+  },
+  "oneOf": [
+    {
+      "type": "object",
+      "required": ["schemaVersion", "payloadType", "jobId", "configHash", "profile", "resourceManifestRelativePath", "resourceFingerprint", "wikiDataSourceId", "overwriteCount", "captionFormat"],
+      "properties": {
+        "schemaVersion": {"const": 1},
+        "payloadType": {"const": "classify_hello_request"},
+        "jobId": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"},
+        "configHash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "profile": {"enum": ["e621", "danbooru"]},
+        "resourceManifestRelativePath": {"type": "string", "minLength": 1, "maxLength": 16384},
+        "resourceFingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+      "wikiDataSourceId": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,127}$"},
+        "overwriteCount": {"type": "boolean"},
+        "captionFormat": {"$ref": "#/$defs/captionFormat"}
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["schemaVersion", "payloadType", "executable", "pythonVersion", "ready", "dictionaryLoads", "wikiConnectionLoads", "entryCount", "wikiSchemaVersion", "wikiDataSourceId", "resourceFingerprint"],
+      "properties": {
+        "schemaVersion": {"const": 1},
+        "payloadType": {"const": "classify_hello_result"},
+        "executable": {"type": "string", "minLength": 1, "maxLength": 16384},
+        "pythonVersion": {"const": "3.11.15"},
+        "ready": {"const": true},
+        "dictionaryLoads": {"const": 1},
+        "wikiConnectionLoads": {"const": 1},
+        "entryCount": {"type": "integer", "minimum": 1, "maximum": 1000000000},
+        "wikiSchemaVersion": {"const": 1},
+      "wikiDataSourceId": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,127}$"},
+        "resourceFingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["schemaVersion", "payloadType", "items"],
+      "properties": {
+        "schemaVersion": {"const": 1},
+        "payloadType": {"const": "classify_process_request"},
+        "items": {"type": "array", "minItems": 1, "maxItems": 1, "items": {"$ref": "#/$defs/workItem"}}
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["schemaVersion", "payloadType", "sampleId", "leaseId", "source", "relativeImagePath", "projection", "countDecision", "inputTagCount", "outputTagCount", "droppedTagCount"],
+      "properties": {
+        "schemaVersion": {"const": 1},
+        "payloadType": {"const": "classify_result"},
+        "sampleId": {"type": "integer", "minimum": 1},
+        "leaseId": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"},
+        "source": {"enum": ["e621", "danbooru"]},
+        "relativeImagePath": {"type": "string", "minLength": 1, "maxLength": 16384},
+        "projection": {"$ref": "#/$defs/projection"},
+        "countDecision": {"$ref": "#/$defs/countDecision"},
+        "inputTagCount": {"type": "integer", "minimum": 0, "maximum": 16384},
+        "outputTagCount": {"type": "integer", "minimum": 0, "maximum": 16384},
+        "droppedTagCount": {"type": "integer", "minimum": 0, "maximum": 16384}
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["schemaVersion", "payloadType", "sampleId", "leaseId", "source", "relativeImagePath", "code", "severity", "blocking", "retriable", "message"],
+      "properties": {
+        "schemaVersion": {"const": 1},
+        "payloadType": {"const": "classify_issue"},
+        "sampleId": {"type": "integer", "minimum": 1},
+        "leaseId": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"},
+        "source": {"enum": ["e621", "danbooru"]},
+        "relativeImagePath": {"type": "string", "minLength": 1, "maxLength": 16384},
+        "code": {"enum": ["classify_original_count_unresolved", "count_sheet_multi_conflict", "classify_no_writable_tags", "classify_text_invalid", "classify_wiki_io_failed", "classify_processing_failed"]},
+        "severity": {"const": "error"},
+        "blocking": {"const": true},
+        "retriable": {"type": "boolean"},
+        "message": {"type": "string", "minLength": 1, "maxLength": 1024},
+        "repairStartModule": {"const": "classify"}
+      },
+      "additionalProperties": false
+    }
+  ]
+}

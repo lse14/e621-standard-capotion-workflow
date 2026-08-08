@@ -1,0 +1,3 @@
+https://paddle-whl.bj.bcebos.com/stable/cu126/paddlepaddle-gpu/paddlepaddle_gpu-3.2.2-cp311-cp311-win_amd64.whl
+paddleocr==3.7.0
+paddlex[ocr-core]==3.7.2

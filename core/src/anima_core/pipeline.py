@@ -1,0 +1,371 @@
+"""Serialized core orchestration for the worker modules already wired in core."""
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import threading
+from pathlib import Path
+from typing import Callable
+
+from .contracts import SampleIssue, job_config_supports_token_budget, pipeline_module_ids, profile_supports_job_config_schema
+from .count_review_service import CountReviewService
+from .credentials import DpapiCredentialStore
+from .db import StateDatabase
+from .export_commit import ExportCommitCoordinator
+from .launcher import WorkerLaunchError, WorkerLauncher
+from .nl_profiles import NlApiProfileStore
+from .overlay import BaselineView, OverlayLayout, WorkingAnnotationView
+from .pipeline_dispatch import PipelineDispatchMixin, PipelineError, _RUNTIMES
+from .pipeline_recovery import PipelineRecoveryMixin
+from .resource_catalog import ResourceCatalog, default_resource_library_root
+from .scheduler import BoundedScheduler
+from .stdio_transport import StdioJsonlTransportError
+from .token_budget_overlay import TokenBudgetOverlayError, TokenBudgetOverlayWriter
+
+
+def default_install_root() -> Path:
+    """Locate only the distributed runtime root, never a Python installation."""
+    configured = os.environ.get("ANIMA_INSTALL_ROOT")
+    candidates = ([Path(configured)] if configured else []) + list(Path(__file__).resolve().parents)
+    for candidate in candidates:
+        if (candidate / "manifests" / "runtimes" / "core.json").is_file():
+            return candidate
+        if (candidate / ".runtime-build" / "manifests" / "runtimes" / "core.json").is_file():
+            return candidate / ".runtime-build"
+    raise PipelineError("distributed embedded runtime manifests are unavailable")
+
+
+class PipelineService(PipelineRecoveryMixin, PipelineDispatchMixin):
+    """Owns background threads, while individual runners own bounded module work."""
+
+    def __init__(
+        self,
+        database_path: str | Path,
+        *,
+        install_root: str | Path | None = None,
+        profile_store: NlApiProfileStore | None = None,
+        credential_store: DpapiCredentialStore | None = None,
+        resource_catalog: ResourceCatalog | None = None,
+        launcher_factory: Callable[[Path], WorkerLauncher] | None = None,
+    ) -> None:
+        self.database_path = Path(database_path)
+        self.install_root = Path(install_root) if install_root is not None else default_install_root()
+        self.resource_catalog = resource_catalog or ResourceCatalog(default_resource_library_root(self.install_root))
+        self.resource_root = self.resource_catalog.root
+        self.profile_store = profile_store or NlApiProfileStore()
+        self.credential_store = credential_store or DpapiCredentialStore()
+        self.launcher_factory = launcher_factory or (
+            lambda root: WorkerLauncher.from_install_root(root, resource_root=self.resource_root)
+        )
+        self._lock = threading.Lock()
+        self._threads: dict[str, threading.Thread] = {}
+
+    def start(self, job_id: str) -> None:
+        with self._lock:
+            if job_id in self._threads:
+                raise PipelineError("job pipeline is already running")
+            database = StateDatabase.open(self.database_path)
+            try:
+                job = database.get_job(job_id)
+                if job["status"] != "preparing_workspace":
+                    raise PipelineError("only a prepared workspace can start its module pipeline")
+            finally:
+                database.close()
+            thread = threading.Thread(target=self._thread_main, args=(job_id, False), daemon=True, name=f"anima-{job_id[:12]}")
+            self._threads[job_id] = thread
+            thread.start()
+
+    def is_running(self, job_id: str) -> bool:
+        with self._lock:
+            return job_id in self._threads
+
+    def resume(self, job_id: str) -> bool:
+        """Resume a paused current module, starting a thread only when needed."""
+        with self._lock:
+            resuming_token_budget_review = False
+            database = StateDatabase.open(self.database_path)
+            try:
+                job = database.get_job(job_id)
+                module_id = job["current_module_id"]
+                if job["status"] == "reviewing" and module_id == "token_budget":
+                    resuming_token_budget_review = True
+                    try:
+                        config = json.loads(str(job["config_json"]))
+                    except json.JSONDecodeError as exc:
+                        raise PipelineError("frozen JobConfig is invalid JSON") from exc
+                    if not isinstance(config, dict) or not job_config_supports_token_budget(config.get("schemaVersion")):
+                        raise PipelineError("only a Token Budget-capable review can continue to Export")
+                    if database.count_unresolved_blocking_issues(job_id):
+                        return False
+                    # Re-run the shared formatter gate before this public resume entry
+                    # makes Export eligible; no API route reaches the private thread loop.
+                    if not self._token_budget_export_gate(database, job_id, config):
+                        return False
+                    if job_id in self._threads:
+                        return False
+                    database.set_job_status(job_id, "exporting", current_module_id="export", resume_status=None)
+                    thread = threading.Thread(
+                        target=self._thread_main, args=(job_id, True), daemon=True, name=f"anima-{job_id[:12]}",
+                    )
+                    self._threads[job_id] = thread
+                else:
+                    if job["status"] != "paused" or module_id not in _RUNTIMES:
+                        raise PipelineError("only a paused worker module can resume")
+                    summary = database.module_summary(job_id, str(module_id))
+                    if summary["status"] != "paused":
+                        raise PipelineError("paused task has no paused current module")
+                    database.set_module_summary(job_id, str(module_id), status="running")
+                    database.set_job_status(job_id, "running", current_module_id=str(module_id), resume_status=None)
+                    if job_id in self._threads:
+                        return False
+                    thread = threading.Thread(
+                        target=self._thread_main, args=(job_id, True), daemon=True, name=f"anima-{job_id[:12]}",
+                    )
+                    self._threads[job_id] = thread
+            finally:
+                database.close()
+            try:
+                thread.start()
+            except Exception:
+                self._threads.pop(job_id, None)
+                database = StateDatabase.open(self.database_path)
+                try:
+                    if resuming_token_budget_review:
+                        database.set_job_status(job_id, "reviewing", current_module_id="token_budget", resume_status=None)
+                    else:
+                        database.set_module_summary(job_id, str(module_id), status="paused")
+                        database.set_job_status(job_id, "paused", current_module_id=str(module_id), resume_status="running")
+                finally:
+                    database.close()
+                raise
+            return True
+
+    def confirm_count_review(self, job_id: str, *, confirmed: bool) -> bool:
+        """Open the confirmed application phase and continue from the Core module."""
+        with self._lock:
+            database = StateDatabase.open(self.database_path)
+            thread: threading.Thread | None = None
+            try:
+                job = database.get_job(job_id)
+                if job_id in self._threads:
+                    if job["status"] == "running" and job["current_module_id"] == "count_review":
+                        return False
+                    raise PipelineError("task pipeline is still settling its Count Review state")
+                CountReviewService(database, job_id).confirm(
+                    confirmed=confirmed,
+                    expected_config_hash=str(job["config_hash"]),
+                )
+                current = database.get_job(job_id)
+                if current["status"] != "running" or current["current_module_id"] != "count_review":
+                    return False
+                thread = threading.Thread(
+                    target=self._thread_main,
+                    args=(job_id, True),
+                    daemon=True,
+                    name=f"anima-{job_id[:12]}",
+                )
+                self._threads[job_id] = thread
+            finally:
+                database.close()
+            assert thread is not None
+            try:
+                thread.start()
+            except Exception:
+                self._threads.pop(job_id, None)
+                database = StateDatabase.open(self.database_path)
+                try:
+                    current = database.get_job(job_id)
+                    if current["status"] == "running" and current["current_module_id"] == "count_review":
+                        database.set_job_status(job_id, "reviewing", current_module_id="count_review")
+                finally:
+                    database.close()
+                raise
+            return True
+
+    def close(self) -> None:
+        """Wait briefly; persistent locks and recovery state deliberately remain intact."""
+        with self._lock:
+            threads = tuple(self._threads.values())
+        for thread in threads:
+            thread.join(timeout=5)
+
+    def shutdown(self) -> None:
+        """Request recoverable cancellation before the local control plane exits."""
+        with self._lock:
+            active = tuple(self._threads.items())
+        if not active:
+            return
+        database = StateDatabase.open(self.database_path)
+        try:
+            for job_id, _ in active:
+                try:
+                    database.begin_cancellation(job_id)
+                    if not database.count_in_flight(job_id):
+                        database.settle_cancellation(job_id)
+                except ValueError:
+                    continue
+        finally:
+            database.close()
+        # Do not end the process while an embedded worker is still writing an
+        # overlay artifact. The launcher has a bounded wait and never force-kills.
+        for _, thread in active:
+            thread.join()
+
+    def _thread_main(self, job_id: str, resume_current: bool = False) -> None:
+        try:
+            self._run(job_id, resume_current=resume_current)
+        finally:
+            with self._lock:
+                self._threads.pop(job_id, None)
+
+    def _run_module_with_restarts(
+        self, database: StateDatabase, scheduler: BoundedScheduler, job_id: str, module_id: str, config: dict[str, object],
+    ) -> str:
+        """Restart an abnormally exited embedded worker at most twice."""
+        while True:
+            try:
+                return self._run_active_module(database, scheduler, job_id, module_id, config)
+            except (StdioJsonlTransportError, WorkerLaunchError):
+                if database.module_summary(job_id, module_id)["status"] != "running":
+                    raise
+                if not scheduler.worker_exited(job_id, module_id, abnormal=True):
+                    raise
+                database.return_module_leases(job_id, module_id)
+
+    @staticmethod
+    def _token_budget_export_gate(database: StateDatabase, job_id: str, config: dict[str, object]) -> bool:
+        section = config.get("tokenBudget")
+        if not job_config_supports_token_budget(config.get("schemaVersion")) or not isinstance(section, dict) or section.get("enabled") is not True:
+            return True
+        max_tokens = section.get("maxTokens")
+        caption_format = config.get("captionFormat")
+        job = database.get_job(job_id)
+        if type(max_tokens) is not int or max_tokens < 1 or not isinstance(caption_format, dict) or not isinstance(job["overlay_root"], str):
+            raise PipelineError("frozen Token Budget export gate configuration is invalid")
+        layout = OverlayLayout.open_existing(str(job["overlay_root"]), job_id)
+        writer = TokenBudgetOverlayWriter(database, layout, WorkingAnnotationView(BaselineView(layout.dataset_root), layout), job_id)
+        failed = False
+        blocking_samples: set[int] = set()
+        issue_after_sample_id: int | None = None
+        issue_after_issue_id: str | None = None
+        while True:
+            issues = database.page_issues(
+                job_id,
+                after_sample_id=issue_after_sample_id,
+                after_issue_id=issue_after_issue_id,
+                limit=500,
+            )
+            if not issues:
+                break
+            for issue in issues:
+                if (
+                    issue["module_id"] == "token_budget"
+                    and issue["resolved_at"] is None
+                    and bool(issue["blocking"])
+                ):
+                    blocking_samples.add(int(issue["sample_id"]))
+            issue_after_sample_id = int(issues[-1]["sample_id"])
+            issue_after_issue_id = str(issues[-1]["issue_id"])
+        cursor: int | None = None
+        while True:
+            page = database.page_samples(job_id, after_sample_id=cursor, limit=500)
+            if not page:
+                break
+            cursor = int(page[-1]["sample_id"])
+            for row in page:
+                if not bool(row["in_processing_scope"]):
+                    continue
+                if int(row["sample_id"]) in blocking_samples:
+                    failed = True
+                    continue
+                try:
+                    writer.record_for_export(sample_id=int(row["sample_id"]), annotation_key=str(row["annotation_key"]), caption_format=caption_format, max_tokens=max_tokens)
+                except TokenBudgetOverlayError:
+                    failed = True
+                    sample_id = int(row["sample_id"])
+                    database.upsert_issue(SampleIssue(
+                        issueId=hashlib.sha256(f"{job_id}\0{sample_id}\0token_budget\0token_budget_export_gate_failed".encode("utf-8")).hexdigest(),
+                        jobId=job_id, sampleId=sample_id, relativeImagePath=str(row["relative_image_path"]),
+                        moduleId="token_budget", code="token_budget_export_gate_failed", severity="error", blocking=True,
+                        retriable=True, message="Token Budget verification failed before Export", attempt=0,
+                        repairStartModule="token_budget",
+                    ))
+        if failed:
+            database.set_job_status(job_id, "reviewing", current_module_id="token_budget")
+            return False
+        return True
+
+    def _run(self, job_id: str, *, resume_current: bool = False) -> None:
+        database = StateDatabase.open(self.database_path)
+        try:
+            job = database.get_job(job_id)
+            try:
+                config = json.loads(str(job["config_json"]))
+            except json.JSONDecodeError as exc:
+                raise PipelineError("frozen JobConfig is invalid JSON") from exc
+            profile = job["profile"]
+            if (
+                not isinstance(config, dict)
+                or config.get("profile") != profile
+                or not profile_supports_job_config_schema(profile, config.get("schemaVersion"))
+            ):
+                raise PipelineError("frozen JobConfig profile or schema version cannot run")
+            if config.get("schemaVersion") != job["config_schema_version"]:
+                raise PipelineError("frozen JobConfig schema version does not match the task record")
+            scheduler = BoundedScheduler(database)
+            try:
+                modules = pipeline_module_ids(int(job["config_schema_version"]))
+            except ValueError as exc:
+                raise PipelineError(str(exc)) from exc
+            if resume_current:
+                try:
+                    modules = modules[modules.index(str(job["current_module_id"])):]
+                except ValueError as exc:
+                    raise PipelineError("interrupted job has no recoverable current module") from exc
+            for module_id in modules:
+                if module_id == "export" and database.count_unresolved_blocking_issues(job_id, exclude_module_id="export"):
+                    # Export never bypasses unresolved issues from upstream modules.
+                    current = database.get_job(job_id)["current_module_id"]
+                    database.set_job_status(job_id, "reviewing", current_module_id=str(current or "dropout"))
+                    return
+                if module_id == "export" and not self._token_budget_export_gate(database, job_id, config):
+                    return
+                section = config.get("countReview" if module_id == "count_review" else "tokenBudget" if module_id == "token_budget" else module_id)
+                if module_id == "export":
+                    if not isinstance(section, dict) or section.get("format") not in {"json", "flat_txt", "both"}:
+                        raise PipelineError("frozen export configuration is invalid")
+                    enabled = True
+                else:
+                    if not isinstance(section, dict) or type(section.get("enabled")) is not bool:
+                        raise PipelineError(f"frozen {module_id} configuration is invalid")
+                    enabled = section["enabled"]
+                    if module_id == "dropout":
+                        children = (section.get("artist"), section.get("quality"), section.get("appearanceNl"))
+                        if any(not isinstance(child, dict) or type(child.get("enabled")) is not bool for child in children):
+                            raise PipelineError("frozen dropout subfeature configuration is invalid")
+                        # With no policy action selected, starting the worker would only read and rewrite JSON.
+                        enabled = enabled and any(child["enabled"] for child in children)
+                state = scheduler.start_module(job_id, module_id, enabled=enabled, profile=str(profile))
+                if state == "running":
+                    finished = self._run_module_with_restarts(database, scheduler, job_id, module_id, config)
+                    if finished in {"paused", "reviewing", "cancelling"}:
+                        if finished == "cancelling" and not database.count_in_flight(job_id):
+                            database.settle_cancellation(job_id)
+                        return
+                    if module_id == "export":
+                        if finished == "completed_with_issues":
+                            database.set_job_status(job_id, "reviewing", current_module_id="export")
+                            return
+                        job = database.get_job(job_id)
+                        layout = OverlayLayout.open_existing(str(job["overlay_root"]), job_id)
+                        ExportCommitCoordinator(database, layout, job_id=job_id).commit()
+                        database.resolve_repaired_parent_issues(job_id)
+                        return
+        except Exception:
+            job = database.get_job(job_id)
+            if job["status"] not in {"cancelled_recoverable", "failed", "succeeded"}:
+                database.set_job_status(job_id, "failed", current_module_id=str(job["current_module_id"] or "workspace"))
+            raise
+        finally:
+            database.close()

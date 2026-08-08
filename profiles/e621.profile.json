@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "profile": "e621",
+  "available": true,
+  "captionRuntimeId": "caption-e621",
+  "captionResourceManifest": "manifests\\resources\\caption-e621.json",
+  "classifyRuntimeId": "classify-e621",
+  "replaceRuntimeId": "replace-e621",
+  "nlRuntimeId": "nl",
+  "policyRuntimeId": "policy",
+  "policyResourceManifest": "manifests\\resources\\policy-lse14.json",
+  "exportRuntimeId": "export",
+  "dropoutStatus": "available"
+}

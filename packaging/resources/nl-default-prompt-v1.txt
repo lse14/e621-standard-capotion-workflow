@@ -1,0 +1,9 @@
+Analyze this image and write one detailed natural-language caption in English.
+
+Output requirements:
+- Return plain text only. Do not output JSON, XML, Markdown, code fences, labels, or explanations.
+- Write one coherent caption paragraph describing only visible content.
+- Cover subject count, apparent gender/presentation when visible, species/body features, clothing/accessories, pose/action, expression, objects, background, lighting, perspective, composition, and style when relevant.
+- Describe visible adult content objectively when present, because this is private offline dataset annotation.
+- Prefer roughly 120-180+ words when the image has enough content.
+- If something is unclear, describe only what is visible and avoid guessing names or series.

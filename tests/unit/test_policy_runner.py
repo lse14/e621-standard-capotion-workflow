@@ -1,0 +1,147 @@
+from __future__ import annotations
+
+import json
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "core" / "src"))
+
+from PIL import Image
+
+from anima_core.classify_overlay import serialize_annotation_json
+from anima_core.contracts import JobConfig
+from anima_core.db import StateDatabase
+from anima_core.job_preflight import JobPreparationService
+from anima_core.overlay import BaselineView, OverlayLayout, WorkingAnnotationView
+from anima_core.path_safety import sha256_file
+from anima_core.policy_runner import PolicyRunner, PolicyRunnerError
+from anima_core.scheduler import BoundedScheduler
+from anima_core.worker_protocol import ProtocolEnvelopeV1
+
+
+def _business() -> dict[str, object]:
+    return {
+        "quality": [], "count": "solo", "character": "amy_rose", "series": "", "artist": "",
+        "appearance": ["white hair"], "tags": ["smile"], "environment": ["outdoors"], "nl": "A person smiles.",
+    }
+
+
+class _PolicyTransport:
+    def __init__(self, layout: OverlayLayout, *, mutate_count: bool = False) -> None:
+        self.layout = layout
+        self.mutate_count = mutate_count
+        self.calls = 0
+
+    def exchange(self, request: ProtocolEnvelopeV1) -> ProtocolEnvelopeV1:
+        self.calls += 1
+        if request.method == "hello":
+            quality = request.payload["policy"]["quality"]
+            assert isinstance(quality, dict)
+            assert set(quality) == {"enabled", "dropoutProbability", "device", "batchSize", "resourceId"}
+            payload = {"schemaVersion": 1, "payloadType": "policy_hello_result", "ready": True,
+                       "qualityEnabled": False, "device": None, "modelLoadCount": 0, "resourceFingerprint": None}
+            method = "hello"
+        else:
+            items = request.payload["items"]
+            assert isinstance(items, list)
+            outcomes = []
+            for item in items:
+                assert isinstance(item, dict)
+                lease = str(item["leaseId"])
+                result = _business()
+                result["artist"] = "@Artist"
+                if self.mutate_count:
+                    result["count"] = "group"
+                prepared, digest = self.layout.write_prepared("dropout", lease, ".json", serialize_annotation_json(result))
+                outcomes.append({"schemaVersion": 1, "status": "prepared", "sampleId": item["sampleId"],
+                                 "leaseId": lease, "relativeImagePath": item["relativeImagePath"],
+                                 "preparedRelativePath": str(prepared.relative_to(self.layout.root)).replace("/", "\\"),
+                                 "sha256": digest, "aestheticScore": None, "quality": [], "decision": {}})
+            payload = {"schemaVersion": 1, "payloadType": "policy_batch_result", "outcomes": outcomes, "modelLoadCount": 0}
+            method = "result"
+        return ProtocolEnvelopeV1(protocolVersion="1.0", kind="response", messageId=f"reply-{request.messageId}",
+            runtimeId="policy", owner="policy", method=method, payload=payload, replyTo=request.messageId,
+            jobId=request.jobId, configHash=request.configHash)
+
+
+class PolicyRunnerTests(unittest.TestCase):
+    def _prepared_runner(self, root: Path, *, mutate_count: bool = False) -> tuple[StateDatabase, JobPreparationService, str, OverlayLayout, PolicyRunner]:
+        dataset = root / "dataset"
+        artist = dataset / "1_Artist"
+        artist.mkdir(parents=True)
+        Image.new("RGB", (3, 3), "white").save(artist / "image.png")
+        (artist / "image.json").write_bytes(serialize_annotation_json(_business()))
+        config = JobConfig(profile="e621", workMode="in_place", overwriteMode="incremental", sourceRoot=str(dataset), recursive=True)
+        config.caption["enabled"] = config.classify["enabled"] = config.replace["enabled"] = config.nl["enabled"] = False
+        config.countReview["enabled"] = False  # type: ignore[index]
+        config.dropout["enabled"] = True
+        config.dropout["quality"]["enabled"] = False
+        preparation = JobPreparationService(root / "state.db")
+        job_id = preparation.preflight(config.to_dict()).jobId
+        preparation.confirm_workspace(job_id, confirmed=True, confirmed_rebuild=False)
+        database = StateDatabase.open(root / "state.db")
+        scheduler = BoundedScheduler(database)
+        for module in ("caption", "classify", "replace", "nl"):
+            scheduler.start_module(job_id, module, enabled=False, profile="e621")
+        scheduler.start_module(job_id, "count_review", enabled=False, profile="e621")
+        scheduler.start_module(job_id, "dropout", enabled=True, profile="e621")
+        job = database.get_job(job_id)
+        layout = OverlayLayout.open_existing(str(job["overlay_root"]), job_id)
+        runner = PolicyRunner(database, scheduler, _PolicyTransport(layout, mutate_count=mutate_count),
+            WorkingAnnotationView(BaselineView(dataset), layout), job_id=job_id,
+            worker_instance_id="policy-test", install_root=root)
+        return database, preparation, job_id, layout, runner
+
+    def test_policy_commits_only_valid_prepared_overlay_and_preserves_protected_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            database, preparation, job_id, layout, runner = self._prepared_runner(root)
+            try:
+                self.assertEqual("completed", runner.run())
+                outputs = list((layout.root / "annotations").rglob("*.json"))
+                self.assertEqual(1, len(outputs))
+                output = outputs[0]
+                result = json.loads(output.read_text(encoding="utf-8"))
+                self.assertEqual("@Artist", result["artist"])
+                self.assertEqual(_business()["count"], result["count"])
+                self.assertEqual(_business()["tags"], result["tags"])
+                self.assertEqual(1, database.module_summary(job_id, "dropout")["completed"])
+                events = database.event_page(job_id, 0, limit=10)
+                self.assertEqual(["running", "running", "completed"], [event["status"] for event in events])
+                self.assertEqual([0, 1, 1], [event["completed"] for event in events])
+            finally:
+                database.close()
+                preparation.close()
+
+    def test_policy_observes_a_persisted_pause_without_starting_worker_work(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            database, preparation, job_id, _layout, runner = self._prepared_runner(Path(temporary))
+            try:
+                database.set_module_summary(job_id, "dropout", status="paused")
+                database.set_job_status(job_id, "paused", current_module_id="dropout", resume_status="running")
+                self.assertEqual("paused", runner.run())
+                self.assertEqual(0, runner.transport.calls)  # type: ignore[attr-defined]
+                self.assertEqual("paused", database.event_page(job_id, 0, limit=10)[-1]["status"])
+            finally:
+                database.close()
+                preparation.close()
+
+    def test_policy_rejects_prepared_output_that_changes_count(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            database, preparation, job_id, layout, runner = self._prepared_runner(Path(temporary), mutate_count=True)
+            try:
+                with self.assertRaises(PolicyRunnerError):
+                    runner.run()
+                self.assertEqual("failed", database.get_job(job_id)["status"])
+                self.assertEqual([], list((layout.root / "annotations").rglob("*.json")))
+            finally:
+                database.close()
+                preparation.close()
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -1,0 +1,116 @@
+[CmdletBinding()]
+param(
+    [switch]$Apply,
+    [string]$ProjectRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..')),
+    [switch]$SkipManifestRefresh
+)
+
+$ErrorActionPreference = 'Stop'
+
+function Same-Path([string]$Left, [string]$Right) {
+    return [System.StringComparer]::OrdinalIgnoreCase.Equals([System.IO.Path]::GetFullPath($Left).TrimEnd([char[]]@('\', '/')), [System.IO.Path]::GetFullPath($Right).TrimEnd([char[]]@('\', '/')))
+}
+function Within-Root([string]$Root, [string]$Candidate) {
+    $rootPath = [System.IO.Path]::GetFullPath($Root).TrimEnd([char[]]@('\', '/'))
+    $candidatePath = [System.IO.Path]::GetFullPath($Candidate).TrimEnd([char[]]@('\', '/'))
+    return (Same-Path $rootPath $candidatePath) -or $candidatePath.StartsWith($rootPath + [System.IO.Path]::DirectorySeparatorChar, [System.StringComparison]::OrdinalIgnoreCase)
+}
+function Safe-Item([string]$Root, [string]$Path, [string]$Label, [bool]$Directory) {
+    $item = Get-Item -LiteralPath $Path -Force
+    if ($Directory -and -not $item.PSIsContainer) { throw "$Label must be a directory" }
+    if (-not $Directory -and $item.PSIsContainer) { throw "$Label must be a file" }
+    if (-not (Within-Root $Root $item.FullName)) { throw "$Label escapes project root" }
+    $current = $item.FullName
+    while ($true) {
+        if (((Get-Item -LiteralPath $current -Force).Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) { throw "reparse point is not allowed: $current" }
+        if (Same-Path $current $Root) { break }
+        $current = [System.IO.Path]::GetDirectoryName($current)
+        if (-not $current) { throw "$Label escapes project root" }
+    }
+    return $item.FullName
+}
+function Planned-Target([string]$Root, [string]$Path) {
+    $full = [System.IO.Path]::GetFullPath($Path)
+    if (-not (Within-Root $Root $full)) { throw "target escapes project root: $full" }
+    if (Test-Path -LiteralPath $full) { Safe-Item $Root $full 'planned assembled module' $false | Out-Null; return $full }
+    $parent = [System.IO.Path]::GetDirectoryName($full)
+    while (-not (Test-Path -LiteralPath $parent)) {
+        $parent = [System.IO.Path]::GetDirectoryName($parent)
+        if (-not $parent) { throw "target has no project-local ancestor: $full" }
+    }
+    Safe-Item $Root $parent 'target ancestor' $true | Out-Null
+    return $full
+}
+function Safe-PythonFiles([string]$Root, [string]$Directory) {
+    Safe-Item $Root $Directory 'package directory' $true | Out-Null
+    $files = @()
+    $stack = New-Object 'System.Collections.Generic.Stack[string]'
+    $stack.Push($Directory)
+    while ($stack.Count -gt 0) {
+        $current = $stack.Pop()
+        Safe-Item $Root $current 'package directory' $true | Out-Null
+        foreach ($child in Get-ChildItem -LiteralPath $current -Force) {
+            if (($child.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) { throw "reparse point is not allowed: $($child.FullName)" }
+            if ($child.PSIsContainer) { $stack.Push($child.FullName) }
+            elseif ($child.Extension -ieq '.py') { $files += $child }
+        }
+    }
+    return @($files)
+}
+function Relative-Child([string]$Root, [string]$Path) {
+    if (-not (Within-Root $Root $Path) -or (Same-Path $Root $Path)) { throw "path is not a package child" }
+    return [System.IO.Path]::GetFullPath($Path).Substring([System.IO.Path]::GetFullPath($Root).TrimEnd([char[]]@('\', '/')).Length).TrimStart([char[]]@('\', '/'))
+}
+function Content-Equal([string]$Source, [string]$Target) {
+    return (Get-Item -LiteralPath $Source -Force).Length -eq (Get-Item -LiteralPath $Target -Force).Length -and (Get-FileHash -Algorithm SHA256 -LiteralPath $Source).Hash -eq (Get-FileHash -Algorithm SHA256 -LiteralPath $Target).Hash
+}
+
+$project = Safe-Item (Get-Item -LiteralPath $ProjectRoot -Force).FullName (Get-Item -LiteralPath $ProjectRoot -Force).FullName 'project root' $true
+$scriptProject = Safe-Item (Join-Path $PSScriptRoot '..\..') (Join-Path $PSScriptRoot '..\..') 'script project root' $true
+if ($SkipManifestRefresh -and (Same-Path $project $scriptProject)) { throw 'SkipManifestRefresh is allowed only for an isolated non-project fixture' }
+$trees = @(
+    @{ Source = 'workers\token_budget\src\anima_token_budget_worker'; Target = '.runtime-build\runtimes\token-budget\Lib\site-packages\anima_token_budget_worker' },
+    @{ Source = 'shared\anima_caption_format\anima_caption_format'; Target = '.runtime-build\runtimes\token-budget\Lib\site-packages\anima_caption_format' }
+)
+$changes = @()
+foreach ($tree in $trees) {
+    $source = Safe-Item $project (Join-Path $project $tree.Source) 'Token Budget source package' $true
+    $targetRoot = Join-Path $project $tree.Target
+    if (Test-Path -LiteralPath $targetRoot) { $target = Safe-Item $project $targetRoot 'assembled Token Budget package' $true } else { $target = Planned-Target $project $targetRoot }
+    $sourceByRelative = @{}; foreach ($file in Safe-PythonFiles $project $source) { $sourceByRelative[(Relative-Child $source $file.FullName)] = $file }
+    $targetByRelative = @{}; if (Test-Path -LiteralPath $target) { foreach ($file in Safe-PythonFiles $project $target) { $targetByRelative[(Relative-Child $target $file.FullName)] = $file } }
+    foreach ($relative in $sourceByRelative.Keys) {
+        $sourceFile = $sourceByRelative[$relative]; $targetFile = Planned-Target $project (Join-Path $target $relative)
+        if (-not $targetByRelative.ContainsKey($relative)) { $changes += [pscustomobject][ordered]@{Action='Add';Source=$sourceFile.FullName;Target=$targetFile;Bytes=[Int64]$sourceFile.Length} }
+        elseif (-not (Content-Equal $sourceFile.FullName $targetFile)) { $changes += [pscustomobject][ordered]@{Action='Update';Source=$sourceFile.FullName;Target=$targetFile;Bytes=[Int64]$sourceFile.Length} }
+    }
+    foreach ($relative in $targetByRelative.Keys) { if (-not $sourceByRelative.ContainsKey($relative)) { $file = $targetByRelative[$relative]; $changes += [pscustomobject][ordered]@{Action='Remove';Source=$null;Target=$file.FullName;Bytes=[Int64]$file.Length} } }
+}
+$changes = @($changes | Sort-Object Target)
+$changes | Select-Object -First 100
+$add = @($changes | Where-Object Action -eq 'Add').Count; $update = @($changes | Where-Object Action -eq 'Update').Count; $remove = @($changes | Where-Object Action -eq 'Remove').Count
+$bytes = [Int64]0; foreach ($change in $changes) { $bytes += $change.Bytes }
+Write-Host "Token Budget runtime sync plan: $add add, $update update, $remove remove, $bytes bytes."
+if (-not $Apply) { return }
+foreach ($change in $changes) {
+    if ($change.Action -eq 'Remove') { Safe-Item $project $change.Target 'stale assembled module' $false | Out-Null; Remove-Item -LiteralPath $change.Target -Force; continue }
+    Safe-Item $project $change.Source 'Token Budget source module' $false | Out-Null
+    $target = Planned-Target $project $change.Target; $directory = [System.IO.Path]::GetDirectoryName($target); New-Item -ItemType Directory -Force -Path $directory | Out-Null
+    Safe-Item $project $directory 'assembled Token Budget package directory' $true | Out-Null
+    [System.IO.File]::Copy($change.Source, $target, $true)
+}
+if ($SkipManifestRefresh) { return }
+$toolchain = Safe-Item $project (Join-Path $project '.toolchains\Python-3.11.15\PCbuild\amd64\python.exe') 'toolchain Python' $false
+$generator = Safe-Item $project (Join-Path $project 'packaging\scripts\generate_runtime_manifests.py') 'runtime manifest generator' $false
+$core = Safe-Item $project (Join-Path $project '.runtime-build\runtimes\core\python.exe') 'embedded Core Python' $false
+$drift = Safe-Item $project (Join-Path $project 'tests\contract\test_assembled_tree_drift.py') 'assembled drift test' $false
+& $toolchain -B -I $generator --install-root (Join-Path $project '.runtime-build') --requirements-root (Join-Path $project 'packaging\requirements') --runtime-id token-budget
+if ($LASTEXITCODE -ne 0) { throw "Token Budget runtime manifest generation failed with exit code $LASTEXITCODE" }
+$env:ANIMA_DRIFT_RUNTIME_IDS = 'token-budget'
+try {
+    & $core -B -I $drift
+    if ($LASTEXITCODE -ne 0) { throw "assembled Token Budget drift verification failed with exit code $LASTEXITCODE" }
+}
+finally {
+    Remove-Item -LiteralPath Env:ANIMA_DRIFT_RUNTIME_IDS -ErrorAction SilentlyContinue
+}

@@ -1,0 +1,270 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "anima://contracts/job-config-v6",
+  "type": "object",
+  "required": ["schemaVersion", "profile", "workMode", "overwriteMode", "sourceRoot", "annotationBackup", "recursive", "captionFormat", "imageDecode", "caption", "classify", "replace", "ocr", "nl", "countReview", "dropout", "tokenBudget", "export"],
+  "properties": {
+    "schemaVersion": {"const": 6},
+    "profile": {"enum": ["e621", "danbooru"]},
+    "workMode": {"enum": ["in_place", "full_copy"]},
+    "overwriteMode": {"enum": ["incremental", "rebuild"]},
+    "sourceRoot": {"type": "string", "minLength": 1},
+    "outputRoot": {"type": ["null", "string"], "minLength": 1},
+    "annotationBackup": {"const": "required"},
+    "recursive": {"type": "boolean"},
+    "captionFormat": {"$ref": "#/$defs/captionFormat"},
+    "imageDecode": {"$ref": "#/$defs/imageDecode"},
+    "caption": {"$ref": "#/$defs/caption"},
+    "classify": {"$ref": "#/$defs/classify"},
+    "replace": {"$ref": "#/$defs/replace"},
+    "ocr": {
+      "type": "object",
+      "required": ["enabled", "llmMinConfidence", "forceReprocess", "resourceId"],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "llmMinConfidence": {"type": "number", "minimum": 0, "maximum": 1},
+        "forceReprocess": {"type": "boolean"},
+        "resourceId": {"$ref": "#/$defs/resourceId"},
+        "resourceManifestRelativePath": {"$ref": "#/$defs/resourceManifestRelativePath"},
+        "resourceFingerprint": {"$ref": "#/$defs/resourceFingerprint"}
+      },
+      "additionalProperties": false
+    },
+    "nl": {"$ref": "#/$defs/nl"},
+    "countReview": {
+      "type": "object",
+      "required": ["enabled", "protocolVersion"],
+      "properties": {"enabled": {"type": "boolean"}, "protocolVersion": {"const": "count-review-v1"}},
+      "additionalProperties": false
+    },
+    "dropout": {"$ref": "#/$defs/dropout"},
+    "tokenBudget": {
+      "type": "object",
+      "required": ["enabled", "maxTokens", "resourceId"],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "maxTokens": {"type": "integer", "minimum": 1},
+        "resourceId": {"$ref": "#/$defs/tokenizerResourceId"},
+        "resourceManifestRelativePath": {"$ref": "#/$defs/resourceManifestRelativePath"},
+        "resourceFingerprint": {"$ref": "#/$defs/resourceFingerprint"},
+        "contextLimit": {"type": "integer", "minimum": 1}
+      },
+      "allOf": [
+        {"if": {"anyOf": [{"required": ["resourceManifestRelativePath"]}, {"required": ["resourceFingerprint"]}, {"required": ["contextLimit"]}]}, "then": {"required": ["resourceManifestRelativePath", "resourceFingerprint", "contextLimit"]}},
+        {"if": {"properties": {"enabled": {"const": false}}, "required": ["enabled"]}, "then": {"not": {"anyOf": [{"required": ["resourceManifestRelativePath"]}, {"required": ["resourceFingerprint"]}, {"required": ["contextLimit"]}]}}}
+      ],
+      "additionalProperties": false
+    },
+    "export": {
+      "type": "object",
+      "required": ["format"],
+      "properties": {"format": {"enum": ["json", "flat_txt", "both"]}},
+      "additionalProperties": false
+    }
+  },
+  "$defs": {
+    "resourceId": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,127}$"},
+    "tokenizerResourceId": {"type": "string", "pattern": "^[a-z0-9][a-z0-9.-]{0,127}$"},
+    "resourceFingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "resourceManifestRelativePath": {"type": "string", "minLength": 1, "maxLength": 16384},
+    "captionFormat": {
+      "type": "object",
+      "required": ["replaceUnderscoresWithSpaces", "preserveEscapes", "triggersEnabled", "triggerTerms"],
+      "properties": {
+        "replaceUnderscoresWithSpaces": {"type": "boolean"},
+        "preserveEscapes": {"type": "boolean"},
+        "triggersEnabled": {"type": "boolean"},
+        "triggerTerms": {"type": "array", "maxItems": 64, "items": {"type": "string", "minLength": 1, "maxLength": 512}}
+      },
+      "additionalProperties": false
+    },
+    "imageDecode": {
+      "type": "object",
+      "required": ["extensions", "rejectMultiFrame", "applyExifTranspose", "alphaBackground"],
+      "properties": {
+        "extensions": {"const": [".jpg", ".jpeg", ".png", ".webp", ".bmp"]},
+        "rejectMultiFrame": {"const": true},
+        "applyExifTranspose": {"const": true},
+        "alphaBackground": {"const": "#FFFFFF"},
+        "invalidImageAction": {"enum": ["block", "skip"]}
+      },
+      "additionalProperties": false
+    },
+    "caption": {
+      "type": "object",
+      "required": ["enabled", "thresholdMode", "overwriteTxt"],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "thresholdMode": {"enum": ["model_default", "uniform", "per_category"]},
+        "uniformThreshold": {"type": "number", "minimum": 0, "maximum": 1},
+        "categoryThresholds": {
+          "type": "object",
+          "minProperties": 1,
+          "maxProperties": 32,
+          "propertyNames": {"pattern": "^[a-z][a-z0-9_]{0,63}$"},
+          "additionalProperties": {"type": "number", "minimum": 0, "maximum": 1}
+        },
+        "overwriteTxt": {"type": "boolean"},
+        "resourceId": {"$ref": "#/$defs/resourceId"},
+        "resourceManifestRelativePath": {"$ref": "#/$defs/resourceManifestRelativePath"},
+        "resourceFingerprint": {"$ref": "#/$defs/resourceFingerprint"}
+      },
+      "allOf": [
+        {"if": {"properties": {"thresholdMode": {"const": "model_default"}}, "required": ["thresholdMode"]}, "then": {"not": {"anyOf": [{"required": ["uniformThreshold"]}, {"required": ["categoryThresholds"]}]}}},
+        {"if": {"properties": {"thresholdMode": {"const": "uniform"}}, "required": ["thresholdMode"]}, "then": {"required": ["uniformThreshold"], "not": {"required": ["categoryThresholds"]}}},
+        {"if": {"properties": {"thresholdMode": {"const": "per_category"}}, "required": ["thresholdMode"]}, "then": {"required": ["categoryThresholds"], "not": {"required": ["uniformThreshold"]}}}
+      ],
+      "additionalProperties": false
+    },
+    "classify": {
+      "type": "object",
+      "required": ["enabled", "overwriteJson", "overwriteCount", "wikiDataSourceId"],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "overwriteJson": {"type": "boolean"},
+        "overwriteCount": {"type": "boolean"},
+        "wikiDataSourceId": {"$ref": "#/$defs/resourceId"},
+        "resourceId": {"$ref": "#/$defs/resourceId"},
+        "resourceManifestRelativePath": {"$ref": "#/$defs/resourceManifestRelativePath"},
+        "resourceFingerprint": {"$ref": "#/$defs/resourceFingerprint"}
+      },
+      "additionalProperties": false
+    },
+    "replace": {
+      "type": "object",
+      "required": ["enabled", "indexMode"],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "indexMode": {"enum": ["bundled", "custom"]},
+        "customIndexPath": {"type": "string", "minLength": 1},
+        "customIndexSha256": {"$ref": "#/$defs/resourceFingerprint"},
+        "customIndexRuleCount": {"type": "integer", "minimum": 1},
+        "resourceId": {"$ref": "#/$defs/resourceId"},
+        "resourceManifestRelativePath": {"$ref": "#/$defs/resourceManifestRelativePath"},
+        "resourceFingerprint": {"$ref": "#/$defs/resourceFingerprint"}
+      },
+      "allOf": [
+        {"if": {"properties": {"indexMode": {"const": "bundled"}}, "required": ["indexMode"]}, "then": {"not": {"anyOf": [{"required": ["customIndexPath"]}, {"required": ["customIndexSha256"]}, {"required": ["customIndexRuleCount"]}]}}},
+        {"if": {"properties": {"indexMode": {"const": "custom"}}, "required": ["indexMode"]}, "then": {"required": ["customIndexPath"], "not": {"anyOf": [{"required": ["resourceId"]}, {"required": ["resourceManifestRelativePath"]}, {"required": ["resourceFingerprint"]}]}}}
+      ],
+      "additionalProperties": false
+    },
+    "nl": {
+      "type": "object",
+      "required": ["enabled", "reuseOriginalNl", "apiEnabled", "useImage", "useFullJson", "systemPrompt", "promptVersion", "captionPreset", "lengthDistribution", "lengthSeed"],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "reuseOriginalNl": {"type": "boolean"},
+        "apiEnabled": {"type": "boolean"},
+        "useImage": {"type": "boolean"},
+        "useFullJson": {"type": "boolean"},
+        "systemPrompt": {"type": "string", "maxLength": 65536},
+        "promptVersion": {"const": "nl-default-prompt-v4"},
+        "captionPreset": {"enum": ["general", "style", "character"]},
+        "lengthDistribution": {
+          "type": "object",
+          "required": ["short", "medium", "long"],
+          "properties": {
+            "short": {"type": "integer", "minimum": 0, "maximum": 100},
+            "medium": {"type": "integer", "minimum": 0, "maximum": 100},
+            "long": {"type": "integer", "minimum": 0, "maximum": 100}
+          },
+          "additionalProperties": false
+        },
+        "lengthSeed": {"type": "string", "minLength": 1, "maxLength": 256},
+        "apiProfileId": {"type": "string", "minLength": 1, "maxLength": 128},
+        "apiPolicy": {"$ref": "#/$defs/nlApiPolicy"}
+      },
+      "allOf": [
+        {"if": {"properties": {"apiEnabled": {"const": true}}, "required": ["apiEnabled"]}, "then": {"anyOf": [{"properties": {"useImage": {"const": true}}, "required": ["useImage"]}, {"properties": {"useFullJson": {"const": true}}, "required": ["useFullJson"]}]}}
+      ],
+      "additionalProperties": false
+    },
+    "nlApiPolicy": {
+      "type": "object",
+      "properties": {
+        "concurrency": {"type": "integer", "minimum": 1, "maximum": 16},
+        "maxRequestsPerMinute": {"oneOf": [{"type": "integer", "minimum": 1, "maximum": 100000}, {"const": "unlimited"}]},
+        "maxHttpAttempts": {"type": "integer", "minimum": 1, "maximum": 10000000},
+        "mainAttempts": {"type": "integer", "minimum": 1, "maximum": 3},
+        "backupEnabled": {"type": "boolean"},
+        "backupAttempts": {"type": "integer", "minimum": 1, "maximum": 2},
+        "connectTimeoutSeconds": {"type": "integer", "minimum": 1, "maximum": 120},
+        "writeTimeoutSeconds": {"type": "integer", "minimum": 1, "maximum": 120},
+        "readTimeoutSeconds": {"type": "integer", "minimum": 1, "maximum": 600},
+        "poolTimeoutSeconds": {"type": "integer", "minimum": 1, "maximum": 120},
+        "temperature": {"type": "number", "minimum": 0, "maximum": 2},
+        "topP": {"type": "number", "minimum": 0, "maximum": 2},
+        "maxTokens": {"type": "integer", "minimum": 1, "maximum": 16384},
+        "maxImagePixels": {"const": 8000000},
+        "maxImageSide": {"const": 4096},
+        "jpegQuality": {"const": 95},
+        "maxEncodedImageBytes": {"const": 12582912},
+        "maxJsonContextBytes": {"const": 262144},
+        "maxResponseBodyBytes": {"const": 1048576},
+        "maxNlBytes": {"const": 16384}
+      },
+      "additionalProperties": false
+    },
+    "dropout": {
+      "type": "object",
+      "required": ["enabled", "policyVersion", "seed", "artist", "quality", "appearanceNl"],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "policyVersion": {"const": "dataset-batch-policy-v1"},
+        "seed": {"type": "string", "minLength": 1, "maxLength": 256},
+        "artist": {"$ref": "#/$defs/dropoutArtist"},
+        "quality": {"$ref": "#/$defs/dropoutQuality"},
+        "appearanceNl": {"$ref": "#/$defs/dropoutAppearanceNl"}
+      },
+      "additionalProperties": false
+    },
+    "dropoutArtist": {
+      "type": "object",
+      "required": ["enabled", "dropoutProbability"],
+      "properties": {"enabled": {"type": "boolean"}, "dropoutProbability": {"type": "number", "minimum": 0, "maximum": 1}},
+      "additionalProperties": false
+    },
+    "dropoutQuality": {
+      "type": "object",
+      "required": ["enabled", "dropoutProbability", "device", "batchSize"],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "dropoutProbability": {"type": "number", "minimum": 0, "maximum": 1},
+        "device": {"enum": ["auto", "cuda", "cpu"]},
+        "batchSize": {"type": "integer", "minimum": 1, "maximum": 16},
+        "resourceId": {"$ref": "#/$defs/resourceId"},
+        "resourceManifestRelativePath": {"$ref": "#/$defs/resourceManifestRelativePath"},
+        "resourceFingerprint": {"$ref": "#/$defs/resourceFingerprint"}
+      },
+      "additionalProperties": false
+    },
+    "dropoutAppearanceNl": {
+      "type": "object",
+      "required": ["enabled", "solo", "nonSolo", "unknown"],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "solo": {"$ref": "#/$defs/coupledProbabilities"},
+        "nonSolo": {"$ref": "#/$defs/coupledProbabilities"},
+        "unknown": {"$ref": "#/$defs/coupledProbabilities"}
+      },
+      "additionalProperties": false
+    },
+    "coupledProbabilities": {
+      "type": "object",
+      "required": ["dropNl", "dropAppearance"],
+      "properties": {
+        "dropNl": {"type": "number", "minimum": 0, "maximum": 1},
+        "dropAppearance": {"type": "number", "minimum": 0, "maximum": 1}
+      },
+      "additionalProperties": false
+    }
+  },
+  "allOf": [
+    {"if": {"properties": {"workMode": {"const": "in_place"}}, "required": ["workMode"]}, "then": {"properties": {"outputRoot": {"type": "null"}}}},
+    {"if": {"properties": {"workMode": {"const": "full_copy"}}, "required": ["workMode"]}, "then": {"required": ["outputRoot"], "properties": {"outputRoot": {"type": "string", "minLength": 1}}}},
+    {"if": {"properties": {"countReview": {"properties": {"enabled": {"const": true}}, "required": ["enabled"]}}, "required": ["countReview"]}, "then": {"properties": {"classify": {"properties": {"enabled": {"const": true}}, "required": ["enabled"]}}}},
+    {"if": {"properties": {"profile": {"const": "danbooru"}}, "required": ["profile"]}, "then": {"properties": {"replace": {"properties": {"enabled": {"const": false}, "indexMode": {"const": "bundled"}}, "required": ["enabled", "indexMode"]}}}}
+  ],
+  "additionalProperties": false
+}

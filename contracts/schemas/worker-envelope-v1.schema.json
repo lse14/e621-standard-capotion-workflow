@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "anima://contracts/worker-envelope-v1",
+  "type": "object",
+  "required": ["protocolVersion", "kind", "messageId", "runtimeId", "owner", "method", "payload"],
+  "properties": {
+    "protocolVersion": {"const": "1.0"},
+    "kind": {"enum": ["request", "response", "event"]},
+    "messageId": {"type": "string", "minLength": 1, "maxLength": 128},
+    "replyTo": {"type": "string", "minLength": 1, "maxLength": 128},
+    "runtimeId": {"type": "string", "minLength": 1, "maxLength": 64},
+    "owner": {"enum": ["caption", "classify", "replace", "nl", "export", "token-budget"]},
+    "jobId": {"type": "string", "minLength": 1, "maxLength": 128},
+    "configHash": {"type": "string", "minLength": 1, "maxLength": 128},
+    "method": {"enum": ["hello", "process_batch", "cancel", "shutdown", "heartbeat", "result", "error"]},
+    "payload": {"type": "object"}
+  },
+  "additionalProperties": false
+}

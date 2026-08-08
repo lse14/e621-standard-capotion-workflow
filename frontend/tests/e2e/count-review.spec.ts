@@ -1,0 +1,70 @@
+import {
+  DEFAULT_JOB_ID,
+  clearRouteFailure,
+  failRoute,
+  expect,
+  makeSnapshot,
+  mutationsFor,
+  openApp,
+  setJobSnapshot,
+  test,
+} from "./mockApi";
+
+async function openCountReview(page: Parameters<typeof openApp>[0]) {
+  await openApp(page, { jobId: DEFAULT_JOB_ID, language: "en" });
+  await expect(page.locator(".task-monitor > .monitor-heading > .status")).toHaveText("reviewing");
+  await page.locator(".workflow-rail").getByRole("button", { name: /Count Review/ }).click();
+  await expect(page.getByText("sample-a.png")).toBeVisible();
+}
+
+test.describe("count review characterization", () => {
+  test("shows a Count Review load error with a scoped retry", async ({ page, api }) => {
+    setJobSnapshot(api, makeSnapshot({ status: "reviewing", currentModuleId: "count_review" }));
+    failRoute(api, `GET /api/jobs/${DEFAULT_JOB_ID}/count-review`, "count review unavailable");
+    await openApp(page, { jobId: DEFAULT_JOB_ID, language: "en" });
+    await page.locator(".workflow-rail").getByRole("button", { name: /count review/i }).click();
+
+    const panel = page.locator(".count-review-panel");
+    await expect(panel.getByRole("alert")).toHaveText("count review unavailable");
+    await expect(panel.getByRole("button", { name: "Retry count review" })).toBeVisible();
+
+    clearRouteFailure(api, `GET /api/jobs/${DEFAULT_JOB_ID}/count-review`);
+    await panel.getByRole("button", { name: "Retry count review" }).click();
+    await expect(panel.getByText("sample-a.png")).toBeVisible();
+  });
+
+  test("saves one review decision through the existing item endpoint", async ({ page, api }) => {
+    setJobSnapshot(api, makeSnapshot({ status: "reviewing", currentModuleId: "count_review" }));
+    await openCountReview(page);
+
+    const firstItem = page.locator(".review-item").filter({ hasText: "sample-a.png" });
+    await firstItem.getByRole("button", { name: "Use Classify" }).click();
+    await expect.poll(() => mutationsFor(api, "PUT", `/api/jobs/${DEFAULT_JOB_ID}/count-review/1`).length).toBe(1);
+    expect(mutationsFor(api, "PUT", `/api/jobs/${DEFAULT_JOB_ID}/count-review/1`)[0].body).toEqual({
+      expectedVersion: 1,
+      source: "classify",
+    });
+    await expect(firstItem.getByText("Saved")).toBeVisible();
+  });
+
+  test("saves a selected page in batch and confirms the review", async ({ page, api }) => {
+    setJobSnapshot(api, makeSnapshot({ status: "reviewing", currentModuleId: "count_review" }));
+    await openCountReview(page);
+
+    await page.getByLabel("Select this page").check();
+    const batchActions = page.locator(".review-batch-actions");
+    await batchActions.getByRole("button", { name: "Use VLM" }).click();
+    await expect.poll(() => mutationsFor(api, "POST", `/api/jobs/${DEFAULT_JOB_ID}/count-review/batch`).length).toBe(1);
+    expect(mutationsFor(api, "POST", `/api/jobs/${DEFAULT_JOB_ID}/count-review/batch`)[0].body).toEqual({
+      updates: [
+        { sampleId: 1, expectedVersion: 1, source: "vlm" },
+        { sampleId: 2, expectedVersion: 1, source: "vlm" },
+      ],
+    });
+
+    page.once("dialog", (dialog) => dialog.accept());
+    await page.getByRole("button", { name: "Confirm and continue" }).click();
+    await expect.poll(() => mutationsFor(api, "POST", `/api/jobs/${DEFAULT_JOB_ID}/count-review/confirm`).length).toBe(1);
+    await expect(page.locator(".task-monitor > .monitor-heading > .status")).toHaveText("running");
+  });
+});
