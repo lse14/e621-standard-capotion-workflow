@@ -14,6 +14,7 @@
 - [x] v8 输入 TXT 模式：Tasks 1-7（JobConfig 合同、Caption Tag 决策、Classify NL 注入、NL 本地完成、preflight/dispatch/OCR 继承、Caption UI、完整回归记录）均已验证；v8 Caption UI、payload/local-mock assertions 和双语说明通过 typecheck/build/static contract 与完整 Playwright `65/65`。默认 `Tag`、缺失/空 TXT 的 Tagger 补全默认开启，v2-v7 合同保持冻结。
 - [x] Start-WebUI 启动器修正：Windows PowerShell 5.1 在单个监听对象上返回空 `.Count`，使启动器误判 `8765` 空闲并产生 `10048` 重复绑定。监听查询现在有 `netstat` 回退且调用方显式数组化；状态文件遗失但 `/api/health` 返回 Anima 协议 `1.0` 时，Start 只重新打开现有本机服务，不停止未知进程。RED/GREEN `test_desktop_control.py` `6/6`，实际 `Start-WebUI.bat` 回归退出 `0`。
 - [?] NL 统一预设与 API UI：用户已确认 `General/Style/Character` 三内置可编辑可重置、自定义预设创建必选类型且可改/删、任务与诊断共用一个预设源、删除用户附加要求、所有 API 控件同区且 API 关闭时折叠保留配置。规格待用户书面复核：`docs/superpowers/specs/2026-08-08-unified-nl-presets-and-api-ui-design.md`；实施必须使用新增 v9 合同，不改 v2-v8。
+- [?] 全局原生路径选择器：用户已确认所有本机路径字段统一为“路径输入框 + 选择按钮”；源/输出用 Windows 原生目录选择，自定义替换索引用原生 CSV 文件选择，手输仍可用。规格待用户书面复核：`docs/superpowers/specs/2026-08-08-global-native-path-picker-design.md`；只新增受限本地 UI route，不提供浏览器文件系统枚举或改动预检/任务合同。
 
 ## 有效计划
 

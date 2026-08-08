@@ -14,6 +14,7 @@
 - NL 模式将 baseline TXT 作为最终 JSON `nl`，并强制 Tagger 为 Classify 生成 Tag；TXT 不传入 Tagger。缺失/空 TXT 的最终 `nl` 为空；非 UTF-8、NUL 或超过 16,384 UTF-8 bytes 的 TXT 阻断任务，不截断或回退。不会新增人工审核队列，Count Review/Token Budget Review 不承担该问题。
 - v8 的逐项 TDD 实施计划位于 `docs/superpowers/plans/2026-08-08-input-txt-mode.md`。截至 2026-08-08，Tasks 1-7 已完成：v8 默认 `caption.inputTxtMode="tag"`、`caption.taggerFallbackOnMissingTxt=true`，继承 v7 OCR `device`，新增集中 capability helpers 和严格 schema；Caption 仅在 Core 本地决定跳过、启动 Tagger 或写非阻断 warning；NL 模式的 baseline TXT 严格 UTF-8/NUL/16,384-byte 验证后覆盖 overlay JSON 的 `nl`，但不会替代 Classify 的 Tagger TXT；NL runner 直接完成该 `nl`，不读取 baseline JSON 或 API。preflight 会把 v8 NL 视为零 API 工作量且不冻结 HTTP 预算，dispatch 不读取凭据，v8 OCR 复用 v7 device/binding。Caption UI（Tag 默认补全、NL 强制 Tagger、双语说明、v8 payload）和完整浏览器 E2E 均已验证。
 - 待实施但已确认的 NL 下一版：任务提示词与 API 诊断提示词统一为一个类型化预设库；三内置 `General/Style/Character` 可编辑并重置，自定义预设创建必选类型且之后可编辑/删除；删除用户附加要求。NL 页面把所有 API Profile、连接、模型、密钥、限额、发现、测试和结果放进同一折叠区，API 关闭时仅折叠且保留值。正式任务使用新增 JobConfig v9 和新增 worker 分支冻结所选预设文本，绝不修改 v2-v8；完整规格为 `docs/superpowers/specs/2026-08-08-unified-nl-presets-and-api-ui-design.md`，当前等待用户书面复核。
+- 待实施但已确认的全局路径选择器：源数据集、完整副本输出和自定义替换 CSV 使用同一“路径输入框 + 选择按钮”控件；本地后端按受限 purpose 打开 Windows 原生目录或 CSV 文件对话框，取消不改值，手输仍可用。没有浏览器磁盘枚举，既有预检仍是路径合法性唯一裁决。完整规格为 `docs/superpowers/specs/2026-08-08-global-native-path-picker-design.md`，当前等待用户书面复核。
 
 ## 当前实现摘要
 
