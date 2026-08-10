@@ -10,9 +10,14 @@ test.describe("v8 Token Budget configuration", () => {
     expect(api.promptRequests).toEqual([]);
   });
 
-  test("sends the selected preset and exact length distribution in the v8 preflight body", async ({ page, api }) => {
+  test("sends the selected NL preset and exact length distribution in the v8 preflight body", async ({ page, api }) => {
     await openApp(page, { language: "en" });
-    await page.locator(".workflow-rail").getByRole("button", { name: /Token Budget/ }).click();
+    await page.locator(".workflow-rail").getByRole("button", { name: /NL/ }).click();
+    const presets = page.locator("[data-nl-preset-card]");
+    await expect(presets).toHaveCount(3);
+    await expect(presets.nth(0)).toContainText("General task preset prompt.");
+    await expect(presets.nth(1)).toContainText("Style task preset prompt.");
+    await expect(presets.nth(2)).toContainText("Character task preset prompt.");
     await page.getByRole("button", { name: "Style", exact: true }).click();
     await page.getByLabel("Short (%)", { exact: true }).fill("20");
     await page.getByLabel("Medium (%)", { exact: true }).fill("30");

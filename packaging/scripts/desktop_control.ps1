@@ -85,7 +85,24 @@ function Install-OptionalOcr {
 }
 
 function Get-Listener([int]$LocalPort) {
-    @(Get-NetTCPConnection -State Listen -LocalPort $LocalPort -ErrorAction SilentlyContinue)
+    $listeners = @(Get-NetTCPConnection -State Listen -LocalPort $LocalPort -ErrorAction SilentlyContinue)
+    if ($listeners.Count -gt 0) { return $listeners }
+    $pattern = '^\s*TCP\s+127\.0\.0\.1:{0}\s+\S+\s+LISTENING\s+(\d+)\s*$' -f $LocalPort
+    @(
+        netstat -ano -p tcp 2>$null |
+            ForEach-Object {
+                if ($_ -match $pattern) { [pscustomobject]@{ OwningProcess = [int]$Matches[1] } }
+            }
+    )
+}
+
+function Test-HealthyWebUi([int]$LocalPort) {
+    try {
+        $health = Invoke-RestMethod -Uri "http://127.0.0.1:$LocalPort/api/health" -TimeoutSec 2
+        return $health.status -eq 'ok' -and $health.protocolVersion -eq '1.0'
+    } catch {
+        return $false
+    }
 }
 
 function Read-StateFile([string]$Path) {
@@ -126,9 +143,13 @@ function New-Token {
 function Start-WebUi {
     Assert-ReleaseBundle
     $state = Read-State
-    $listeners = Get-Listener $Port
+    $listeners = @(Get-Listener $Port)
     if ($listeners.Count -gt 0) {
         if ($null -ne $state -and $state.installRoot -eq $projectRoot -and $state.port -eq $Port -and ($listeners | Where-Object { $_.OwningProcess -eq [int]$state.pid })) {
+            Start-Process "http://127.0.0.1:$Port/"
+            return
+        }
+        if (Test-HealthyWebUi $Port) {
             Start-Process "http://127.0.0.1:$Port/"
             return
         }
@@ -147,7 +168,8 @@ function Start-WebUi {
     while ([DateTime]::UtcNow -lt $deadline) {
         try {
             $health = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/api/health" -TimeoutSec 2
-            if ($health.status -eq 'ok' -and (Get-Listener $Port | Where-Object { $_.OwningProcess -eq $process.Id })) {
+            $ownedListeners = @(Get-Listener $Port | Where-Object { $_.OwningProcess -eq $process.Id })
+            if ($health.status -eq 'ok' -and $ownedListeners.Count -gt 0) {
                 Start-Process "http://127.0.0.1:$Port/"
                 return
             }
@@ -162,7 +184,7 @@ function Start-WebUi {
 function Stop-WebUi {
     $state = Read-State
     if ($null -eq $state) {
-        if ((Get-Listener $Port).Count -eq 0) { return }
+        if ((@(Get-Listener $Port).Count -eq 0)) { return }
         throw "Port $Port is listening but this installation has no matching state file"
     }
     $stateBelongsToInstallation = (
@@ -173,7 +195,7 @@ function Stop-WebUi {
     if (-not $stateBelongsToInstallation) {
         throw 'WebUI state file does not belong to this installation'
     }
-    $listeners = Get-Listener $Port
+    $listeners = @(Get-Listener $Port)
     if ($listeners.Count -eq 0) {
         Remove-Item -LiteralPath $statePath -Force
         return
@@ -184,7 +206,7 @@ function Stop-WebUi {
     Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:$Port/api/application/shutdown" -ContentType 'application/json' -Body (@{ token = [string]$state.token } | ConvertTo-Json -Compress) -TimeoutSec 10 | Out-Null
     $deadline = [DateTime]::UtcNow.AddSeconds(60)
     while ([DateTime]::UtcNow -lt $deadline) {
-        if ((Get-Listener $Port).Count -eq 0) {
+        if ((@(Get-Listener $Port).Count -eq 0)) {
             Remove-Item -LiteralPath $statePath -Force -ErrorAction SilentlyContinue
             return
         }

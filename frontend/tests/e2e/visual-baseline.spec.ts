@@ -89,7 +89,7 @@ test("captures the unified NL desktop configuration with a tooltip open", async 
   await openApp(page, { language: "en" });
   await page.locator(".workflow-rail").getByRole("button", { name: /NL/ }).click();
   await page.locator('[data-config-surface="nl"]').scrollIntoViewIfNeeded();
-  await page.getByRole("button", { name: "Concurrency information" }).hover();
+  await page.getByRole("button", { name: "Concurrency information" }).click();
   await expect(page.getByRole("tooltip")).toBeVisible();
   await page.screenshot({ path: screenshotPath("workflow-ui-desktop-nl.png"), fullPage: false });
 });

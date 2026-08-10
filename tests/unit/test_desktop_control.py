@@ -36,6 +36,18 @@ class DesktopControlTests(unittest.TestCase):
         self.assertNotIn("Stop-Process", stop_body)
         self.assertNotIn("taskkill", script.lower())
 
+    def test_start_recovers_a_healthy_webui_when_the_state_file_is_missing(self) -> None:
+        script = (ROOT / "packaging" / "scripts" / "desktop_control.ps1").read_text(encoding="utf-8")
+        start_body = script.partition("function Start-WebUi")[2].partition("function Stop-WebUi")[0]
+        stop_body = script.partition("function Stop-WebUi")[2]
+        self.assertIn("netstat -ano -p tcp", script)
+        self.assertIn("function Test-HealthyWebUi", script)
+        self.assertIn("$health.protocolVersion -eq '1.0'", script)
+        self.assertIn("$listeners = @(Get-Listener $Port)", start_body)
+        self.assertIn("Test-HealthyWebUi $Port", start_body)
+        self.assertIn('Start-Process "http://127.0.0.1:$Port/"', start_body)
+        self.assertIn("(@(Get-Listener $Port).Count -eq 0)", stop_body)
+
     def test_install_ocr_mode_is_explicit_and_never_defaults_to_cpu(self) -> None:
         script = (ROOT / "packaging" / "scripts" / "desktop_control.ps1").read_text(encoding="utf-8")
         batch = (ROOT / "Install-WebUI.bat").read_text(encoding="ascii")

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Body, HTTPException
+from pydantic import ValidationError
 
 from .api_context import ControlPlaneContext, bad_request, not_found
-from .api_models import _ShutdownBody
+from .api_models import _ShutdownBody, parse_select_path_body
 from .db import StateDatabase
+from .native_path_picker import NativePathPickerBusyError, NativePathPickerUnavailableError
 from .pipeline import PipelineError
 from .resource_catalog import ResourceCatalogError
 from .scheduler import SchedulerError
@@ -53,6 +55,20 @@ def build_application_router(context: ControlPlaneContext) -> APIRouter:
     @router.post("/api/jobs/{job_id}/policy/resume")
     def resume_policy(job_id: str) -> dict[str, str]:
         return policy_control(job_id, "resume")
+
+    @router.post("/api/application/select-path")
+    def select_path(body: object = Body(None)) -> dict[str, object]:
+        try:
+            request = parse_select_path_body(body)
+        except ValidationError as exc:
+            raise HTTPException(status_code=400, detail="invalid_path_picker_request") from exc
+        try:
+            selected = context.native_path_picker.select(request.purpose, request.current_path)
+        except NativePathPickerBusyError as exc:
+            raise HTTPException(status_code=409, detail="path_picker_busy") from exc
+        except NativePathPickerUnavailableError as exc:
+            raise HTTPException(status_code=503, detail="path_picker_unavailable") from exc
+        return {"cancelled": selected is None, "path": selected}
 
     @router.post("/api/application/shutdown")
     def shutdown_application(body: _ShutdownBody) -> dict[str, bool]:

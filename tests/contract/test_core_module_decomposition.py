@@ -82,11 +82,11 @@ RESOURCE_VALIDATION_FUNCTIONS = frozenset({
 API_REQUEST_MODELS = frozenset({
     "_AmountBody", "_ConfirmBody", "_CountReviewBatchBody", "_CountReviewBatchItem",
     "_CountReviewDecisionBody", "_NlDiagnosticCredentialsBody", "_NlModelDiscoveryBody",
-    "_NlPromptPresetBody", "_NlTestMessageBody", "_PinBody", "_PreflightBody", "_ProfileBody",
+    "_NlPromptPresetBody", "_NlTestMessageBody", "_PinBody", "_PreflightBody", "_ProfileBody", "_SelectPathBody",
     "_SecretBody", "_ShutdownBody", "_TokenBudgetApplyBody", "_TokenBudgetRecountBody",
     "_TokenBudgetRewriteShortBody", "_WorkspaceBody",
 })
-API_MODEL_CLASSES = API_REQUEST_MODELS | frozenset({"CreateJobRequest"})
+API_MODEL_CLASSES = API_REQUEST_MODELS | frozenset({"CreateJobRequest", "SelectPathRequest"})
 
 API_APPLICATION_ROUTES = frozenset({
     ("GET", "/health"),
@@ -94,6 +94,7 @@ API_APPLICATION_ROUTES = frozenset({
     ("GET", "/api/resources"),
     ("POST", "/api/jobs/{job_id}/policy/pause"),
     ("POST", "/api/jobs/{job_id}/policy/resume"),
+    ("POST", "/api/application/select-path"),
     ("POST", "/api/application/shutdown"),
 })
 
@@ -125,6 +126,7 @@ API_NL_ROUTES = frozenset({
     ("GET", "/api/nl/prompt-presets/{preset_id}"),
     ("POST", "/api/nl/prompt-presets"),
     ("PUT", "/api/nl/prompt-presets/{preset_id}"),
+    ("POST", "/api/nl/prompt-presets/{preset_id}/reset"),
     ("DELETE", "/api/nl/prompt-presets/{preset_id}"),
     ("POST", "/api/nl/diagnostics/models"),
     ("POST", "/api/nl/diagnostics/test-message"),

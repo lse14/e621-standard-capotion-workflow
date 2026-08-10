@@ -49,12 +49,16 @@ def _preset_response(preset: NlPromptPreset, *, detail: bool) -> dict[str, objec
     result: dict[str, object] = {
         "presetId": preset.presetId,
         "name": preset.name,
+        "type": preset.type,
         "builtIn": preset.builtIn,
         "sha256": preset.sha256,
         "sizeBytes": preset.sizeBytes,
     }
     if detail:
-        result["basePrompt"] = preset.basePrompt
+        # Keep basePrompt in the response for older local clients; both names
+        # resolve to the same saved prompt source.
+        result["promptText"] = preset.promptText
+        result["basePrompt"] = preset.promptText
     return result
 
 
@@ -120,14 +124,42 @@ def build_nl_router(context: ControlPlaneContext) -> APIRouter:
     @router.post("/api/nl/prompt-presets")
     def create_prompt_preset(body: _NlPromptPresetBody) -> dict[str, object]:
         try:
-            return _preset_response(context.prompt_preset_store.create(name=body.name, base_prompt=body.basePrompt), detail=True)
+            return _preset_response(
+                context.prompt_preset_store.create(
+                    name=body.name,
+                    preset_type=body.type,
+                    prompt_text=body.promptText,
+                    base_prompt=body.basePrompt,
+                ),
+                detail=True,
+            )
         except PromptPresetValidationError as exc:
             raise bad_request(exc) from exc
 
     @router.put("/api/nl/prompt-presets/{preset_id}")
     def update_prompt_preset(preset_id: str, body: _NlPromptPresetBody) -> dict[str, object]:
         try:
-            return _preset_response(context.prompt_preset_store.update(preset_id, name=body.name, base_prompt=body.basePrompt), detail=True)
+            return _preset_response(
+                context.prompt_preset_store.update(
+                    preset_id,
+                    name=body.name,
+                    preset_type=body.type,
+                    prompt_text=body.promptText,
+                    base_prompt=body.basePrompt,
+                ),
+                detail=True,
+            )
+        except PromptPresetConflictError as exc:
+            raise conflict(exc) from exc
+        except PromptPresetNotFoundError as exc:
+            raise not_found(exc) from exc
+        except PromptPresetValidationError as exc:
+            raise bad_request(exc) from exc
+
+    @router.post("/api/nl/prompt-presets/{preset_id}/reset")
+    def reset_prompt_preset(preset_id: str) -> dict[str, object]:
+        try:
+            return _preset_response(context.prompt_preset_store.reset(preset_id), detail=True)
         except PromptPresetConflictError as exc:
             raise conflict(exc) from exc
         except PromptPresetNotFoundError as exc:

@@ -92,7 +92,8 @@ test.describe("workflow characterization", () => {
     await openApp(page, { language: "en" });
 
     await page.locator(".workflow-rail").getByRole("button", { name: /NL/ }).click();
-    await expect(page.getByLabel("User supplement", { exact: true })).toHaveValue("");
+    await expect(page.getByLabel("User supplement", { exact: true })).toHaveCount(0);
+    await expect(page.locator("[data-nl-preset-card]")).toHaveCount(3);
     expect(api.promptRequests).toEqual([]);
     await page.locator(".workflow-rail").getByRole("button", { name: /Dataset and preflight/ }).click();
 
@@ -101,7 +102,7 @@ test.describe("workflow characterization", () => {
 
     await expect.poll(() => mutationsFor(api, "POST", "/api/jobs/preflight").length).toBe(1);
     expect(mutationsFor(api, "POST", "/api/jobs/preflight")[0].body).toEqual({
-      config: expectedE621Draft(sourceRoot, ""),
+      config: expectedE621Draft(sourceRoot, "General task preset prompt."),
     });
     await expect(page.getByRole("button", { name: "Confirm workspace" })).toBeEnabled();
 

@@ -14,6 +14,9 @@ LEGACY_PROMPT_VERSION = "nl-default-prompt-v1"
 DEFAULT_PROMPT_VERSION = "nl-default-prompt-v2"
 V5_PROMPT_VERSION = "nl-default-prompt-v3"
 V4_BASE_PROMPT_VERSION = "nl-default-prompt-v4-base"
+V4_GENERAL_PROMPT_VERSION = "nl-default-prompt-v4-general"
+V4_STYLE_PROMPT_VERSION = "nl-default-prompt-v4-style"
+V4_CHARACTER_PROMPT_VERSION = "nl-default-prompt-v4-character"
 PROMPT_REQUIRED_SNIPPETS = {
     LEGACY_PROMPT_VERSION: (
         "Do not output JSON, XML, Markdown, code fences",
@@ -37,6 +40,21 @@ PROMPT_REQUIRED_SNIPPETS = {
         "exactly these keys: nl, count, layout, sameCharacterRepeated",
         "untrusted data",
         "complete visible text",
+    ),
+    V4_GENERAL_PROMPT_VERSION: (
+        "Describe all observable content",
+        "fixed appearance",
+        "visible text",
+    ),
+    V4_STYLE_PROMPT_VERSION: (
+        "observable picture content and composition",
+        "Do not describe artist",
+        "red coat or blue vase",
+    ),
+    V4_CHARACTER_PROMPT_VERSION: (
+        "primaryCharacterName",
+        "fixed appearance",
+        "other characters' visible appearance",
     ),
 }
 DEFAULT_PROMPT_RELATIVE_PATH = "resources\\nl-default-prompt-v2.txt"
@@ -105,12 +123,13 @@ def _verify_default_prompt_manifest(manifest_path: Path, data: bytes, *, prompt_
         raise NlProfileError("default NL prompt manifest is not strict UTF-8 JSON") from exc
     expected_fields = {"schemaVersion", "resourceId", "owner", "relativePath", "sizeBytes", "sha256"}
     digest = hashlib.sha256(data).hexdigest()
+    expected_owner = "nl" if prompt_version.startswith("nl-default-prompt-v4-") else "core"
     if (
         not isinstance(value, dict)
         or set(value) != expected_fields
         or value.get("schemaVersion") != 1
         or value.get("resourceId") != prompt_version
-        or value.get("owner") != "core"
+        or value.get("owner") != expected_owner
         or value.get("relativePath") != _prompt_paths(prompt_version)[0]
         or type(value.get("sizeBytes")) is not int
         or value.get("sizeBytes") != len(data)

@@ -10,8 +10,10 @@ import type {
   JobListPage,
   JobSnapshot,
   NlProfile,
+  NlPresetType,
   NlPromptPresetDetail,
   OcrRuntimeStatus,
+  PathPickerPurpose,
   PreflightSummary,
   ResourceCatalogResponse,
   ResourceEntry,
@@ -32,8 +34,8 @@ const TRANSPARENT_PNG = Buffer.from(
 );
 
 export const DEFAULT_JOB_ID = "job-e621-characterization";
-const BUILTIN_PRESET_ID = "builtin:nl-default-prompt-v4-base";
-const BUILTIN_PROMPT = "You are the verified Anima v4 base prompt for local diagnostics.";
+const BUILTIN_PRESET_ID = "builtin:nl-preset-v1-general";
+const BUILTIN_PROMPT = "General task preset prompt.";
 
 type RouteFailure = { status: number; detail: string };
 type RouteHold = { promise: Promise<void>; release: () => void };
@@ -50,6 +52,9 @@ export type ApiScenario = {
   defaultNlPrompt: DefaultNlPrompt;
   defaultNlPromptV3: DefaultNlPrompt;
   defaultNlPromptV4: DefaultNlPrompt;
+  taskNlPromptGeneral: DefaultNlPrompt;
+  taskNlPromptStyle: DefaultNlPrompt;
+  taskNlPromptCharacter: DefaultNlPrompt;
   promptRequests: Array<string | null>;
   promptPresets: NlPromptPresetDetail[];
   jobs: JobListPage;
@@ -57,6 +62,7 @@ export type ApiScenario = {
   preflight: PreflightSummary;
   countReview: CountReviewPage;
   tokenBudgetReviews: TokenBudgetReviewPage;
+  selectedPaths: Record<PathPickerPurpose, string | null>;
   failures: Map<string, RouteFailure>;
   holds: Map<string, RouteHold>;
   mutations: ApiMutation[];
@@ -350,20 +356,40 @@ export function createApiScenario(): ApiScenario {
       systemPrompt: "Fixed prompt fragments are not editable in the browser.",
       sha256: "test-prompt-v4-sha256",
     },
+    taskNlPromptGeneral: {
+      promptVersion: "nl-default-prompt-v4-general",
+      systemPrompt: "General task preset prompt.",
+      sha256: "test-prompt-v4-general-sha256",
+    },
+    taskNlPromptStyle: {
+      promptVersion: "nl-default-prompt-v4-style",
+      systemPrompt: "Style task preset prompt.",
+      sha256: "test-prompt-v4-style-sha256",
+    },
+    taskNlPromptCharacter: {
+      promptVersion: "nl-default-prompt-v4-character",
+      systemPrompt: "Character task preset prompt.",
+      sha256: "test-prompt-v4-character-sha256",
+    },
     promptRequests: [],
-    promptPresets: [{
-      presetId: BUILTIN_PRESET_ID,
-      name: "nl-default-prompt-v4-base",
-      builtIn: true,
-      sha256: "b".repeat(64),
-      sizeBytes: new TextEncoder().encode(BUILTIN_PROMPT).byteLength,
-      basePrompt: BUILTIN_PROMPT,
-    }],
+    promptPresets: ([
+      ["builtin:nl-preset-v1-general", "General", "general", "General task preset prompt."],
+      ["builtin:nl-preset-v1-style", "Style", "style", "Style task preset prompt."],
+      ["builtin:nl-preset-v1-character", "Character", "character", "Character task preset prompt."],
+    ] as const).map(([presetId, name, type, promptText]) => ({
+      presetId, name, type, builtIn: true, sha256: "b".repeat(64),
+      sizeBytes: new TextEncoder().encode(promptText).byteLength, promptText, basePrompt: promptText,
+    })),
     jobs: { jobs: [], nextAfterCreatedAt: null, nextAfterJobId: null },
     snapshots: new Map([[DEFAULT_JOB_ID, makeSnapshot()]]),
     preflight: makePreflight(),
     countReview: makeCountReview(),
     tokenBudgetReviews: makeTokenBudgetReviews(),
+    selectedPaths: {
+      source_dataset: "E:\\picked\\source",
+      output_dataset: "E:\\picked\\output",
+      replacement_csv: "E:\\picked\\replace.csv",
+    },
     failures: new Map(),
     holds: new Map(),
     mutations: [],
@@ -500,14 +526,39 @@ async function handleApiRequest(scenario: ApiScenario, route: Route, pathname: s
 
   if (method === "GET" && pathname === "/health") return fulfillJson(route, { status: "ok" });
   if (method === "GET" && pathname === "/api/resources") return fulfillJson(route, scenario.resources);
+  if (method === "POST" && pathname === "/api/application/select-path") {
+    const request = body as { purpose: PathPickerPurpose };
+    const path = scenario.selectedPaths[request.purpose];
+    return fulfillJson(route, path === null ? { cancelled: true, path: null } : { cancelled: false, path });
+  }
   if (method === "GET" && pathname === "/api/nl/default-prompt") {
     const promptVersion = new URL(route.request().url()).searchParams.get("promptVersion");
     scenario.promptRequests.push(promptVersion);
-    return fulfillJson(route, promptVersion === "nl-default-prompt-v4" ? scenario.defaultNlPromptV4 : promptVersion === "nl-default-prompt-v3" ? scenario.defaultNlPromptV3 : scenario.defaultNlPrompt);
+    return fulfillJson(route,
+      promptVersion === "nl-default-prompt-v4-general" ? scenario.taskNlPromptGeneral
+        : promptVersion === "nl-default-prompt-v4-style" ? scenario.taskNlPromptStyle
+          : promptVersion === "nl-default-prompt-v4-character" ? scenario.taskNlPromptCharacter
+            : promptVersion === "nl-default-prompt-v4" ? scenario.defaultNlPromptV4
+              : promptVersion === "nl-default-prompt-v3" ? scenario.defaultNlPromptV3 : scenario.defaultNlPrompt,
+    );
   }
   if (method === "GET" && pathname === "/api/nl/profiles") return fulfillJson(route, { profiles: scenario.profiles });
   if (method === "GET" && pathname === "/api/nl/prompt-presets") {
-    return fulfillJson(route, { presets: scenario.promptPresets.map(({ basePrompt: _basePrompt, ...summary }) => summary) });
+    return fulfillJson(route, { presets: scenario.promptPresets.map(({ promptText: _promptText, basePrompt: _basePrompt, ...summary }) => summary) });
+  }
+  const resetMatch = pathname.match(/^\/api\/nl\/prompt-presets\/([^/]+)\/reset$/);
+  if (resetMatch && method === "POST") {
+    const presetId = decodeURIComponent(resetMatch[1]);
+    const index = scenario.promptPresets.findIndex((item) => item.presetId === presetId);
+    if (index < 0 || !scenario.promptPresets[index].builtIn) return fulfillJson(route, { detail: "preset not found" }, 404);
+    const defaults: Record<string, string> = {
+      "builtin:nl-preset-v1-general": "General task preset prompt.",
+      "builtin:nl-preset-v1-style": "Style task preset prompt.",
+      "builtin:nl-preset-v1-character": "Character task preset prompt.",
+    };
+    const promptText = defaults[presetId] ?? scenario.promptPresets[index].promptText;
+    scenario.promptPresets[index] = { ...scenario.promptPresets[index], promptText, basePrompt: promptText, sizeBytes: new TextEncoder().encode(promptText).byteLength };
+    return fulfillJson(route, scenario.promptPresets[index]);
   }
   const presetMatch = pathname.match(/^\/api\/nl\/prompt-presets\/([^/]+)$/);
   if (presetMatch && method === "GET") {
@@ -516,14 +567,17 @@ async function handleApiRequest(scenario: ApiScenario, route: Route, pathname: s
     return fulfillJson(route, preset);
   }
   if (method === "POST" && pathname === "/api/nl/prompt-presets") {
-    const request = body as { name: string; basePrompt: string };
+    const request = body as { name: string; type?: NlPresetType; promptText?: string; basePrompt?: string };
+    const promptText = request.promptText ?? request.basePrompt ?? "";
     const preset: NlPromptPresetDetail = {
       presetId: `custom:mock-${scenario.promptPresets.length}`,
       name: request.name,
+      type: request.type ?? "general",
       builtIn: false,
       sha256: "c".repeat(64),
-      sizeBytes: new TextEncoder().encode(request.basePrompt).byteLength,
-      basePrompt: request.basePrompt,
+      sizeBytes: new TextEncoder().encode(promptText).byteLength,
+      promptText,
+      basePrompt: promptText,
     };
     scenario.promptPresets.push(preset);
     return fulfillJson(route, preset);
@@ -531,9 +585,10 @@ async function handleApiRequest(scenario: ApiScenario, route: Route, pathname: s
   if (presetMatch && method === "PUT") {
     const presetId = decodeURIComponent(presetMatch[1]);
     const index = scenario.promptPresets.findIndex((item) => item.presetId === presetId);
-    const request = body as { name: string; basePrompt: string };
+    const request = body as { name: string; type?: NlPresetType; promptText?: string; basePrompt?: string };
     if (index < 0) return fulfillJson(route, { detail: "preset not found" }, 404);
-    const updated = { ...scenario.promptPresets[index], name: request.name, basePrompt: request.basePrompt, sizeBytes: new TextEncoder().encode(request.basePrompt).byteLength };
+    const promptText = request.promptText ?? request.basePrompt ?? "";
+    const updated = { ...scenario.promptPresets[index], name: request.name, type: request.type ?? scenario.promptPresets[index].type, promptText, basePrompt: promptText, sizeBytes: new TextEncoder().encode(promptText).byteLength };
     scenario.promptPresets[index] = updated;
     return fulfillJson(route, updated);
   }

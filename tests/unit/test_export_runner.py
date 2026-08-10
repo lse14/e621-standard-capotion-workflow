@@ -4,7 +4,7 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parents[2];sys.path.insert(0,str(ROOT/'core'/'src'))
 from PIL import Image
 from anima_core.classify_overlay import serialize_annotation_json
-from anima_core.contracts import JobConfig
+from anima_core.contracts import JobConfig,sha256_json
 from anima_core.db import StateDatabase
 from anima_core.export_runner import ExportRunner,ExportRunnerError
 from anima_core.export_summary import build_export_summary
@@ -34,7 +34,11 @@ class ExportRunnerTests(unittest.TestCase):
   dataset=root/'d';dataset.mkdir();Image.new('RGB',(2,2)).save(dataset/'a.png');(dataset/'a.json').write_bytes(serialize_annotation_json({'quality':[],'count':'solo','character':'','series':'','artist':'','appearance':[],'tags':['ok'],'environment':[],'nl':''}))
   config_kwargs={} if schema_version is None else {'schemaVersion':schema_version}
   cfg=JobConfig(profile='e621',workMode='in_place',overwriteMode='incremental',sourceRoot=str(dataset),recursive=True,**config_kwargs);cfg.caption['enabled']=cfg.replace['enabled']=cfg.nl['enabled']=cfg.dropout['enabled']=False;cfg.classify['enabled']=True;cfg.export['format']='json'
-  prep=JobPreparationService(root/'s.db');job=prep.preflight(cfg.to_dict()).jobId;prep.confirm_workspace(job,confirmed=True,confirmed_rebuild=False);db=StateDatabase.open(root/'s.db');sch=BoundedScheduler(db)
+  if schema_version==7:cfg.tokenBudget['enabled']=False
+  prep=JobPreparationService(root/'s.db');job=prep.preflight(cfg.to_dict()).jobId;prep.confirm_workspace(job,confirmed=True,confirmed_rebuild=False);db=StateDatabase.open(root/'s.db')
+  if schema_version==7:
+   frozen=json.loads(str(db.get_job(job)['config_json']));frozen['tokenBudget'].update({'enabled':True,'resourceManifestRelativePath':r'tokenizers\tokenizer-qwen3-0.6b-anima-v1\resource.json','resourceFingerprint':'a'*64,'contextLimit':512});db.connection.execute('UPDATE jobs SET config_json=?,config_hash=? WHERE job_id=?',(json.dumps(frozen),sha256_json(frozen),job))
+  sch=BoundedScheduler(db)
   for m in ('caption','classify','replace') + (('ocr',) if schema_version == 7 else ()) + ('nl','count_review','dropout') + (('token_budget',) if schema_version == 7 else ()):sch.start_module(job,m,enabled=False,profile='e621')
   sch.start_module(job,'export',enabled=True,profile='e621');layout=OverlayLayout.open_existing(str(db.get_job(job)['overlay_root']),job)
   return db,prep,job,ExportRunner(db,sch,_Transport(layout,bad,conversions),WorkingAnnotationView(BaselineView(dataset),layout),job_id=job,worker_instance_id='e')

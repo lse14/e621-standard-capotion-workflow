@@ -1,5 +1,6 @@
 import { ResourcePicker, type ResourcePickerProps } from "../ResourcePicker";
 import { FormField, ToggleField, type FieldGuidanceCopy } from "../FormField";
+import { PathPicker, type PathPickerCopy } from "../PathPicker";
 import type { Draft } from "../../draft";
 import type { UiLanguage } from "../../i18n";
 
@@ -17,6 +18,7 @@ export type ReplaceStepProps = {
   resourceError: string | null;
   invalidResourceCount: number;
   resourcePickerCopy: ResourcePickerProps["copy"];
+  pathPickerCopy: PathPickerCopy;
   replaceIndex: ReplaceIndexSummary;
   t: Translate;
   guidanceCopy: FieldGuidanceCopy;
@@ -31,7 +33,7 @@ export type ReplaceStepProps = {
 
 export function ReplaceStep({
   draft, annotationProfile, taskLocked, language, resources, resourcesLoading, resourceError, invalidResourceCount,
-  resourcePickerCopy, replaceIndex, t, guidanceCopy, copy, onReplaceChange, onIndexModeChange, onRefreshResources,
+  resourcePickerCopy, pathPickerCopy, replaceIndex, t, guidanceCopy, copy, onReplaceChange, onIndexModeChange, onRefreshResources,
 }: ReplaceStepProps) {
   if (annotationProfile === "danbooru") {
     return <div className="option-stack"><p className="hint">{copy.replaceSkipped}</p></div>;
@@ -51,7 +53,7 @@ export function ReplaceStep({
       onChange={(resourceId) => onReplaceChange({ resourceId })} onRefresh={onRefreshResources}
     />}
     {draft.replace.indexMode === "custom" && <FormField id="replace-custom-index-path" label={copy.customIndexPath} copy={guidanceCopy} guidance={{ description: t("fieldHelp_customIndexPath") }}>
-      <input id="replace-custom-index-path" disabled={taskLocked || !draft.replace.enabled} value={draft.replace.customIndexPath ?? ""} onChange={(event) => onReplaceChange({ customIndexPath: event.target.value })} placeholder={t("absoluteWindowsPath")} />
+      <PathPicker id="replace-custom-index-path" purpose="replacement_csv" disabled={taskLocked || !draft.replace.enabled} value={draft.replace.customIndexPath ?? ""} onChange={(customIndexPath) => onReplaceChange({ customIndexPath })} placeholder={t("absoluteWindowsPath")} copy={pathPickerCopy} />
     </FormField>}
     {replaceIndex?.mode === "custom" && <section className="resource-summary"><span>{copy.customIndex}</span><code>{String(replaceIndex.path)}</code><small>SHA-256: {String(replaceIndex.sha256)}</small><small>{copy.indexRules}: {String(replaceIndex.ruleCount)}</small></section>}
   </div>;

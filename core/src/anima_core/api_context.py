@@ -11,6 +11,7 @@ from .job_preflight import JobPreparationService
 from .nl_profiles import NlApiProfileStore
 from .nl_diagnostics import NlDiagnosticClient
 from .nl_prompt_presets import NlPromptPresetStore
+from .native_path_picker import NativePathPicker
 from .pipeline import PipelineService
 from .repair import RepairPreparationService
 from .resource_catalog import ResourceCatalog
@@ -29,6 +30,7 @@ class ControlPlaneContext:
     resource_catalog: ResourceCatalog
     shutdown_token: str | None
     shutdown_callback: Callable[[], None] | None
+    native_path_picker: NativePathPicker
 
 
 def bad_request(error: Exception) -> HTTPException:

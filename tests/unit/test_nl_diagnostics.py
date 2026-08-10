@@ -82,6 +82,15 @@ class NlDiagnosticClientTests(unittest.TestCase):
         self.assertEqual((True, 0, None, None), (result["ok"], result["latencyMs"], result["errorCode"], result["errorReason"]))
         self.assertEqual(1, len(fake.requests))
 
+    def test_remote_http_normalizes_and_issues_models_request(self) -> None:
+        fake = FakeOpener(FakeResponse(_models(["remote-model"])))
+        result = NlDiagnosticClient(opener=fake).discover_models(
+            endpoint="http://provider.example/v1",
+            api_key="secret-value",
+        )
+        self.assertTrue(result["ok"])
+        self.assertEqual("http://provider.example/v1/models", fake.request.full_url)
+
     def test_test_message_uses_current_unsaved_values_once(self) -> None:
         fake = FakeOpener(FakeResponse(_completion()))
         result = NlDiagnosticClient(opener=fake, clock=iter((1.0, 1.234)).__next__).test_message(
@@ -103,7 +112,6 @@ class NlDiagnosticClientTests(unittest.TestCase):
 
     def test_invalid_endpoints_do_not_issue_requests(self) -> None:
         for endpoint in (
-            "http://example.test/v1",
             "https://user:pass@example.test/v1",
             "https://example.test/v1?key=x",
             "https://example.test/v1#fragment",

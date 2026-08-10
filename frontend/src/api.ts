@@ -1,5 +1,7 @@
 export type PipelineModuleId = "caption" | "classify" | "replace" | "ocr" | "nl" | "count_review" | "dropout" | "token_budget" | "export";
 export type AnnotationProfile = "e621" | "danbooru";
+export type PathPickerPurpose = "source_dataset" | "output_dataset" | "replacement_csv";
+export type SelectLocalPathResponse = { cancelled: boolean; path: string | null };
 export type OcrDevice = "auto" | "cuda" | "cpu";
 export type OcrExecutionTuning = { mode: "auto"; value: null } | { mode: "manual"; value: number };
 export type OcrExecutionRequest = {
@@ -94,15 +96,17 @@ export type NlProfile = {
   profileId: string; endpoint: string; model: string; backupModel: string | null;
   apiCredentialRef: string; systemPrompt: string; apiPolicy: Record<string, unknown>; hasCredential: boolean;
 };
+export type NlPresetType = "general" | "style" | "character";
 export type NlPromptPresetSummary = {
   presetId: string;
   name: string;
+  type: NlPresetType;
   builtIn: boolean;
   sha256: string;
   sizeBytes: number;
 };
-export type NlPromptPresetDetail = NlPromptPresetSummary & { basePrompt: string };
-export type NlPromptPresetWrite = { name: string; basePrompt: string };
+export type NlPromptPresetDetail = NlPromptPresetSummary & { promptText: string; basePrompt?: string };
+export type NlPromptPresetWrite = { name: string; type: NlPresetType; promptText: string };
 export type NlDiagnosticCredentials = { endpoint: string; apiCredentialRef: string; apiKey?: string };
 export type NlModelDiscoveryRequest = NlDiagnosticCredentials;
 export type NlTestMessageRequest = NlDiagnosticCredentials & { model: string; basePrompt: string };
@@ -267,6 +271,9 @@ export function createNlPromptPreset(body: NlPromptPresetWrite): Promise<NlPromp
 export function updateNlPromptPreset(presetId: string, body: NlPromptPresetWrite): Promise<NlPromptPresetDetail> {
   return request(`/api/nl/prompt-presets/${encodeURIComponent(presetId)}`, { method: "PUT", body: JSON.stringify(body) });
 }
+export function resetNlPromptPreset(presetId: string): Promise<NlPromptPresetDetail> {
+  return request(`/api/nl/prompt-presets/${encodeURIComponent(presetId)}/reset`, { method: "POST" });
+}
 export function deleteNlPromptPreset(presetId: string): Promise<{ deleted: true }> {
   return request(`/api/nl/prompt-presets/${encodeURIComponent(presetId)}`, { method: "DELETE" });
 }
@@ -277,6 +284,12 @@ export function testNlMessage(body: NlTestMessageRequest): Promise<TestMessageRe
   return request("/api/nl/diagnostics/test-message", { method: "POST", body: JSON.stringify(body) });
 }
 export function listResources(): Promise<ResourceCatalogResponse> { return request("/api/resources"); }
+export function selectLocalPath(purpose: PathPickerPurpose, currentPath: string | null): Promise<SelectLocalPathResponse> {
+  return request("/api/application/select-path", {
+    method: "POST",
+    body: JSON.stringify({ purpose, currentPath }),
+  });
+}
 export function saveNlProfile(profile: NlProfile): Promise<NlProfile> {
   const { profileId, hasCredential: _hasCredential, ...body } = profile;
   return request(`/api/nl/profiles/${encodeURIComponent(profileId)}`, { method: "PUT", body: JSON.stringify(body) });

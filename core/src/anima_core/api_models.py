@@ -26,7 +26,17 @@ class _SecretBody(BaseModel):
 class _NlPromptPresetBody(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     name: str
-    basePrompt: str
+    type: Literal["general", "style", "character"] = "general"
+    promptText: str | None = None
+    basePrompt: str | None = None
+
+    @model_validator(mode="after")
+    def _require_prompt_text(self) -> "_NlPromptPresetBody":
+        if self.promptText is None and self.basePrompt is None:
+            raise ValueError("promptText is required")
+        if self.promptText is not None and self.basePrompt is not None and self.promptText != self.basePrompt:
+            raise ValueError("promptText and basePrompt must match")
+        return self
 
 
 class _NlDiagnosticCredentialsBody(BaseModel):
@@ -58,6 +68,23 @@ class _ConfirmBody(BaseModel):
 class _ShutdownBody(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     token: str
+
+
+class _SelectPathBody(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    purpose: Literal["source_dataset", "output_dataset", "replacement_csv"]
+    currentPath: str | None = Field(default=None, max_length=32_767)
+
+
+@dataclass(frozen=True)
+class SelectPathRequest:
+    purpose: Literal["source_dataset", "output_dataset", "replacement_csv"]
+    current_path: str | None
+
+
+def parse_select_path_body(value: object) -> SelectPathRequest:
+    body = _SelectPathBody.model_validate(value)
+    return SelectPathRequest(body.purpose, body.currentPath)
 
 
 class _PreflightBody(BaseModel):

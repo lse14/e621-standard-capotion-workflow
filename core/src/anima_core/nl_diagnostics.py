@@ -63,10 +63,6 @@ def _normalize_chat_endpoint(value: object) -> str | None:
         or parsed.hostname is None
     ):
         return None
-    hostname = parsed.hostname.casefold()
-    is_loopback = hostname == "localhost" or hostname in {"127.0.0.1", "::1"}
-    if parsed.scheme != "https" and not is_loopback:
-        return None
     path = parsed.path.rstrip("/")
     if not path.endswith("/chat/completions"):
         path += "/chat/completions"

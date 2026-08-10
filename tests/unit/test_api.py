@@ -34,6 +34,7 @@ from anima_core.credentials import DpapiCredentialStore
 from anima_core.db import StateDatabase
 from anima_core.nl_profiles import NlApiProfileStore
 from anima_core.nl_prompt_presets import NlPromptPresetStore
+from anima_core.native_path_picker import NativePathPickerBusyError, NativePathPickerUnavailableError
 from anima_core.path_safety import windows_key
 from anima_core.pipeline import PipelineError, PipelineService
 from anima_core.scheduler import BoundedScheduler
@@ -46,7 +47,7 @@ from anima_core.worker_protocol import ProtocolEnvelopeV1
 EXPECTED_BUILD_PARAMETERS = (
     "database_path", "profile_store", "credential_store", "prompt_preset_store", "nl_diagnostic_client", "preparation_service",
     "pipeline_service", "repair_service", "resource_catalog", "static_root",
-    "shutdown_token", "shutdown_callback",
+    "shutdown_token", "shutdown_callback", "native_path_picker",
 )
 
 EXPECTED_CONTROL_ROUTES = {
@@ -78,6 +79,7 @@ EXPECTED_CONTROL_ROUTES = {
     ("GET", "/api/nl/prompt-presets/{preset_id}"),
     ("POST", "/api/nl/prompt-presets"),
     ("PUT", "/api/nl/prompt-presets/{preset_id}"),
+    ("POST", "/api/nl/prompt-presets/{preset_id}/reset"),
     ("DELETE", "/api/nl/prompt-presets/{preset_id}"),
     ("POST", "/api/nl/diagnostics/models"),
     ("POST", "/api/nl/diagnostics/test-message"),
@@ -92,6 +94,7 @@ EXPECTED_CONTROL_ROUTES = {
     ("POST", "/api/jobs/{job_id}/nl/confirm-api-outcomes"),
     ("POST", "/api/jobs/{job_id}/policy/pause"),
     ("POST", "/api/jobs/{job_id}/policy/resume"),
+    ("POST", "/api/application/select-path"),
     ("POST", "/api/application/shutdown"),
 }
 
@@ -115,6 +118,19 @@ class FakeNlDiagnosticClient:
     def test_message(self, *, endpoint: str, model: str, api_key: str, base_prompt: str) -> dict[str, object]:
         self.message_calls.append({"endpoint": endpoint, "model": model, "api_key": api_key, "base_prompt": base_prompt})
         return {"ok": True, "latencyMs": 34, "actualModel": model, "replyText": "Connected.", "usage": {"promptTokens": 3, "completionTokens": 4, "totalTokens": 7}, "errorCode": None, "errorReason": None}
+
+
+class FakeNativePathPicker:
+    def __init__(self, *, result: str | None = r"E:\\picked", error: Exception | None = None) -> None:
+        self.result = result
+        self.error = error
+        self.calls: list[tuple[str, str | None]] = []
+
+    def select(self, purpose: str, current_path: str | None) -> str | None:
+        self.calls.append((purpose, current_path))
+        if self.error is not None:
+            raise self.error
+        return self.result
 
 
 class ControlPlaneApiTests(unittest.TestCase):
@@ -288,15 +304,19 @@ class ControlPlaneApiTests(unittest.TestCase):
         test_message = _endpoint(app, "/api/nl/diagnostics/test-message", "POST")
 
         built_in = list_presets()["presets"]
-        self.assertEqual("builtin:nl-default-prompt-v4-base", built_in[0]["presetId"])
-        self.assertTrue(built_in[0]["builtIn"])
-        self.assertIn("complete visible text", get_preset(built_in[0]["presetId"])["basePrompt"])
-        created = create_preset(preset_body(name="Custom", basePrompt="Base A"))
+        self.assertEqual(("general", "style", "character"), tuple(item["type"] for item in built_in[:3]))
+        self.assertTrue(all(item["builtIn"] for item in built_in[:3]))
+        self.assertIn("observable", get_preset(built_in[0]["presetId"])["promptText"])
+        created = create_preset(preset_body(name="Custom", type="style", promptText="Base A"))
         self.assertFalse(created["builtIn"])
-        updated = update_preset(created["presetId"], preset_body(name="Renamed", basePrompt="Base B"))
-        self.assertEqual(("Renamed", "Base B"), (updated["name"], updated["basePrompt"]))
+        updated = update_preset(created["presetId"], preset_body(name="Renamed", type="character", promptText="Base B"))
+        self.assertEqual(("Renamed", "character", "Base B"), (updated["name"], updated["type"], updated["promptText"]))
+        changed = update_preset(built_in[0]["presetId"], preset_body(name="General", type="general", promptText="Local override"))
+        self.assertEqual("Local override", changed["promptText"])
+        reset_preset = _endpoint(app, "/api/nl/prompt-presets/{preset_id}/reset", "POST")
+        self.assertNotEqual("Local override", reset_preset(built_in[0]["presetId"])["promptText"])
         with self.assertRaises(HTTPException) as built_in_conflict:
-            update_preset(built_in[0]["presetId"], preset_body(name="No", basePrompt="No"))
+            delete_preset(built_in[0]["presetId"])
         self.assertEqual(409, built_in_conflict.exception.status_code)
         self.assertEqual({"deleted": True}, delete_preset(created["presetId"]))
         with self.assertRaises(HTTPException) as missing:
@@ -932,6 +952,81 @@ class ControlPlaneApiTests(unittest.TestCase):
         self.assertEqual("nl-default-prompt-v2", v2["promptVersion"])
         self.assertEqual("nl-default-prompt-v3", v3["promptVersion"])
         self.assertNotIn("120-180+ words", str(v3["systemPrompt"]))
+
+    def test_default_nl_prompt_endpoint_exposes_each_v4_task_preset(self) -> None:
+        endpoint = _endpoint(self.app, "/api/nl/default-prompt", "GET")
+        for preset in ("general", "style", "character"):
+            version = f"nl-default-prompt-v4-{preset}"
+            expected = (ROOT / "packaging" / "resources" / f"{version}.txt").read_text(encoding="utf-8").replace("\r\n", "\n").strip()
+            result = endpoint(promptVersion=version)
+            self.assertEqual(version, result["promptVersion"])
+            self.assertEqual(expected, result["systemPrompt"])
+            self.assertEqual(64, len(str(result["sha256"])))
+
+    def test_select_path_route_forwards_each_allowed_purpose_and_returns_selected_path(self) -> None:
+        picker = FakeNativePathPicker(result=r"E:\\picked\\result")
+        app = build_control_app(
+            database_path=self.database_path, profile_store=self.profiles, credential_store=self.credentials,
+            preparation_service=self.preparation, native_path_picker=picker,  # type: ignore[arg-type]
+        )
+        endpoint = _endpoint(app, "/api/application/select-path", "POST")
+
+        expected_calls = [
+            ("source_dataset", r"E:\\typed\\source"),
+            ("output_dataset", r"E:\\typed\\output"),
+            ("replacement_csv", r"E:\\typed\\rules.csv"),
+        ]
+        for purpose, current_path in expected_calls:
+            self.assertEqual(
+                {"cancelled": False, "path": r"E:\\picked\\result"},
+                endpoint({"purpose": purpose, "currentPath": current_path}),
+            )
+        self.assertEqual(expected_calls, picker.calls)
+
+    def test_select_path_route_reports_cancellation_without_substituting_a_value(self) -> None:
+        picker = FakeNativePathPicker(result=None)
+        app = build_control_app(
+            database_path=self.database_path, profile_store=self.profiles, credential_store=self.credentials,
+            preparation_service=self.preparation, native_path_picker=picker,  # type: ignore[arg-type]
+        )
+        endpoint = _endpoint(app, "/api/application/select-path", "POST")
+
+        self.assertEqual(
+            {"cancelled": True, "path": None},
+            endpoint({"purpose": "output_dataset", "currentPath": r"E:\\typed\\output"}),
+        )
+        self.assertEqual([("output_dataset", r"E:\\typed\\output")], picker.calls)
+
+    def test_select_path_route_rejects_invalid_or_oversized_bodies_with_400(self) -> None:
+        app = build_control_app(
+            database_path=self.database_path, profile_store=self.profiles, credential_store=self.credentials,
+            preparation_service=self.preparation, native_path_picker=FakeNativePathPicker(),  # type: ignore[arg-type]
+        )
+        endpoint = _endpoint(app, "/api/application/select-path", "POST")
+
+        for body in (
+            {},
+            {"purpose": "shell", "currentPath": None},
+            {"purpose": "source_dataset", "currentPath": None, "extra": True},
+            {"purpose": "source_dataset", "currentPath": "x" * 32_768},
+        ):
+            with self.assertRaises(HTTPException) as rejected:
+                endpoint(body)
+            self.assertEqual((400, "invalid_path_picker_request"), (rejected.exception.status_code, rejected.exception.detail))
+
+    def test_select_path_route_maps_busy_and_unavailable_without_leaking_native_errors(self) -> None:
+        for error, expected in (
+            (NativePathPickerBusyError("dialog already open"), (409, "path_picker_busy")),
+            (NativePathPickerUnavailableError("raw Tcl failure"), (503, "path_picker_unavailable")),
+        ):
+            app = build_control_app(
+                database_path=self.database_path, profile_store=self.profiles, credential_store=self.credentials,
+                preparation_service=self.preparation, native_path_picker=FakeNativePathPicker(error=error),  # type: ignore[arg-type]
+            )
+            endpoint = _endpoint(app, "/api/application/select-path", "POST")
+            with self.assertRaises(HTTPException) as rejected:
+                endpoint({"purpose": "source_dataset", "currentPath": r"E:\\typed"})
+            self.assertEqual(expected, (rejected.exception.status_code, rejected.exception.detail))
 
     def test_desktop_shutdown_is_token_gated_and_static_files_follow_api_routes(self) -> None:
         static_root = Path(self.temporary.name) / "frontend"

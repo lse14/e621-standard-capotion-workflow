@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "core" / "src"))
 
 from anima_core.nl_prompt_presets import (
+    BUILTIN_PRESET_IDS,
     BUILTIN_V4_BASE_PRESET_ID,
     MAX_CUSTOM_PRESETS,
     MAX_STORE_BYTES,
@@ -28,24 +29,45 @@ def _custom_id(index: int) -> str:
 
 
 class NlPromptPresetStoreTests(unittest.TestCase):
+    def test_v1_preset_library_exposes_three_typed_builtins(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            store = NlPromptPresetStore(Path(temporary) / "presets.json")
+            summaries = store.list_summaries()
+            self.assertEqual(tuple(BUILTIN_PRESET_IDS), tuple(item["presetId"] for item in summaries))
+            self.assertEqual(
+                ("general", "style", "character"),
+                tuple(item["type"] for item in summaries),
+            )
+            for preset_id in BUILTIN_PRESET_IDS:
+                detail = store.get(preset_id)
+                self.assertTrue(detail.builtIn)
+                self.assertTrue(detail.promptText.strip())
+
+    def test_builtin_can_be_overridden_and_reset_and_custom_type_is_editable(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            store = NlPromptPresetStore(Path(temporary) / "presets.json")
+            general_id = BUILTIN_PRESET_IDS[0]
+            updated = store.update(general_id, name="General", preset_type="general", prompt_text="Local override")
+            self.assertEqual(("General", "general", "Local override"), (updated.name, updated.type, updated.promptText))
+            store.reset(general_id)
+            self.assertNotEqual("Local override", store.get(general_id).promptText)
+            custom = store.create(name="Custom", preset_type="style", prompt_text="Style prompt")
+            self.assertEqual("style", custom.type)
+            changed = store.update(custom.presetId, name="Character custom", preset_type="character", prompt_text="Character prompt")
+            self.assertEqual(("Character custom", "character", "Character prompt"), (changed.name, changed.type, changed.promptText))
+
     def test_builtin_preset_is_resource_backed_and_summarized(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             store = NlPromptPresetStore(Path(temporary) / "presets.json")
-            built_in = store.get(BUILTIN_V4_BASE_PRESET_ID)
+            built_in = store.get(BUILTIN_PRESET_IDS[0])
             self.assertTrue(built_in.builtIn)
             self.assertEqual(
                 hashlib.sha256(built_in.basePrompt.encode("utf-8")).hexdigest(),
                 built_in.sha256,
             )
             self.assertEqual(
-                ({
-                    "presetId": BUILTIN_V4_BASE_PRESET_ID,
-                    "name": "nl-default-prompt-v4-base",
-                    "builtIn": True,
-                    "sha256": built_in.sha256,
-                    "sizeBytes": built_in.sizeBytes,
-                },),
-                store.list_summaries(),
+                (BUILTIN_PRESET_IDS[0], BUILTIN_PRESET_IDS[1], BUILTIN_PRESET_IDS[2]),
+                tuple(item["presetId"] for item in store.list_summaries()),
             )
 
     def test_custom_preset_create_update_and_delete_round_trip(self) -> None:
@@ -61,13 +83,16 @@ class NlPromptPresetStoreTests(unittest.TestCase):
             with self.assertRaises(PromptPresetNotFoundError):
                 store.get(created.presetId)
 
-    def test_builtin_cannot_be_updated_or_deleted(self) -> None:
+    def test_builtin_can_be_updated_and_reset_but_not_deleted(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             store = NlPromptPresetStore(Path(temporary) / "presets.json")
+            preset_id = BUILTIN_PRESET_IDS[0]
+            store.update(preset_id, name="General", preset_type="general", prompt_text="Changed")
+            self.assertEqual("Changed", store.get(preset_id).promptText)
+            store.reset(preset_id)
+            self.assertNotEqual("Changed", store.get(preset_id).promptText)
             with self.assertRaises(PromptPresetConflictError):
-                store.update(BUILTIN_V4_BASE_PRESET_ID, name="Changed", base_prompt="Changed")
-            with self.assertRaises(PromptPresetConflictError):
-                store.delete(BUILTIN_V4_BASE_PRESET_ID)
+                store.delete(preset_id)
 
     def test_malformed_store_values_fail_closed(self) -> None:
         invalid_stores = (
@@ -75,8 +100,8 @@ class NlPromptPresetStoreTests(unittest.TestCase):
             json.dumps({"schemaVersion": 1, "presets": [], "extra": True}).encode("utf-8"),
             json.dumps({"schemaVersion": 2, "presets": []}).encode("utf-8"),
             json.dumps({"schemaVersion": 1, "presets": [{"presetId": _custom_id(1), "name": "A", "basePrompt": "B"}, {"presetId": _custom_id(1), "name": "C", "basePrompt": "D"}]}).encode("utf-8"),
-            json.dumps({"schemaVersion": 1, "presets": [{"presetId": "builtin:nl-default-prompt-v4-base", "name": "A", "basePrompt": "B"}]}).encode("utf-8"),
             json.dumps({"schemaVersion": 1, "presets": [{"presetId": _custom_id(2), "name": "A", "basePrompt": "B", "extra": True}]}).encode("utf-8"),
+            json.dumps({"schemaVersion": 2, "builtInOverrides": [{"presetId": BUILTIN_PRESET_IDS[0], "promptText": "x"}], "customPresets": [{"presetId": _custom_id(2), "name": "A", "type": "other", "promptText": "B"}]}).encode("utf-8"),
         )
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "presets.json"
@@ -116,7 +141,7 @@ class NlPromptPresetStoreTests(unittest.TestCase):
             ]
             path.write_text(json.dumps({"schemaVersion": 1, "presets": records}), encoding="utf-8")
             store = NlPromptPresetStore(path)
-            self.assertEqual(MAX_CUSTOM_PRESETS + 1, len(store.list_summaries()))
+            self.assertEqual(MAX_CUSTOM_PRESETS + len(BUILTIN_PRESET_IDS), len(store.list_summaries()))
             with self.assertRaises(PromptPresetValidationError):
                 store.create(name="Overflow", base_prompt="Base")
             path.write_bytes(b" " * (MAX_STORE_BYTES + 1))
@@ -131,7 +156,7 @@ class NlPromptPresetStoreTests(unittest.TestCase):
                 store.create(name="Last", base_prompt="Last prompt")
                 store.create(name="First", base_prompt="First prompt")
             stored = json.loads(path.read_text(encoding="utf-8"))
-            self.assertEqual([_custom_id(0), _custom_id(int("f" * 32, 16))], [item["presetId"] for item in stored["presets"]])
+            self.assertEqual([_custom_id(0), _custom_id(int("f" * 32, 16))], [item["presetId"] for item in stored["customPresets"]])
             self.assertFalse(path.with_suffix(path.suffix + ".tmp").exists())
 
     def test_replace_failure_preserves_existing_bytes(self) -> None:

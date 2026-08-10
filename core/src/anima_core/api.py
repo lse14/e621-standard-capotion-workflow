@@ -26,6 +26,7 @@ from .api_models import (
     _PreflightBody,
     _ProfileBody,
     _SecretBody,
+    _SelectPathBody,
     _ShutdownBody,
     _TokenBudgetApplyBody,
     _TokenBudgetRecountBody,
@@ -39,6 +40,7 @@ from .job_preflight import JobPreparationService
 from .nl_profiles import NlApiProfileStore
 from .nl_diagnostics import NlDiagnosticClient
 from .nl_prompt_presets import NlPromptPresetStore
+from .native_path_picker import NativePathPicker
 from .pipeline import PipelineService
 from .repair import RepairPreparationService
 from .resource_catalog import ResourceCatalog, default_resource_library_root
@@ -58,6 +60,7 @@ def build_control_app(
     static_root: Path | str | None = None,
     shutdown_token: str | None = None,
     shutdown_callback: Callable[[], None] | None = None,
+    native_path_picker: NativePathPicker | None = None,
 ) -> FastAPI:
     """Create a localhost control-plane application from explicit stable stores."""
     database_path = Path(database_path) if database_path is not None else default_state_database_path()
@@ -85,6 +88,7 @@ def build_control_app(
         resource_catalog=resource_catalog,
     )
     repair_service = repair_service or RepairPreparationService(database_path)
+    native_path_picker = native_path_picker or NativePathPicker()
     pipeline_service.startup_recovery()
     context = ControlPlaneContext(
         database_path=database_path,
@@ -98,6 +102,7 @@ def build_control_app(
         resource_catalog=resource_catalog,
         shutdown_token=shutdown_token,
         shutdown_callback=shutdown_callback,
+        native_path_picker=native_path_picker,
     )
     app = FastAPI(title="Anima Dataset Tool", version="0.1.0")
     app.include_router(build_application_router(context))

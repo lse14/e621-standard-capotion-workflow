@@ -1,5 +1,7 @@
 import { defineConfig } from "@playwright/test";
 
+process.env.PLAYWRIGHT_BROWSERS_PATH ??= "0";
+
 const e2ePort = process.env.ANIMA_E2E_PORT ?? "4173";
 const e2eOrigin = `http://127.0.0.1:${e2ePort}`;
 

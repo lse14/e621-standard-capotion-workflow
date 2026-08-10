@@ -43,15 +43,16 @@ class NlValidationError(ValueError):
 def normalize_endpoint(value: object) -> str:
     if not isinstance(value, str) or not value or len(value.encode("utf-8")) > 2_048 or any(c.isspace() for c in value):
         raise NlValidationError("API endpoint is invalid")
-    parsed = urlsplit(value)
+    try:
+        parsed = urlsplit(value)
+        _ = parsed.port
+    except ValueError as exc:
+        raise NlValidationError("API endpoint is invalid") from exc
     if parsed.scheme not in {"http", "https"} or not parsed.netloc or parsed.query or parsed.fragment or parsed.username or parsed.password:
         raise NlValidationError("API endpoint must be an absolute URL without credentials, query, or fragment")
     hostname = parsed.hostname
     if hostname is None:
         raise NlValidationError("API endpoint hostname is invalid")
-    local = hostname.casefold() == "localhost" or hostname in {"127.0.0.1", "::1"}
-    if parsed.scheme != "https" and not local:
-        raise NlValidationError("remote API endpoint must use HTTPS")
     path = parsed.path.rstrip("/")
     if not path.endswith("/chat/completions"):
         path += "/chat/completions"

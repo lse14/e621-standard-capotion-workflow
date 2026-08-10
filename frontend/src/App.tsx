@@ -39,6 +39,12 @@ type ActionName = Exclude<PendingAction, null>;
 
 const draftModuleOrder: readonly PipelineModuleId[] = ["caption", "classify", "replace", "ocr", "nl", "count_review", "dropout", "token_budget", "export"];
 const emptyProfile: NlProfile = { profileId: "default", endpoint: "", model: "", backupModel: null, apiCredentialRef: "", systemPrompt: "", apiPolicy: { maxRequestsPerMinute: 60 }, hasCredential: false };
+const CREDENTIAL_REFERENCE = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
+
+function effectiveCredentialReference(profile: NlProfile): string {
+  return CREDENTIAL_REFERENCE.test(profile.apiCredentialRef) ? profile.apiCredentialRef : `nl-profile:${profile.profileId}`;
+}
+
 export function App() {
   const [language, setLanguage] = useState<UiLanguage>(loadUiLanguage);
   const [profiles, setProfiles] = useState<NlProfile[]>([]);
@@ -48,6 +54,7 @@ export function App() {
   const [preflight, setPreflight] = useState<PreflightSummary | null>(null);
   const [profile, setProfile] = useState<NlProfile>(emptyProfile);
   const [secret, setSecret] = useState("");
+  const [diagnosticResetToken, setDiagnosticResetToken] = useState(0);
   const [budget, setBudget] = useState("100");
   const [triggerInput, setTriggerInput] = useState("");
   const [attemptBudget, setAttemptBudget] = useState("");
@@ -223,7 +230,6 @@ export function App() {
       });
     });
   };
-  const restoreDefaultPrompt = () => updateSection("nl", { systemPrompt: "", promptVersion: "nl-default-prompt-v4" });
   const updateDropoutNested = <K extends "artist" | "quality" | "appearanceNl">(
     section: K,
     patch: Partial<Draft["dropout"][K]>,
@@ -248,9 +254,25 @@ export function App() {
   };
   const invalidatePreflight = () => setPreflight(null);
 
-  const refreshProfiles = async () => { try { setProfiles((await listNlProfiles()).profiles); } catch (cause) { setActionError(cause instanceof Error ? cause.message : t("profileRequestFailed")); } };
+  const refreshProfiles = async (preferredProfileId = draft.nl.apiProfileId): Promise<NlProfile[] | undefined> => {
+    try {
+      const nextProfiles = (await listNlProfiles()).profiles;
+      setProfiles(nextProfiles);
+      const selected = nextProfiles.find((item) => item.profileId === preferredProfileId)
+        ?? nextProfiles.find((item) => item.profileId === "default")
+        ?? nextProfiles[0];
+      if (selected) {
+        setProfile(selected);
+        setDraft((current) => ({ ...current, nl: { ...current.nl, apiProfileId: selected.profileId } }));
+      }
+      return nextProfiles;
+    } catch (cause) {
+      setActionError(cause instanceof Error ? cause.message : t("profileRequestFailed"));
+      return undefined;
+    }
+  };
 
-  useEffect(() => { void refreshProfiles(); void restoreDefaultPrompt(); }, []);
+  useEffect(() => { void refreshProfiles(); }, []);
   useEffect(() => { saveUiLanguage(language); document.documentElement.lang = language; }, [language]);
   useEffect(() => {
     if (activeStep >= steps.length) setActiveStep(Math.max(0, steps.length - 1));
@@ -321,13 +343,15 @@ export function App() {
   const submitProfile = async () => {
     // F25: the prompt the runtime sends is the task's, so the profile only mirrors it.
     const saved = await runAction("profile_save", async () => {
-      const result = await saveNlProfile({ ...profile, systemPrompt: draft.nl.systemPrompt });
+      const result = await saveNlProfile({ ...profile, apiCredentialRef: effectiveCredentialReference(profile), systemPrompt: draft.nl.systemPrompt });
       if (secret) await saveNlSecret(result.apiCredentialRef, secret);
-      await refreshProfiles();
-      return result;
+      await refreshProfiles(result.profileId);
+      return secret ? { ...result, hasCredential: true } : result;
     }, t("profileSaveFailed"));
     if (!saved) return;
     setProfile(saved);
+    setDraft((current) => ({ ...current, nl: { ...current.nl, apiProfileId: saved.profileId } }));
+    setDiagnosticResetToken((value) => value + 1);
     if (secret) setSecret("");
   };
 
@@ -433,6 +457,13 @@ export function App() {
     defaultSuffix: copy.defaultResource,
     invalid: copy.invalidResources,
   };
+  const pathPickerCopy = {
+    selectLabel: t("selectPath"),
+    selectingLabel: t("selectingPath"),
+    busyMessage: t("pathPickerBusy"),
+    unavailableMessage: t("pathPickerUnavailable"),
+    failedMessage: t("pathPickerFailed"),
+  };
   const invalidResourceCount = resourceCatalog?.invalidResources.length ?? 0;
   const taskMonitorLabels = {
     taskOverview: copy.taskOverview,
@@ -533,7 +564,6 @@ export function App() {
       t={t}
       guidanceCopy={guidanceCopy}
       onTokenBudgetChange={(patch) => updateSection("tokenBudget", patch)}
-      onNlChange={(patch) => updateSection("nl", patch)}
       onRefreshResources={() => void refreshResources()}
     />
     {snapshot?.moduleOrder.includes("token_budget") && <TokenBudgetReviewPanel
@@ -558,6 +588,7 @@ export function App() {
     language={language}
     t={t}
     guidanceCopy={guidanceCopy}
+    pathPickerCopy={pathPickerCopy}
     copy={{
       preflightHint: copy.preflightHint,
       profileReady: copy.profileReady,
@@ -625,6 +656,7 @@ export function App() {
     resourceError={resourceError}
     invalidResourceCount={invalidResourceCount}
     resourcePickerCopy={resourcePickerCopy}
+    pathPickerCopy={pathPickerCopy}
     replaceIndex={preflight?.replaceIndex ?? null}
     t={t}
     guidanceCopy={guidanceCopy}
@@ -673,12 +705,12 @@ export function App() {
     secret={secret}
     profileSavePending={isActionPending("profile_save")}
     credentialDeletePending={isActionPending("credential_delete")}
+    diagnosticResetToken={diagnosticResetToken}
     t={t}
     guidanceCopy={guidanceCopy}
     profileHelp={copy.profileHelp}
     onNlChange={(patch) => updateSection("nl", patch)}
     onApiPolicyChange={updateApiPolicy}
-    onRestoreDefaultPrompt={() => void restoreDefaultPrompt()}
     onConcurrencyChange={(value) => updateApiPolicy({ concurrency: clamp(value, 1, 16, 3) })}
     onRequestsPerMinuteChange={(value) => updateApiPolicy({ maxRequestsPerMinute: clamp(value, 1, 100_000, 60) })}
     onUnlimitedRpmChange={(enabled) => {
@@ -689,12 +721,21 @@ export function App() {
     onProfileSelect={(profileId) => {
       const selected = profiles.find((item) => item.profileId === profileId) ?? { ...emptyProfile, profileId };
       setProfile(selected);
+      setSecret("");
+      setDiagnosticResetToken((value) => value + 1);
       updateSection("nl", { apiProfileId: selected.profileId });
     }}
     onProfileChange={(nextProfile) => setProfile((current) => ({ ...current, ...nextProfile }))}
     onSecretChange={setSecret}
     onSaveProfile={() => void submitProfile()}
-    onClearSecret={() => void control("credential_delete", async () => { await deleteNlSecret(profile.apiCredentialRef); await refreshProfiles(); setSecret(""); })}
+    onClearSecret={() => void control("credential_delete", async () => {
+      const reference = effectiveCredentialReference(profile);
+      await deleteNlSecret(reference);
+      await refreshProfiles(profile.profileId);
+      setProfile((current) => ({ ...current, apiCredentialRef: reference, hasCredential: false }));
+      setSecret("");
+      setDiagnosticResetToken((value) => value + 1);
+    })}
   /> : currentStep.id === "count_review" ? countReviewContent : currentStep.id === "dropout" ? <PolicyStep
     draft={draft}
     defaults={draftDefaults}

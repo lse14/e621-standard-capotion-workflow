@@ -53,25 +53,20 @@ export function FieldHelp({ label, guidance, copy }: {
 }) {
   const tooltipId = useId();
   const rootRef = useRef<HTMLSpanElement>(null);
-  const [hovered, setHovered] = useState(false);
-  const [focused, setFocused] = useState(false);
-  const [pinned, setPinned] = useState(false);
-  const open = hovered || focused || pinned;
+  const [open, setOpen] = useState(false);
 
   useEffect(() => {
-    if (!pinned) return undefined;
+    if (!open) return undefined;
     const closeOutside = (event: PointerEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) setPinned(false);
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
     };
     document.addEventListener("pointerdown", closeOutside);
     return () => document.removeEventListener("pointerdown", closeOutside);
-  }, [pinned]);
+  }, [open]);
 
   return <span
     ref={rootRef}
     className="field-help-control"
-    onMouseEnter={() => setHovered(true)}
-    onMouseLeave={() => setHovered(false)}
   >
     <button
       className="field-info-button"
@@ -79,12 +74,11 @@ export function FieldHelp({ label, guidance, copy }: {
       aria-label={copy.informationFor(label)}
       aria-expanded={open}
       aria-describedby={open ? tooltipId : undefined}
-      onFocus={() => setFocused(true)}
-      onBlur={() => setFocused(false)}
-      onClick={() => setPinned((value) => !value)}
+      onBlur={() => setOpen(false)}
+      onClick={() => setOpen((value) => !value)}
       onKeyDown={(event) => {
         if (event.key === "Escape") {
-          setPinned(false);
+          setOpen(false);
           event.currentTarget.blur();
         }
       }}

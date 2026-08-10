@@ -158,8 +158,11 @@ class NlWorkerTests(unittest.TestCase):
     def test_endpoint_and_response_validation(self) -> None:
         self.assertEqual("https://example.test/v1/chat/completions", normalize_endpoint("https://example.test/v1"))
         self.assertEqual("http://localhost:8080/chat/completions", normalize_endpoint("http://localhost:8080"))
+        self.assertEqual("http://provider.example/v1/chat/completions", normalize_endpoint("http://provider.example/v1"))
         with self.assertRaises(NlValidationError):
-            normalize_endpoint("http://example.test/v1")
+            normalize_endpoint("http://user:pass@provider.example/v1")
+        with self.assertRaises(NlValidationError):
+            normalize_endpoint("http://provider.example:bad/v1")
         text, request_id, usage = validate_completion_response(_Response.content)
         self.assertEqual(("req-1", 20), (request_id, usage["total_tokens"]))
         self.assertIn("windowsill", text)

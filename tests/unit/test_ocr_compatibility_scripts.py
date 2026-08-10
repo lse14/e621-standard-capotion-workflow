@@ -36,6 +36,7 @@ def _powershell(command: str) -> subprocess.CompletedProcess[str]:
         stderr=subprocess.PIPE,
         text=True,
         encoding="utf-8",
+        errors="replace",
         check=False,
     )
 

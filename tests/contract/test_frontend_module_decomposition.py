@@ -90,6 +90,23 @@ class FrontendModuleDecompositionTests(unittest.TestCase):
         self.assertNotIn('className="task-monitor"', app_source)
         self.assertNotIn('className="issues-panel"', app_source)
 
+    def test_path_picker_owns_the_local_path_request(self) -> None:
+        component_path = FRONTEND_SOURCE / "components" / "PathPicker.tsx"
+        self.assertTrue(component_path.is_file(), "PathPicker.tsx")
+        if not component_path.is_file():
+            return
+
+        component = component_path.read_text(encoding="utf-8")
+        self.assertIn("export type PathPickerProps", component)
+        self.assertIn("export function PathPicker", component)
+        self.assertIn('className="path-picker"', component)
+        self.assertIn('from "../api"', component)
+        self.assertIn("selectLocalPath", component)
+        for filename in ("SetupStep.tsx", "ReplaceStep.tsx"):
+            source = (FRONTEND_SOURCE / "components" / "steps" / filename).read_text(encoding="utf-8")
+            self.assertNotIn('from "../../api"', source)
+            self.assertNotIn("from '../../api'", source)
+
     def test_pipeline_steps_are_presentational_and_not_rendered_in_app(self) -> None:
         app_source = (FRONTEND_SOURCE / "App.tsx").read_text(encoding="utf-8")
         steps = FRONTEND_SOURCE / "components" / "steps"
@@ -152,6 +169,22 @@ class FrontendModuleDecompositionTests(unittest.TestCase):
         self.assertIn('from "./api"', review_source)
         self.assertIn('from "./components/steps/TokenBudgetStep"', app_source)
         self.assertIn('from "./TokenBudgetReviewPanel"', app_source)
+
+    def test_nl_step_owns_prompt_routing_and_preset_visibility(self) -> None:
+        app_source = (FRONTEND_SOURCE / "App.tsx").read_text(encoding="utf-8")
+        nl_source = (FRONTEND_SOURCE / "components" / "steps" / "NlStep.tsx").read_text(encoding="utf-8")
+        tools_source = (FRONTEND_SOURCE / "components" / "NlApiTools.tsx").read_text(encoding="utf-8")
+        token_budget_source = (FRONTEND_SOURCE / "components" / "steps" / "TokenBudgetStep.tsx").read_text(encoding="utf-8")
+
+        for marker in ("captionPreset", "lengthDistribution", "NlPromptPresetLibrary", "nl-prompt-section"):
+            self.assertIn(marker, nl_source)
+        for forbidden in ("captionPreset", "lengthDistribution", "onNlChange", 'Pick<Draft, "nl"'):
+            self.assertNotIn(forbidden, token_budget_source)
+        self.assertNotIn('from "../../api"', nl_source)
+        self.assertNotIn("fetchDefaultNlPrompt", app_source)
+        self.assertNotIn("NL_PRESET_PROMPT_VERSIONS", app_source)
+        for marker in ("NlPromptPresetLibrary", "nl-preset-cards", "listNlPromptPresets", "getNlPromptPreset"):
+            self.assertIn(marker, tools_source)
 
     def test_v8_draft_contract_keeps_token_budget_and_prompt_routing_in_draft(self) -> None:
         draft_source = (FRONTEND_SOURCE / "draft.ts").read_text(encoding="utf-8")

@@ -45,6 +45,13 @@ class NlApiProfileStoreTests(unittest.TestCase):
 
 
 class NlDefaultPromptTests(unittest.TestCase):
+    def test_v4_task_preset_resources_are_addressable_and_verbatim(self) -> None:
+        for preset in ("general", "style", "character"):
+            version = f"nl-default-prompt-v4-{preset}"
+            resource = ROOT / "packaging" / "resources" / f"{version}.txt"
+            self.assertEqual(resource, default_prompt_path(prompt_version=version))
+            self.assertEqual(resource.read_text(encoding="utf-8").replace("\r\n", "\n").strip(), load_default_system_prompt(prompt_version=version))
+
     def test_v4_base_resource_is_addressable_and_verified(self) -> None:
         resource = ROOT / "packaging" / "resources" / "nl-default-prompt-v4-base.txt"
         self.assertEqual(resource, default_prompt_path(prompt_version=V4_BASE_PROMPT_VERSION))
@@ -78,6 +85,22 @@ class NlDefaultPromptTests(unittest.TestCase):
                 manifest = json.loads((install / "manifests" / "resources" / f"nl-default-prompt-v4-{name}.json").read_text(encoding="utf-8"))
                 self.assertEqual(resource.stat().st_size, manifest["sizeBytes"])
                 self.assertEqual(hashlib.sha256(resource.read_bytes()).hexdigest(), manifest["sha256"])
+
+    def test_v4_prompt_manifest_owner_is_accepted_by_the_core_api(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            install = Path(temporary) / "install"
+            script = ROOT / "packaging" / "scripts" / "assemble_nl_prompt_resource.py"
+            completed = subprocess.run(
+                [sys.executable, "-B", "-I", str(script), "--v4-source-root", str(ROOT / "packaging" / "resources"), "--install-root", str(install)],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(0, completed.returncode, completed.stdout + completed.stderr)
+            for preset in ("general", "style", "character"):
+                with self.subTest(preset=preset):
+                    self.assertTrue(load_default_system_prompt(install, prompt_version=f"nl-default-prompt-v4-{preset}"))
 
     def test_v5_v3_prompt_is_addressable_without_changing_the_v2_default(self) -> None:
         self.assertTrue(hasattr(nl_profiles, "V5_PROMPT_VERSION"))

@@ -1,6 +1,7 @@
 import type { Draft } from "../../draft";
 import { formatLabel, type UiLanguage } from "../../i18n";
 import { FormField, ToggleField, type FieldGuidanceCopy } from "../FormField";
+import { PathPicker, type PathPickerCopy } from "../PathPicker";
 
 type Translate = (key: string, values?: Record<string, string | number>) => string;
 
@@ -48,6 +49,7 @@ export type SetupStepProps = {
   language: UiLanguage;
   t: Translate;
   guidanceCopy: FieldGuidanceCopy;
+  pathPickerCopy: PathPickerCopy;
   copy: { preflightHint: string; profileReady: string; profileUnavailable: string; workspaceHint: string };
   onSourceRootChange: (value: string) => void;
   onWorkModeChange: (value: Draft["workMode"]) => void;
@@ -60,7 +62,7 @@ export type SetupStepProps = {
 };
 
 export function SetupStep({
-  draft, defaults, taskLocked, resourcesLoading, profileResourcesReady, workspaceReady, preflightPending, workspacePending, preflight, enabledModules, language, t, guidanceCopy, copy,
+  draft, defaults, taskLocked, resourcesLoading, profileResourcesReady, workspaceReady, preflightPending, workspacePending, preflight, enabledModules, language, t, guidanceCopy, pathPickerCopy, copy,
   onSourceRootChange, onWorkModeChange, onOutputRootChange, onOverwriteModeChange, onInvalidImageActionChange, onRecursiveChange,
   onRunPreflight, onPrepareWorkspace,
 }: SetupStepProps) {
@@ -68,13 +70,13 @@ export function SetupStep({
     <div className="step-intro"><p>{copy.preflightHint}</p><span className={`status ${profileResourcesReady ? "available" : "failed"}`}>{profileResourcesReady ? copy.profileReady : copy.profileUnavailable}</span></div>
     <div data-config-surface="setup" className="form-grid">
       <FormField id="setup-source-dataset" label={t("sourceDataset")} copy={guidanceCopy} guidance={{ description: t("fieldHelp_sourceDataset") }}>
-        <input id="setup-source-dataset" disabled={taskLocked} value={draft.sourceRoot} onChange={(event) => onSourceRootChange(event.target.value)} placeholder={t("absoluteWindowsPath")} />
+        <PathPicker id="setup-source-dataset" purpose="source_dataset" disabled={taskLocked} value={draft.sourceRoot} onChange={onSourceRootChange} placeholder={t("absoluteWindowsPath")} copy={pathPickerCopy} />
       </FormField>
       <FormField id="setup-work-mode" label={t("workMode")} copy={guidanceCopy} guidance={{ description: t("fieldHelp_workMode"), defaultValue: defaults.workMode === "in_place" ? t("inPlace") : t("fullCopy") }}>
         <select id="setup-work-mode" disabled={taskLocked} value={draft.workMode} onChange={(event) => onWorkModeChange(event.target.value as Draft["workMode"])}><option value="in_place">{t("inPlace")}</option><option value="full_copy">{t("fullCopy")}</option></select>
       </FormField>
       {draft.workMode === "full_copy" && <FormField id="setup-output-dataset" label={t("outputDataset")} copy={guidanceCopy} guidance={{ description: t("fieldHelp_outputDataset") }} wide>
-        <input id="setup-output-dataset" disabled={taskLocked} value={draft.outputRoot ?? ""} onChange={(event) => onOutputRootChange(event.target.value)} placeholder={t("emptyOrAbsentDirectory")} />
+        <PathPicker id="setup-output-dataset" purpose="output_dataset" disabled={taskLocked} value={draft.outputRoot ?? ""} onChange={onOutputRootChange} placeholder={t("emptyOrAbsentDirectory")} copy={pathPickerCopy} />
       </FormField>}
       <FormField id="setup-overwrite-mode" label={t("overwriteMode")} copy={guidanceCopy} guidance={{ description: t("fieldHelp_overwriteMode"), defaultValue: defaults.overwriteMode === "incremental" ? t("incremental") : t("rebuild") }}>
         <select id="setup-overwrite-mode" disabled={taskLocked} value={draft.overwriteMode} onChange={(event) => onOverwriteModeChange(event.target.value as Draft["overwriteMode"])}><option value="incremental">{t("incremental")}</option><option value="rebuild">{t("rebuild")}</option></select>

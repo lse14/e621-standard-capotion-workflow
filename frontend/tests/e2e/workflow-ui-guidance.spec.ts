@@ -11,7 +11,7 @@ test.describe("workflow field guidance foundation", () => {
     const workMode = page.getByLabel("Work mode", { exact: true });
     await expect(workMode).toHaveValue("in_place");
     const info = page.getByRole("button", { name: "Work mode information" });
-    await info.hover();
+    await info.click();
     const tooltip = page.getByRole("tooltip");
     await expect(tooltip).toContainText("Controls whether annotations are committed to the source dataset or a copied dataset.");
     await expect(tooltip).toContainText("Default: In place");
@@ -22,9 +22,22 @@ test.describe("workflow field guidance foundation", () => {
     await openApp(page, { language: "en" });
     const info = page.getByRole("button", { name: "Source dataset information" });
     await info.focus();
+    await info.press("Enter");
     await expect(page.getByRole("tooltip")).toBeVisible();
     await info.press("Escape");
     await expect(page.getByRole("tooltip")).toBeHidden();
+  });
+
+  test("opens guidance only by activation and toggles it closed on a second click", async ({ page }) => {
+    await openApp(page, { language: "en" });
+    const info = page.getByRole("button", { name: "Work mode information" });
+    const tooltip = page.getByRole("tooltip");
+    await info.hover();
+    await expect(tooltip).toBeHidden();
+    await info.click();
+    await expect(tooltip).toBeVisible();
+    await info.click();
+    await expect(tooltip).toBeHidden();
   });
 });
 
@@ -33,11 +46,11 @@ test.describe("workflow guidance for resource-backed steps", () => {
     await openApp(page, { language: "en" });
     await page.locator(".workflow-rail").getByRole("button", { name: /Caption/ }).click();
     const info = page.getByRole("button", { name: "Tagging model information" });
-    await info.hover();
+    await info.click();
     await expect(page.getByRole("tooltip")).toContainText("Recommended: E621 tagger");
 
     await page.getByRole("button", { name: "Danbooru", exact: true }).click();
-    await info.hover();
+    await info.click();
     await expect(page.getByRole("tooltip")).toContainText("Recommended: Danbooru tagger");
   });
 
@@ -61,7 +74,7 @@ test.describe("workflow guidance for remaining modules", () => {
     await page.locator(".workflow-rail").getByRole("button", { name: /OCR/ }).click();
     await expect(page.getByLabel("OCR device", { exact: true })).toBeDisabled();
     const deviceInfo = page.getByRole("button", { name: "OCR device information" });
-    await deviceInfo.hover();
+    await deviceInfo.click();
     await expect(page.getByRole("tooltip")).toContainText("Default: Auto");
     await expect(page.getByRole("tooltip")).toContainText("Recommended: Auto");
 
@@ -71,9 +84,20 @@ test.describe("workflow guidance for remaining modules", () => {
     await page.getByRole("button", { name: "Preflight", exact: true }).click();
     await expect.poll(() => page.getByRole("button", { name: "Preflight", exact: true }).getAttribute("aria-busy")).toBe("false");
     await page.locator(".workflow-rail").getByRole("button", { name: /OCR/ }).click();
-    await page.getByRole("button", { name: "OCR detection limit information" }).hover();
+    const detectionInfo = page.getByRole("button", { name: "OCR detection limit information" });
+    await detectionInfo.click();
     await expect(page.getByRole("tooltip")).toContainText("Recommended: 2560");
-    await page.getByRole("button", { name: "OCR text batch information" }).hover();
+    const ocrTooltip = page.locator(".ocr-tuning .field-tooltip:visible");
+    await expect(ocrTooltip).toBeVisible();
+    const ocrBounds = await ocrTooltip.evaluate((node) => {
+      const rect = node.getBoundingClientRect();
+      return { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom, width: window.innerWidth, height: window.innerHeight };
+    });
+    expect(ocrBounds.left).toBeGreaterThanOrEqual(0);
+    expect(ocrBounds.right).toBeLessThanOrEqual(ocrBounds.width);
+    expect(ocrBounds.top).toBeGreaterThanOrEqual(0);
+    expect(ocrBounds.bottom).toBeLessThanOrEqual(ocrBounds.height);
+    await page.getByRole("button", { name: "OCR text batch information" }).click();
     await expect(page.getByRole("tooltip")).toContainText("Recommended: 4");
   });
 
@@ -83,11 +107,11 @@ test.describe("workflow guidance for remaining modules", () => {
     tokenizer.defaultForProfiles = ["shared"];
     await openApp(page, { language: "en" });
     await page.locator(".workflow-rail").getByRole("button", { name: /Token Budget/ }).click();
-    await page.getByRole("button", { name: "Maximum training tokens information" }).hover();
+    await page.getByRole("button", { name: "Maximum training tokens information" }).click();
     await expect(page.getByRole("tooltip")).toContainText("Default: 512");
     await expect(page.getByRole("tooltip")).toContainText("Range: 1-40960");
     const tokenizerInfo = page.getByRole("button", { name: "Tokenizer resource information" });
-    await tokenizerInfo.hover();
+    await tokenizerInfo.click();
     await expect(page.getByRole("tooltip")).toContainText("Recommended: Qwen/Qwen3-0.6B");
     await expect(page.getByRole("tooltip")).not.toContainText("Recommended: 40960");
 
@@ -105,9 +129,29 @@ test.describe("workflow guidance for remaining modules", () => {
       }
     }
     await page.locator(".workflow-rail").getByRole("button", { name: /Dropout/ }).click();
-    await page.getByRole("button", { name: "Drop description information" }).first().hover();
+    const dropDescriptionInfo = page.getByRole("button", { name: "Drop description information" }).first();
+    await expect(dropDescriptionInfo).toBeEnabled();
+    await dropDescriptionInfo.click();
     await expect(page.getByRole("tooltip")).toContainText("Default: 0.7");
     await expect(page.getByRole("tooltip")).toContainText("Range: 0-1, step 0.01");
+  });
+
+  test("explains the folder artist mapping independently from the Character preset", async ({ page }) => {
+    for (const scenario of [
+      { language: "en" as const, label: "Append folder to JSON artist", firstLine: "Extract the name from the image's first-level folder", character: "independent of the Character preset" },
+      { language: "zh-CN" as const, label: "将目录名追加到 JSON artist", firstLine: "从图片的一级目录提取名称", character: "独立于 Character 预设" },
+    ]) {
+      await openApp(page, { language: scenario.language });
+      await page.locator(".workflow-rail").getByRole("button", { name: /Dropout/ }).click();
+      const field = page.locator("#policy-artist-enabled").locator("xpath=ancestor::*[@data-setting-field][1]");
+      await expect(field.getByText(scenario.label, { exact: true })).toBeVisible();
+      await expect(field.locator("input")).toBeDisabled();
+      await field.getByRole("button").click();
+      const tooltip = page.getByRole("tooltip");
+      await expect(tooltip).toContainText(scenario.firstLine);
+      await expect(tooltip).toContainText("@" + (scenario.language === "en" ? "name" : "名称"));
+      await expect(tooltip).toContainText(scenario.character);
+    }
   });
 });
 
@@ -122,10 +166,10 @@ test.describe("workflow guidance for NL", () => {
       await expect(controls.nth(index).locator("xpath=ancestor::*[@data-setting-field][1]")).toHaveCount(1);
     }
 
-    await page.getByRole("button", { name: "Concurrency information" }).hover();
+    await page.getByRole("button", { name: "Concurrency information" }).click();
     await expect(page.getByRole("tooltip")).toContainText("Default: 3");
     await expect(page.getByRole("tooltip")).toContainText("Range: 1-16");
-    await page.getByRole("button", { name: "Endpoint information" }).hover();
+    await page.getByRole("button", { name: "Endpoint URL information" }).click();
     await expect(page.getByRole("tooltip")).not.toContainText("Default:");
     await expect(page.getByRole("tooltip")).not.toContainText("Recommended:");
   });

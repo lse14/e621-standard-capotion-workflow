@@ -5,6 +5,7 @@ frontend/dist/
 frontend/.playwright-browsers/
 frontend/playwright-report/
 frontend/test-results/
+.test-tmp/
 packaging/wheelhouse/**/*.partial
 
 # Local runtimes, toolchains, assembled trees, and test output.
@@ -17,13 +18,23 @@ packaging/wheelhouse/
 
 # Local model/resource payloads and generated state are not source releases.
 resource-library/
+ocr-model-archives/
 *.db
 *.sqlite3
 *.log
 
-# Work notes and plans. The repository README is the only Markdown file kept.
+# Dataset/model payloads are local-only; keep only their public documentation.
+data/*
+!data/README.md
+models/*
+!models/README.md
+
+# Work notes and plans. Only the public documentation set is tracked.
 *.md
 !README.md
+!data/README.md
+!models/README.md
+!docs/THIRD_PARTY_NOTICES.md
 
 # Local credentials and private configuration.
 .env
