@@ -1,4 +1,4 @@
-# Anima Dataset Annotation Tool
+# e621-standard-capotion-workflow
 
 e621-standard-capotion-workflow 是一个面向 Windows 的本地图片数据集标注工具。它通过本地 WebUI
 把图片、已有 TXT/JSON 标注、OCR 与自然语言生成组织成可复核、可恢复的
