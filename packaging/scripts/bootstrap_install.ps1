@@ -282,11 +282,47 @@ function Assert-FreeSpace([Int64]$RequiredBytes) {
 }
 
 function Clear-BootstrapFailureArtifacts {
-    if ($null -ne $script:bootstrapStage -and (Test-Path -LiteralPath $script:bootstrapStage) -and -not (Test-ReparsePoint $script:bootstrapStage)) {
-        [System.IO.Directory]::Delete($script:bootstrapStage, $true)
+    $installerRoot = Get-ProjectPath (Join-Path $script:runtimeBuildRoot 'source-bootstrap')
+    $stagingRoot = Get-ProjectPath (Join-Path $installerRoot 'staging')
+    if (Test-Path -LiteralPath $stagingRoot -PathType Container) {
+        if (Test-ReparsePoint $stagingRoot) { throw "Bootstrap staging is a reparse point: $stagingRoot" }
+        [System.IO.Directory]::Delete($stagingRoot, $true)
+    }
+    $bootstrapRoot = Get-ProjectPath (Join-Path $installerRoot 'bootstrap')
+    if (Test-Path -LiteralPath $bootstrapRoot -PathType Container) {
+        if (Test-ReparsePoint $bootstrapRoot) { throw "Bootstrap staging is a reparse point: $bootstrapRoot" }
+        [System.IO.Directory]::Delete($bootstrapRoot, $true)
+    }
+    $transactionsRoot = Get-ProjectPath (Join-Path $installerRoot 'transactions')
+    if (Test-Path -LiteralPath $transactionsRoot -PathType Container) {
+        if (Test-ReparsePoint $transactionsRoot) { throw "Bootstrap transactions are a reparse point: $transactionsRoot" }
+        [System.IO.Directory]::Delete($transactionsRoot, $true)
+    }
+    $cacheRoot = Get-ProjectPath (Join-Path $installerRoot 'cache')
+    if (Test-Path -LiteralPath $cacheRoot -PathType Container) {
+        if (Test-ReparsePoint $cacheRoot) { throw "Bootstrap cache is a reparse point: $cacheRoot" }
+        Get-ChildItem -LiteralPath $cacheRoot -Force -Recurse -File |
+            Where-Object { $_.Name -notlike '*.partial' } |
+            ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force }
+        Get-ChildItem -LiteralPath $cacheRoot -Force -Recurse -Directory |
+            Sort-Object FullName -Descending |
+            Where-Object { -not (Get-ChildItem -LiteralPath $_.FullName -Force) } |
+            ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force }
     }
     if ($null -ne $script:bootstrapComplete -and (Test-Path -LiteralPath $script:bootstrapComplete -PathType Leaf)) {
         Remove-Item -LiteralPath $script:bootstrapComplete -Force
+    }
+}
+
+function Clear-BootstrapSuccessArtifacts {
+    $installerRoot = Get-ProjectPath (Join-Path $script:runtimeBuildRoot 'source-bootstrap')
+    foreach ($name in @('bootstrap', 'cache', 'staging', 'transactions', 'build-cache')) {
+        $target = Get-ProjectPath (Join-Path $installerRoot $name)
+        if (-not (Test-Path -LiteralPath $target)) { continue }
+        if (-not (Test-Path -LiteralPath $target -PathType Container) -or (Test-ReparsePoint $target)) {
+            throw "Bootstrap cleanup target is unsafe: $target"
+        }
+        [System.IO.Directory]::Delete($target, $true)
     }
 }
 
@@ -335,6 +371,7 @@ try {
     $installerExitCode = $LASTEXITCODE
     foreach ($line in @($output)) { Write-InstallLog ([string]$line) }
     if ($installerExitCode -ne 0) { throw "Standard-library installer failed with exit code $installerExitCode" }
+    Clear-BootstrapSuccessArtifacts
     Write-InstallLog 'Source bootstrap completed successfully.'
 } catch {
     Clear-BootstrapFailureArtifacts

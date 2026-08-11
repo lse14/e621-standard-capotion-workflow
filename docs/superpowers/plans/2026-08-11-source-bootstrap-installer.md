@@ -513,7 +513,7 @@ git commit -m "feat: verify source bootstrap runtimes offline"
 - Modify: ROADMAP.md
 - Modify: MEMORY.md
 
-- [ ] **Step 1: Write failing matrix/release tests.**
+- [x] **Step 1: Write failing matrix/release tests.**
 
 ~~~
 def test_hash_failure_never_publishes_component_only_partial_and_log_remain(self) -> None:
@@ -526,13 +526,13 @@ def test_hash_failure_never_publishes_component_only_partial_and_log_remain(self
 
 Add disk shortfall before request, interrupted Range resume, repeated install no requests, Chinese/space path, offline success, no-NVIDIA route, incomplete Release metadata. Do not pass GPU without actual hardware probe.
 
-- [ ] **Step 2: Run RED.**
+- [x] **Step 2: Run RED.**
 
 ~~~
 & .\.runtime-build\runtimes\core\python.exe -B -I -m unittest discover -s tests\integration -p 'test_source_bootstrap_fixture.py' -v
 ~~~
 
-- [ ] **Step 3: Implement cleanup, static frontend and validator.**
+- [x] **Step 3: Implement cleanup, static frontend and validator.**
 
 Unignore only source distribution output:
 
@@ -546,7 +546,7 @@ Build with project Node only and commit dist not node_modules. Validator reads m
 
 Success deletes bootstrap/complete-cache/staging/build-cache/journal; leaves state/log. Failure removes complete cache/staging and leaves partial/log. Do not modify the seven inaccessible legacy OCR staging directories.
 
-- [ ] **Step 4: Run verification matrix.**
+- [x] **Step 4: Run verification matrix.**
 
 ~~~
 & .\.runtime-build\runtimes\core\python.exe -B -I -m unittest discover -s tests -p 'test_source_bootstrap_*.py' -v
@@ -555,7 +555,7 @@ Success deletes bootstrap/complete-cache/staging/build-cache/journal; leaves sta
 & .\.toolchains\node-v24.18.0-win-x64\npm.cmd --prefix frontend run build
 ~~~
 
-- [ ] **Step 5: Update docs/records and commit.**
+- [x] **Step 5: Update docs/records and commit.**
 
 README makes double-click Install-WebUI.bat the sole user install path; remove optional OCR/default none documentation. Document mandatory OCR, selection, local logs, manual diagnostic, offline behavior, Release gate. Notices list actual manifest sources/licenses. Mark R6-R13 only with evidence; leave R14/R15 unmarked absent clean-machine/public link evidence.
 

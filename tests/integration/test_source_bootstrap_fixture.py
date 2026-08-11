@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import json
+import subprocess
 import sys
 import unittest
 from pathlib import Path
@@ -9,6 +10,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 INSTALLER_ROOT = ROOT / "packaging" / "installer"
+RELEASE_VALIDATOR = ROOT / "packaging" / "scripts" / "Validate-SourceBootstrapRelease.ps1"
 
 
 def _probes_module():
@@ -38,6 +40,24 @@ else:
         evidence = probes.run_json_probe(Path(sys.executable), script, (), cwd=ROOT)
 
         self.assertEqual({"fixture": "offline", "networkBlocked": True}, evidence)
+
+    def test_release_gate_fails_closed_without_production_assets(self) -> None:
+        self.assertTrue(RELEASE_VALIDATOR.is_file(), "source-bootstrap release validator must exist")
+
+        completed = subprocess.run(
+            [
+                "powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+                str(RELEASE_VALIDATOR), "-ProjectRoot", str(ROOT),
+            ],
+            cwd=ROOT,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+        )
+
+        self.assertNotEqual(0, completed.returncode)
+        self.assertIn("install-manifest.json", completed.stdout + completed.stderr)
 
 
 if __name__ == "__main__":

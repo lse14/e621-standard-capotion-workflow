@@ -169,3 +169,20 @@ SDK，即可得到可离线运行的 E621 打标、质量评分、Qwen3 tokenize
 - [!] 上述是 stub/fixture 与网络封锁行为的本地证据，不是实际 E621、Qwen3、完整质量栈或
   PaddleOCR 模型加载/推理，也不是 NVIDIA、干净机、中文路径或公开下载链接验收；生产清单与
   不可变 artifact inventory 仍缺失。
+
+## Task 8 验证记录
+
+- [x] 2026-08-12：安装成功在写入 `install-state.json` 后调用既有
+  `cleanup_success`；PowerShell 首阶段增加成功清理 `bootstrap`、完整 `cache`、`staging`、
+  `transactions` 和 `build-cache` 的项目内路径，失败路径只清理完整缓存并保留可续传
+  `.partial` 与日志。fixture 安装单测覆盖成功清理和第二次零 fetch。
+- [x] 2026-08-12：新增只读 `packaging/scripts/Validate-SourceBootstrapRelease.ps1`，检查
+  顶层清单、必装 E621 组件、HTTPS/允许主机、完整 Hugging Face revision、大小/SHA-256、
+  CPU/CUDA 变体、发布资产身份、`frontend/dist/index.html` 和第三方声明；脚本不联网、不
+  发布、不写项目状态。中文项目路径下实际运行并按预期 fail-closed。
+- [x] 2026-08-12：只使用项目内 Node v24.18.0 执行 `npm ci`、`npm run typecheck` 和
+  `npm run build`；`frontend/dist/index.html` 与两个静态资源已生成并纳入源码发布输出，
+  未纳入 `node_modules`。
+- [!] 2026-08-12：当前 worktree 没有真实 `install-manifest.json`、`release-artifacts.json`
+  或已核对模型许可证；发布门禁明确报告 `install-manifest.json is missing`。这不是一键安装
+  成功证据，也不能替代 CPU/NVIDIA 干净机、公开 URL 或真实模型离线推理验收。

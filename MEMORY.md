@@ -152,3 +152,18 @@ CLIP 文件使用 OpenAI 官方 CDN：
 - 2026-08-12：项目内嵌 CPython 3.11.15 的新鲜验证为 source-bootstrap 单测 42 项、离线
   fixture 1 项、desktop-control 单测 6 项及 `install.py`/`probes.py` 编译通过。该证据不包含
   真实生产模型、GPU、干净机、中文路径或公开 URL；不可据此宣称一键安装已可交付。
+- 2026-08-12：Task 8 已将安装成功清理接入 Python `install_project`，并在 PowerShell 首阶段
+  增加项目内成功/失败清理边界；成功删除完整 bootstrap/cache/staging/transactions/build-cache，
+  失败不删除可续传 `.partial` 或日志。fixture 安装单测实际确认成功后四类目录不存在、第二次
+  安装不发起 fetch。
+- 2026-08-12：新增只读 `packaging/scripts/Validate-SourceBootstrapRelease.ps1`。它在网络之外
+  检查 manifest/release identity、必装组件、URL host、大小、SHA、完整 revision、前端 dist
+  和第三方声明；中文路径实际运行时以 ASCII fail-closed 摘要报告缺失清单，避免 PowerShell
+  错误记录编码污染测试。
+- 2026-08-12：使用项目内 `E:\Desktop\Anima idg标准标注处理\.toolchains\node-v24.18.0-win-x64\npm.cmd`
+  完成 frontend `npm ci`、`typecheck` 和 `build`；已生成并准备提交 `frontend/dist`，不提交
+  `frontend/node_modules`。
+- 2026-08-12：`README.md` 已把双击 `Install-WebUI.bat` 定为唯一用户安装路径，删除 OCR
+  optional/None 文档并记录 CPU/NVIDIA 选择、必装质量/OCR、项目内日志和发布门禁；第三方声明
+  已列出冻结模型身份和原始链接，但许可证仍标记待核对，故 validator 必须失败。生产清单、
+  CPython Release、真实模型推理、干净机/GPU 和公开链接仍未验证，不能宣称功能已发布。

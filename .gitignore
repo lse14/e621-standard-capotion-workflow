@@ -1,7 +1,9 @@
 __pycache__/
 *.pyc
 frontend/node_modules/
-frontend/dist/
+frontend/dist/*
+!frontend/dist/
+!frontend/dist/**
 frontend/.playwright-browsers/
 frontend/playwright-report/
 frontend/test-results/

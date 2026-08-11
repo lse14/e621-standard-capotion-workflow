@@ -45,17 +45,21 @@ Anima 源码依赖第三方开源软件，并可连接或加载第三方模型�
 传递依赖也适用各自许可证。生成或分发组装包时，应同时审查所选 lock 文件、wheel
 元数据及随包许可证文件。
 
-## 可选模型与 tokenizer
+## 安装清单模型与 tokenizer
 
-以下资源只以本地安装占位或上游链接出现，不在本仓库重新分发：
+这些资源只从清单固定的上游身份下载，当前源码不重新分发权重或 tokenizer 文件。
+下表记录实现使用的不可变身份和核对入口；“待核对”会使本地发布门禁失败，不能把
+该状态当作许可证批准。
 
-| 资源 | 上游来源/许可证入口 |
-| --- | --- |
-| CL Tagger v2 | <https://huggingface.co/cella110n/cl_tagger_v2/blob/main/LICENSE.md> |
-| WD EVA02-Large v3 | <https://huggingface.co/SmilingWolf/wd-eva02-large-tagger-v3> |
-| Qwen3 0.6B | <https://huggingface.co/Qwen/Qwen3-0.6B> |
-| Qwen3-VL 4B Instruct | <https://huggingface.co/Qwen/Qwen3-VL-4B-Instruct> |
-| PaddleOCR 模型 | <https://www.paddleocr.ai/latest/en/version3.x/model_list.html> |
+| 资源 | 固定上游身份 | 来源/许可证入口 | 状态 |
+| --- | --- | --- | --- |
+| E621 EVA02 Tagger | `nzs234/eva02_large_E621_FULL_V1@04a88fab40711ea5fdad1a8d051d25bdcb77a4e3` | <https://huggingface.co/nzs234/eva02_large_E621_FULL_V1> | 待核对 |
+| Qwen3 0.6B tokenizer | `Qwen/Qwen3-0.6B@c1899de289a04d12100db370d81485cdf75e47ca` | <https://huggingface.co/Qwen/Qwen3-0.6B> | 待核对 |
+| LSE14 fusion head | `lse14/lse14-scorer@655377cb813d35291a2010031f724e778b7d80dd` | <https://huggingface.co/lse14/lse14-scorer> | 待核对 |
+| JTP-3 | `RedRocket/Hydra@d82e15954de3d99b94217fe015d5005d30e24332` | <https://huggingface.co/RedRocket/Hydra> | 待核对 |
+| Waifu scorer | `Eugeoter/waifu-scorer-v3@c2a747fd61d310a90e9cbbf8fc590c522f234424` | <https://huggingface.co/Eugeoter/waifu-scorer-v3> | 待核对 |
+| CLIP `ViT-L-14.pt` | OpenAI CDN SHA-256 `b8cca3fd41ae0c99ba7e8951adf17d267cdb84cd88be6f7c2e0eca1737a03836` | <https://openaipublic.azureedge.net/clip/models/b8cca3fd41ae0c99ba7e8951adf17d267cdb84cd88be6f7c2e0eca1737a03836/ViT-L-14.pt> | 待核对 |
+| PaddleOCR PP-OCRv5 Server | 固定模型归档由发布清单记录 | <https://www.paddleocr.ai/latest/en/version3.x/model_list.html> | 待核对 |
 
-OCR 资源 manifest 在当前实现中标记为 license unverified。安装者必须在使用或
-分发前独立核对来源、版本、许可证和适用限制。
+在逐项核对许可证、版本、来源和适用限制前，不得把上述模型镜像到项目 Release；
+`Validate-SourceBootstrapRelease.ps1` 会拒绝包含 `license unverified` 状态的公开门禁。

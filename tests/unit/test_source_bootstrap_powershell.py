@@ -98,6 +98,13 @@ class SourceBootstrapPowerShellTests(unittest.TestCase):
             self.assertIn("Frozen install manifest is missing", logs[0].read_text(encoding="utf-8"))
             self.assertFalse((project_root / ".runtime-build" / "source-bootstrap").exists())
 
+    def test_bootstrap_has_a_private_success_cleanup_path(self) -> None:
+        script = self._bootstrap_text()
+
+        self.assertIn("function Clear-BootstrapSuccessArtifacts", script)
+        self.assertIn("Clear-BootstrapSuccessArtifacts", script)
+        self.assertIn("Join-Path $script:runtimeBuildRoot 'source-bootstrap'", script)
+
 
 if __name__ == "__main__":
     unittest.main()

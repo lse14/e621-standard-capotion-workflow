@@ -27,7 +27,7 @@ from assemble import (
 )
 from download import download_verified
 from manifest import Artifact, InstallManifest, ManifestError, load_manifest_path, sha256_bytes
-from paths import ProjectLayout, cleanup_failure, publish_directories, recover_transactions, safe_relative
+from paths import ProjectLayout, cleanup_failure, cleanup_success, publish_directories, recover_transactions, safe_relative
 
 
 ArtifactFetcher = Callable[[Artifact], Path]
@@ -404,6 +404,7 @@ def install_project(
                 raise AssemblyError(f"published component cannot be verified: {item.component.component_id}")
         state = build_install_state(manifest, final_plan, records)
         state_path = write_install_state(layout, state)
+        cleanup_success(layout)
         return InstallResult(
             tuple(item.component.component_id for item in final_pending),
             tuple(item.component.component_id for item in skipped),

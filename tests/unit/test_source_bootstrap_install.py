@@ -679,6 +679,8 @@ class SourceBootstrapInstallTests(unittest.TestCase):
             self.assertEqual({"core", "fixture-resource"}, set(state["components"]))
             self.assertTrue((root / ".runtime-build" / "runtimes" / "core" / "python.exe").is_file())
             self.assertTrue((root / "resource-library" / "fixture-resource" / "resource.json").is_file())
+            for relative in ("bootstrap", "cache", "staging", "transactions"):
+                self.assertFalse((root / ".runtime-build" / "source-bootstrap" / relative).exists())
 
             calls.clear()
             second = install_module.install_project(

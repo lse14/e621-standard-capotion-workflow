@@ -1,11 +1,13 @@
 # Anima Dataset Annotation Tool
 
 Anima 是一个面向 Windows 的本地图片数据集标注工具。它通过本地 WebUI
-把图片、已有 TXT/JSON 标注、可选 OCR 与自然语言生成组织成可复核、可恢复的
+把图片、已有 TXT/JSON 标注、OCR 与自然语言生成组织成可复核、可恢复的
 标准化处理流程。
 
 > 本仓库是源码发布，不包含数据集、模型权重、浏览器二进制、Python/Node
-> 运行时或构建产物。直接运行需要先准备项目内嵌运行时和本地资源。
+> 运行时。发布源码包含已构建的 `frontend/dist`；运行时和模型只由安装器写入
+> 项目目录。当前开发快照未附带经过核对的生产安装清单，安装器会明确 fail-closed，
+> 不能替代已通过发布门禁的源码版本。
 
 ## 主要功能
 
@@ -15,14 +17,14 @@ Anima 是一个面向 Windows 的本地图片数据集标注工具。它通过�
 - 支持 E621 端到端标注流程；Danbooru 流程已接入，但正式模型和分类资源不随
   本仓库分发，需要从上游来源手动安装。
 - 支持图片无标注、TXT 标注、标准 JSON 和原始 E621 分组 JSON 混合导入。
-- 支持可选 OCR、OpenAI-compatible NL API、Count Review、Dropout、Token
+- 支持 OCR、OpenAI-compatible NL API、Count Review、Dropout、Token
   Budget Review 和 JSON/扁平 TXT 导出。
 - API 凭据与任务快照分离，模型、数据和生成结果保持在本机。
 
 ## 处理流程
 
 ```text
-Caption -> Classify -> Replace -> OCR (optional) -> NL
+Caption -> Classify -> Replace -> OCR -> NL
         -> Count Review -> Dropout/Policy -> Token Budget -> Export
 ```
 
@@ -80,22 +82,22 @@ Export 使用固定的九字段结构：
 `quality`、`appearance`、`tags`、`environment` 是字符串数组；其余字段是
 字符串。`count` 的规范值为 `""`、`solo`、`duo`、`trio` 或 `group`。
 
-## 运行 WebUI
+## 安装与运行 WebUI
 
-已组装的 Windows 发布包可在项目根目录运行：
+从通过发布门禁的源码 ZIP 解压或 clone 对应版本后，唯一的用户安装入口是双击项目
+根目录的 `Install-WebUI.bat`。不要传入 OCR 模式，也不需要运行 Python、npm、CUDA
+Toolkit、Visual Studio 或 Windows SDK。
 
-```powershell
-.\Install-WebUI.bat -OcrMode None
-.\Start-WebUI.bat
-# 使用完毕后：
-.\Stop-WebUI.bat
-```
+安装器会检测现有 NVIDIA 驱动：NVIDIA 可用时安装 Caption/Policy CUDA、OCR CPU 和
+OCR GPU，并默认使用 GPU、保留 CPU 回退；其他机器只安装 CPU 变体。E621 Tagger、
+Qwen3 0.6B tokenizer、LSE14/JTP-3/Waifu/CLIP 质量栈和 OCR 都是必装项，任一离线
+探测失败都会使安装失败，不会报告成功。
 
-默认端口为 `8765`。启动成功后会打开 `http://127.0.0.1:8765/`。
-`Install-WebUI.bat` 的 OCR 模式可以是 `None`、`Cpu` 或 `Gpu`；未指定时会询问，
-默认选择 `None`。
+成功后双击 `Start-WebUI.bat`，使用完毕后双击 `Stop-WebUI.bat`。默认端口为 `8765`，
+启动成功后会打开 `http://127.0.0.1:8765/`。日志位于 `.runtime-build\logs`；下载失败时
+安装窗口会打印官方直链、目标文件名、大小和 SHA-256，用户放入指定缓存后可再次双击继续。
 
-源码克隆不包含以下本地依赖，不能视为已经组装的发布包：
+源码克隆不包含以下本地依赖；安装器只会把它们写入项目目录：
 
 ```text
 .runtime-build/runtimes/core/python.exe
@@ -107,24 +109,17 @@ resource-library/
 所有依赖安装、同步和验证脚本都只应操作项目目录内的运行时。不要用系统 Python
 替代项目内嵌环境。
 
-## 可选资源
+## 资源与发布门禁
 
 - 模型和 tokenizer：见 [models/README.md](models/README.md)。
 - 数据集布局：见 [data/README.md](data/README.md)。
 - 第三方代码与上游资源说明：见
   [docs/THIRD_PARTY_NOTICES.md](docs/THIRD_PARTY_NOTICES.md)。
 
-OCR 默认关闭。导入脚本采用预览优先模式，只有显式传入 `-Apply` 才会修改正式
-资源：
-
-```powershell
-.\Import-OcrResource.bat
-.\Import-OcrResource.bat -Apply
-.\Import-TokenizerResources.bat
-.\Import-TokenizerResources.bat -Apply
-```
-
-本项目不自动下载或重新分发模型权重。Danbooru 模型缺失时不会静默回退到
+一键安装只从冻结清单中的上游 HTTPS URL 下载并校验模型，不把模型权重提交到 Git。
+源码目标电脑不会运行 npm，`frontend/dist` 已随源码提供。发布前必须通过
+`Validate-SourceBootstrapRelease.ps1`：生产清单、基础 Python Release 身份、前端产物和
+第三方许可证任一缺失或未核对都会阻止发布。Danbooru 不在首发支持范围，也不会回退到
 E621 资源。
 
 ## 验证
@@ -138,10 +133,10 @@ E621 资源。
 ```
 
 - `Fast`：Core/contract/worker 快速检查和前端 typecheck。
-- `Full`：在 Fast 基础上增加前端构建及适用的 OCR 集成检查。
+- `Full`：在 Fast 基础上增加前端构建及已安装 OCR 的集成检查。
 - `Release`：增加发布树漂移、Playwright E2E 和资源校验。
 
-缺少项目内 Playwright Chromium、正式资源或可选 OCR 组件时，对应检查不能视为
+缺少项目内 Playwright Chromium、正式资源或必装 OCR 组件时，对应检查不能视为
 已经验证。
 
 ### 项目内工具链
@@ -171,19 +166,11 @@ E621 资源。
 
 ## OCR 资源边界
 
-OCR is disabled by default. 导入和清理均为预览优先，OCR 结果位于
-`ocr_annotations/<relative-image-path-with-extension>.ocr.json`。CPU-only 安装使用
-项目内资源；模型状态保持 `local-only`、`license unverified`。使用
-`Install-WebUI.bat -OcrMode None|Cpu|Gpu` 选择模式；`ocr-model-archives` 只接受
-本地、经过核验的归档。GPU includes the CPU fallback；partial OCR state fails closed，
-安装后的 offline probe 不得访问网络。项目 never downloads or redistributes model weights。
-
-```powershell
-.\Import-OcrResource.bat
-.\Import-OcrResource.bat -Apply
-.\Reset-OcrRuntime.bat
-.\Clean-OcrArtifacts.bat
-```
+OCR 是一键安装的必装组件。CPU runtime 始终存在；检测到可用 NVIDIA 驱动时还会安装
+GPU runtime，默认执行 GPU 并保留 CPU 回退。OCR 结果位于
+`ocr_annotations/<relative-image-path-with-extension>.ocr.json`。partial OCR state fails
+closed，安装后的 offline probe 不得访问网络。当前模型许可证仍是公开 Release 门禁；在
+许可证未核对前，安装器不会把任何开发快照描述为可公开发布的一键安装版本。
 
 ## Token Budget 边界
 
@@ -235,5 +222,5 @@ formal Danbooru CL/WD resources and real model acceptance remain unavailable。
 ## License
 
 此公开源码快照不附带项目许可证，未授予复制、修改或再分发本项目源码的许可。
-第三方组件和可选资源适用各自的许可证与使用条款，详见
+第三方组件和资源适用各自的许可证与使用条款，详见
 [第三方声明](docs/THIRD_PARTY_NOTICES.md)。
