@@ -6,7 +6,7 @@
 `Install-WebUI.bat`，无需预装 Python、Node、CUDA Toolkit、Visual Studio 或 Windows
 SDK，即可得到可离线运行的 E621 打标、质量评分、Qwen3 tokenizer 和 OCR 环境。
 
-设计于 2026-08-11 经用户批准。实现尚未开始。
+设计于 2026-08-11 经用户批准。实现正在按冻结清单、下载、路径事务、自举和离线探测的顺序推进。
 
 ## 已确认范围
 
@@ -35,7 +35,7 @@ SDK，即可得到可离线运行的 E621 打标、质量评分、Qwen3 tokenize
 - [ ] R10: 增加 Caption 和 Policy 的 CPU/CUDA 安装变体。
 - [ ] R11: 接入 E621、Qwen3、质量评分和 E621 索引资源下载。
 - [ ] R12: 接入默认 OCR CPU，以及 NVIDIA 机器的 OCR GPU 安装。
-- [ ] R13: 接入幂等修复、缓存清理和失败恢复。
+- [-] R13: 接入幂等修复、缓存清理和失败恢复。
 - [ ] R14: 在无开发环境的 CPU 和 NVIDIA 干净机上完成端到端验收。
 - [ ] R15: 发布版本化基础资产和源码下载入口，并复验公开链接。
 
@@ -94,4 +94,16 @@ SDK，即可得到可离线运行的 E621 打标、质量评分、Qwen3 tokenize
 - [-] 2026-08-11：已实现标准库下载器；项目内嵌 CPython 运行
   `test_source_bootstrap_download.py` 共 5 项通过，覆盖 HTTP Range 续传、服务器
   忽略 Range 时安全重下、允许主机校验、SHA-256 错误删除与失败时保留 `.partial`。
-- [ ] 事务发布和清理边界随 R13 的路径安全实现完成后，再补充 R9 完整验证结论。
+- [-] 2026-08-11：事务发布和清理边界已有路径安全原语与单元证据；下载器接入实际组装、
+  幂等状态和端到端失败矩阵尚未实施，因此 R9 不标记完成。
+
+## R13 进行记录
+
+- [-] 2026-08-11：已实现 `packaging/installer/paths.py` 的 Windows 相对路径校验、
+  ZIP 穿越/设备/大小写碰撞/链接和特殊条目拒绝、项目内 staging、日志式目录发布、
+  中断恢复及成功/失败清理边界；发布目标仅允许 `.runtime-build\\runtimes` 或
+  `resource-library`，不会替换 `data`、`output` 或源码目录。
+- [-] 2026-08-11：项目内嵌 CPython 3.11.15 以
+  `-m unittest discover -s tests\\unit -p test_source_bootstrap_paths.py -v` 执行 8 项通过；
+  再以 `-p test_source_bootstrap_*.py` 执行清单、下载和路径组合测试共 19 项通过。
+- [ ] 实际安装器的组件指纹跳过、漂移修复、失败后完整缓存处理和端到端矩阵仍待后续任务验证。

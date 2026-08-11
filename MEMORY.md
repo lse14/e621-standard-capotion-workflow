@@ -98,3 +98,9 @@ CLIP 文件使用 OpenAI 官方 CDN：
 - 2026-08-11：已实现并测试 `packaging/installer/download.py`；项目内嵌 CPython
   3.11.15 运行 `tests/unit/test_source_bootstrap_download.py` 得到 5 项通过。该实现只
   使用 HTTPS/允许主机，支持 Range 续传，哈希错误立即删除，网络失败保留 `.partial`。
+- 2026-08-11：已实现并测试 `packaging/installer/paths.py`；同一项目内嵌 CPython
+  以 `unittest discover -s tests\\unit -p test_source_bootstrap_paths.py -v` 得到 8 项通过，
+  以 `-p test_source_bootstrap_*.py` 得到组合 19 项通过。它拒绝 Windows 路径逃逸、
+  ZIP 穿越/链接/非普通条目/大小写碰撞，staging 仅位于项目内，且事务发布仅允许
+  `.runtime-build\\runtimes` 或 `resource-library`，失败清理保留 `.partial` 与日志。
+  真实组件幂等修复和端到端故障矩阵尚未实施，不能据此声称安装器已完整可用。
