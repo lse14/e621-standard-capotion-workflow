@@ -136,3 +136,11 @@ CLIP 文件使用 OpenAI 官方 CDN：
   验证 developer inventory。没有真实 CPython Release 资产或完整 production inventory，
   因此未生成 `install-manifest.json`、`release-artifacts.json`，也未进行真实 CPU/GPU
   runtime 组装或推理。
+- 2026-08-11：Task 6 增加 `packaging/installer/assemble.py` 和 `install.py`。fixture 证明
+  CPU/NVIDIA 选择、OCR CPU/GPU 选择、wheel staging、源码复制、构建辅助包清理、完整文件/
+  runtime manifest 的幂等校验、事务发布、状态写入和第二次运行零 fetch。`install.py` 默认拒绝
+  import-only probe，生产调用还要求完整 E621 组件集；fixture 仅通过显式测试开关运行。
+- 2026-08-11：当前不存在 production `install-manifest.json`，也未提供真实 resource JSON 或
+  immutable E621/quality/Qwen3/OCR artifact inventory；因此上述 fixture 机制不能表述为真实
+  模型安装、CPU/NVIDIA 离线推理、干净机测试或公开 Release 验证。PowerShell 已传递
+  `--bootstrap-runtime`，但实际目标机安装仍受该清单与 Task 7 probes 门禁阻断。

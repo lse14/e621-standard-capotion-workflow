@@ -146,3 +146,16 @@ SDK，即可得到可离线运行的 E621 打标、质量评分、Qwen3 tokenize
   `-m unittest discover -s tests\\unit -p test_source_bootstrap_paths.py -v` 执行 8 项通过；
   再以 `-p test_source_bootstrap_*.py` 执行清单、下载和路径组合测试共 19 项通过。
 - [ ] 实际安装器的组件指纹跳过、漂移修复、失败后完整缓存处理和端到端矩阵仍待后续任务验证。
+
+## R11/R12 进行记录
+
+- [-] 2026-08-11：新增标准库 `assemble.py` 与 `install.py`，以冻结清单选择 CPU/NVIDIA
+  组件；NVIDIA 选择 Caption/Policy CUDA 并同时保留 OCR CPU/GPU，CPU 不选择 CUDA 或 OCR GPU。
+  runtime 仅在项目内 staging 从 base、已核验 wheel 和源码复制组装，不调用 pip；wheel 路径冲突、
+  目录链接和 staging 越界均会拒绝。
+- [-] 2026-08-11：组件跳过要求变体指纹、完整文件大小/SHA-256 和现有 runtime manifest 同时匹配；
+  发布后才写 `.runtime-build\manifests\install-state.json`，第二次 fixture 安装验证零 fetch。
+  Caption/Policy runtime manifest 使用所选 `*-cpu`/`*-cuda` lock，而不是旧的 CUDA 偏向 lock。
+- [-] 2026-08-11：`bootstrap_install.ps1` 现在将已安全展开的项目内 CPython base 目录传入
+  `install.py`。默认 probe 当前明确 fail-closed；尚未生产 `install-manifest.json`，也没有真实
+  E621、质量、Qwen3 或 OCR artifact / resource JSON / 离线推理证据，不能标记 R11 或 R12 完成。

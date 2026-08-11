@@ -5,6 +5,7 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
+from typing import Mapping
 
 
 PROTOCOL_VERSION = "1.0"
@@ -43,14 +44,20 @@ def relative(path: Path, root: Path) -> str:
 
 def runtime_specs(
     *,
-    include_ocr_paddle: bool,
+    include_ocr_paddle: bool = False,
     include_ocr_paddle_gpu: bool = False,
+    lock_names: Mapping[str, str] | None = None,
 ) -> dict[str, tuple[str, str, str, tuple[str, ...]]]:
     values = dict(RUNTIMES)
     if include_ocr_paddle:
         values["ocr-paddle"] = ASSEMBLED_OCR_RUNTIME
     if include_ocr_paddle_gpu:
         values["ocr-paddle-gpu"] = ASSEMBLED_OCR_GPU_RUNTIME
+    for runtime_id, lock_name in (lock_names or {}).items():
+        if runtime_id not in values or not isinstance(lock_name, str) or not lock_name:
+            raise ValueError("runtime lock selection is invalid")
+        owner, entry_module, _current_lock, dll_relative = values[runtime_id]
+        values[runtime_id] = (owner, entry_module, lock_name, dll_relative)
     return values
 
 

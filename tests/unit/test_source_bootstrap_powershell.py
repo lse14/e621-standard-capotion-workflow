@@ -29,6 +29,7 @@ class SourceBootstrapPowerShellTests(unittest.TestCase):
         self.assertIn("Get-FileHash", script)
         self.assertIn("Range", script)
         self.assertIn("install.py", script)
+        self.assertIn("--bootstrap-runtime", script)
         self.assertNotIn("LOCALAPPDATA", script)
 
     def test_bootstrap_parses_in_windows_powershell(self) -> None:

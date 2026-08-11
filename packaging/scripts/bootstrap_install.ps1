@@ -331,7 +331,7 @@ try {
     $installerScript = Get-ProjectPath (Join-Path $script:projectRoot 'packaging\installer\install.py')
     if (-not (Test-Path -LiteralPath $installerScript -PathType Leaf)) { throw "Source bootstrap installer is missing: $installerScript" }
     Write-InstallLog 'Starting the standard-library installer.'
-    $output = & $bootstrapPython -B -I $installerScript --project-root $script:projectRoot --manifest $manifestPath --manifest-sha256 $actualManifestSha256 --accelerator $accelerator 2>&1
+    $output = & $bootstrapPython -B -I $installerScript --project-root $script:projectRoot --manifest $manifestPath --manifest-sha256 $actualManifestSha256 --accelerator $accelerator --bootstrap-runtime $script:bootstrapStage 2>&1
     $installerExitCode = $LASTEXITCODE
     foreach ($line in @($output)) { Write-InstallLog ([string]$line) }
     if ($installerExitCode -ne 0) { throw "Standard-library installer failed with exit code $installerExitCode" }
