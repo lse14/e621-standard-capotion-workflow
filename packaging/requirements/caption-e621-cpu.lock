@@ -1,0 +1,8 @@
+# Generated from the frozen Windows x64 CPython 3.11 wheel inventory.
+# CPU route: onnxruntime 1.26.0 verified from https://pypi.org/pypi/onnxruntime/1.26.0/json.
+flatbuffers==25.12.19 --hash=sha256:7634f50c427838bb021c2d66a3d1168e9d199b0607e6329399f04846d42e20b4
+numpy==2.2.6 --hash=sha256:e8213002e427c69c45a52bbd94163084025f533a55a59d6f9c5b820774ef3303
+onnxruntime==1.26.0 --hash=sha256:e6456718125fd777c673f3b78d4a9ab58d6adea641e9afae85ee6444f0e0e9a9
+packaging==26.2 --hash=sha256:5fc45236b9446107ff2415ce77c807cee2862cb6fac22b8a73826d0693b0980e
+pillow==11.3.0 --hash=sha256:1a992e86b0dd7aeb1f053cd506508c0999d710a8f07b4c791c63843fc6a807ac
+protobuf==7.35.1 --hash=sha256:230a75ddfc2de4806e56696ce9640c1cdfdb6543b7cfce98d42a4c0a0e7bdb87

@@ -1,0 +1,7 @@
+--extra-index-url https://download.pytorch.org/whl/cpu
+numpy==2.4.6
+open-clip-torch==3.3.0
+Pillow==12.3.0
+safetensors==0.8.0
+torch==2.9.1+cpu
+torchvision==0.24.1+cpu

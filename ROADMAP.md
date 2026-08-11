@@ -29,10 +29,10 @@ SDK，即可得到可离线运行的 E621 打标、质量评分、Qwen3 tokenize
 - [x] R4: 写入并复核正式设计说明。
 - [x] R5: 编写可执行实施计划，并按依赖顺序拆分任务。
 - [-] R6: 建立冻结的安装组件清单和清单验证器。
-- [ ] R7: 建立预编译 CPython 3.11.15 基础资产的构建、探测和发布流程。
+- [-] R7: 建立预编译 CPython 3.11.15 基础资产的构建、探测和发布流程。
 - [-] R8: 实现 PowerShell 首阶段自举、日志、空间检查和基础资产获取。
 - [-] R9: 实现 Python 下载器、断点续传、哈希验证和事务发布。
-- [ ] R10: 增加 Caption 和 Policy 的 CPU/CUDA 安装变体。
+- [-] R10: 增加 Caption 和 Policy 的 CPU/CUDA 安装变体。
 - [ ] R11: 接入 E621、Qwen3、质量评分和 E621 索引资源下载。
 - [ ] R12: 接入默认 OCR CPU，以及 NVIDIA 机器的 OCR GPU 安装。
 - [-] R13: 接入幂等修复、缓存清理和失败恢复。
@@ -104,6 +104,29 @@ SDK，即可得到可离线运行的 E621 打标、质量评分、Qwen3 tokenize
 - [!] 生产清单、其固定 SHA-256 和 CPython Release 基础资产仍不存在，故 bootstrap
   当前在任何下载前明确停止；未运行真实下载、解压、CPU/GPU 安装或干净机验证，不能
   视为一键安装已经可用。
+
+## R7 进行记录
+
+- [-] 2026-08-11：已新增仅供维护端使用的 `build_bootstrap_runtime.ps1`；它要求已有
+  CPython 3.11.15 base，核对 `python.exe`、`python311.dll`、`python311._pth` 和标准库，
+  用 `-B -I` 执行离线标准库探测，再以固定条目时间写入 ZIP 和 provenance。目标安装器
+  不调用此脚本。
+- [-] 2026-08-11：以只读项目内嵌 Core Python 实际运行打包器，fixture ZIP 包含
+  `python.exe`、`python311.dll`、`python311._pth`、`Lib/os.py`，provenance 为
+  CPython `3.11.15` 与 `bootstrap-stdlib-ok`；临时目录已清除。
+- [!] 尚未从受控 CPython base 生成、核对并公开发布真实基础资产，因此没有可写入生产
+  `release-artifacts.json` 的 URL、大小或 SHA-256。
+
+## R10 进行记录
+
+- [-] 2026-08-11：已增加 Caption/Policy 的独立 CPU 与 CUDA `.in`/`.lock`；CPU 输入
+  使用 `onnxruntime` 和 `torch/torchvision +cpu`，不含 CUDA/GPU payload 标识，CUDA
+  输入保留已批准的 `onnxruntime-gpu` 和 `+cu128` 组合。
+- [-] 2026-08-11：读取 PyPI 与 PyTorch 官方索引后写入 CPU direct-wheel 哈希；单测验证
+  CPU 变体无 CUDA 标识，生成器拒绝缺 URL/大小/SHA、Release 身份不完整和 wheel lock
+  哈希不匹配。
+- [ ] 尚未下载完整 CPU/CUDA wheelhouse、组装 runtime 或进行实际 CPU/CUDA 离线推理，
+  因此两条变体尚未标记完成。
 
 ## R9 进行记录
 

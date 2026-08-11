@@ -114,3 +114,25 @@ CLIP 文件使用 OpenAI 官方 CDN：
   单测均通过；PowerShell 临时目录实际执行证明缺清单时会写项目内 UTF-8 日志后非零退出。
   `ExpectedInstallManifestSha256` 仍故意为空，因为没有经实际核对的生产清单和 CPython
   Release 资产；当前 fail-closed 行为不是一次成功安装或公开链接验证的证据。
+- 2026-08-11：已添加 CPU/CUDA 显式 requirements。CPU direct wheel 身份由实际只读查询
+  得到：ONNX Runtime `1.26.0` Windows CPython 3.11 wheel 为
+  `https://files.pythonhosted.org/packages/9c/21/9f041de20787cd85498bd48e0ec4d098bf2a6c486e25b24b8dae1bf492b2/onnxruntime-1.26.0-cp311-cp311-win_amd64.whl`，
+  `13023165` bytes，SHA-256
+  `e6456718125fd777c673f3b78d4a9ab58d6adea641e9afae85ee6444f0e0e9a9`；来源为
+  `https://pypi.org/pypi/onnxruntime/1.26.0/json`。
+- 2026-08-11：PyTorch 官方 CPU 索引给出 Torch `2.9.1+cpu` Windows CPython 3.11：
+  `https://download-r2.pytorch.org/whl/cpu/torch-2.9.1%2Bcpu-cp311-cp311-win_amd64.whl`，
+  `110888878` bytes，SHA-256
+  `69b3785d28be5a9c56ab525788ec5000349ec59132a74b7d5e954b905015b992`；TorchVision
+  `0.24.1+cpu`：
+  `https://download-r2.pytorch.org/whl/cpu/torchvision-0.24.1%2Bcpu-cp311-cp311-win_amd64.whl`，
+  `4037705` bytes，SHA-256
+  `dc41d9345769a24984f54aad914ce40954c11cfc4fbbe0fa4187b07c896c9940`。索引原址为
+  `https://download.pytorch.org/whl/cpu/torch/` 与
+  `https://download.pytorch.org/whl/cpu/torchvision/`。
+- 2026-08-11：新增开发者专用 `build_bootstrap_runtime.ps1` 与
+  `build_install_manifest.py`。前者在只读项目内嵌 Core runtime 上实际打包得到所需条目
+  与 `bootstrap-stdlib-ok`；后者用严格清单契约、Release 身份和 lock-to-wheel SHA 映射
+  验证 developer inventory。没有真实 CPython Release 资产或完整 production inventory，
+  因此未生成 `install-manifest.json`、`release-artifacts.json`，也未进行真实 CPU/GPU
+  runtime 组装或推理。
