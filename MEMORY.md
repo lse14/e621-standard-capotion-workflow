@@ -92,3 +92,6 @@ CLIP 文件使用 OpenAI 官方 CDN：
 - 当前独立 worktree 不含被忽略的 `.runtime-build`、`.toolchains`、`resource-library`
   或 `frontend/dist`。实施测试只能使用经验证的项目内嵌 CPython，不得改用系统 Python；
   该现状不是任何功能测试通过的证据。
+- 2026-08-11：已实现并测试 `packaging/installer/manifest.py` 的冻结清单契约；
+  项目内嵌 CPython 3.11.15 运行 `tests/unit/test_source_bootstrap_manifest.py` 得到
+  6 项通过。生产资产记录尚未写入，因为其公开 Release 身份未被实际核对。
