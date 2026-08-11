@@ -82,3 +82,13 @@ CLIP 文件使用 OpenAI 官方 CDN：
 - 前端构建产物很小，应随源码提供，避免目标电脑安装 Node。
 - 安装清单必须列出具体 wheel/model 文件，不在目标电脑做浮动依赖解析。
 - OCR 与部分第三方模型的许可证仍是公开发布门禁，不得把未核对资源镜像进项目 Release。
+
+## 实施计划
+
+- 2026-08-11：实施计划位于
+  `docs/superpowers/plans/2026-08-11-source-bootstrap-installer.md`；它按 TDD 拆分为
+  清单、下载、路径/事务、PowerShell 自举、基础资产/CPU-CUDA 锁、组装、离线探测、
+  故障矩阵与最终复核。
+- 当前独立 worktree 不含被忽略的 `.runtime-build`、`.toolchains`、`resource-library`
+  或 `frontend/dist`。实施测试只能使用经验证的项目内嵌 CPython，不得改用系统 Python；
+  该现状不是任何功能测试通过的证据。
