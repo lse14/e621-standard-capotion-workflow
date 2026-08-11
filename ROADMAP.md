@@ -31,7 +31,7 @@ SDK，即可得到可离线运行的 E621 打标、质量评分、Qwen3 tokenize
 - [-] R6: 建立冻结的安装组件清单和清单验证器。
 - [ ] R7: 建立预编译 CPython 3.11.15 基础资产的构建、探测和发布流程。
 - [ ] R8: 实现 PowerShell 首阶段自举、日志、空间检查和基础资产获取。
-- [ ] R9: 实现 Python 下载器、断点续传、哈希验证和事务发布。
+- [-] R9: 实现 Python 下载器、断点续传、哈希验证和事务发布。
 - [ ] R10: 增加 Caption 和 Policy 的 CPU/CUDA 安装变体。
 - [ ] R11: 接入 E621、Qwen3、质量评分和 E621 索引资源下载。
 - [ ] R12: 接入默认 OCR CPU，以及 NVIDIA 机器的 OCR GPU 安装。
@@ -88,3 +88,10 @@ SDK，即可得到可离线运行的 E621 打标、质量评分、Qwen3 tokenize
 - [!] 生产 `install-manifest.json` 仍不能冻结：CPython 基础资产和项目生成 E621
   索引必须使用实际公开 Release URL、大小和 SHA-256；尚未得到可验证的资产清单，
   不会填入猜测值。
+
+## R9 进行记录
+
+- [-] 2026-08-11：已实现标准库下载器；项目内嵌 CPython 运行
+  `test_source_bootstrap_download.py` 共 5 项通过，覆盖 HTTP Range 续传、服务器
+  忽略 Range 时安全重下、允许主机校验、SHA-256 错误删除与失败时保留 `.partial`。
+- [ ] 事务发布和清理边界随 R13 的路径安全实现完成后，再补充 R9 完整验证结论。

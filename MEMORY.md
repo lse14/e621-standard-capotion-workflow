@@ -95,3 +95,6 @@ CLIP 文件使用 OpenAI 官方 CDN：
 - 2026-08-11：已实现并测试 `packaging/installer/manifest.py` 的冻结清单契约；
   项目内嵌 CPython 3.11.15 运行 `tests/unit/test_source_bootstrap_manifest.py` 得到
   6 项通过。生产资产记录尚未写入，因为其公开 Release 身份未被实际核对。
+- 2026-08-11：已实现并测试 `packaging/installer/download.py`；项目内嵌 CPython
+  3.11.15 运行 `tests/unit/test_source_bootstrap_download.py` 得到 5 项通过。该实现只
+  使用 HTTPS/允许主机，支持 Range 续传，哈希错误立即删除，网络失败保留 `.partial`。
