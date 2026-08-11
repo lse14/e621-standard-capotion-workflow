@@ -186,3 +186,19 @@ SDK，即可得到可离线运行的 E621 打标、质量评分、Qwen3 tokenize
 - [!] 2026-08-12：当前 worktree 没有真实 `install-manifest.json`、`release-artifacts.json`
   或已核对模型许可证；发布门禁明确报告 `install-manifest.json is missing`。这不是一键安装
   成功证据，也不能替代 CPU/NVIDIA 干净机、公开 URL 或真实模型离线推理验收。
+
+## Task 9 最终验证记录
+
+- [x] 2026-08-12：对比 `2e85063...HEAD` 的最终 diff，确认修改集中在源码自举、清单/下载/
+  路径事务、离线探测、PowerShell 入口、前端静态产物、发布门禁和对应文档测试；未触碰七个
+  不可访问的旧 OCR staging 目录。
+- [x] 2026-08-12：项目内嵌 CPython 新鲜运行 `test_source_bootstrap_*.py` 45 项、
+  `test_desktop_control.py` 6 项、`test_source_bootstrap_fixture.py` 2 项，均退出码 0；
+  `install.py`/`probes.py` `py_compile` 退出码 0。
+- [x] 2026-08-12：项目内 Node v24.18.0 新鲜运行 frontend `typecheck` 和 `build` 均退出码 0；
+  构建后删除 `frontend/node_modules`，确认 `vite` 进程数为 0，未启动或遗留开发服务器。
+- [!] 2026-08-12：`Verify-Project.ps1 -Level Fast -OcrMode Auto` 因当前隔离 worktree
+  没有 `.runtime-build` 而非零退出；发布 validator 因没有真实生产 `install-manifest.json`
+  而非零退出。这两个结果是已知门禁，不可记录为通过。
+- [!] R14/R15 仍未完成：没有无开发环境 CPU/NVIDIA 干净机、真实模型离线推理、已核对许可证、
+  公开基础资产 URL 或 GitHub Release 复验，因此不 push、不创建 Release、不声称公开可用。

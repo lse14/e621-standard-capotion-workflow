@@ -167,3 +167,10 @@ CLIP 文件使用 OpenAI 官方 CDN：
   optional/None 文档并记录 CPU/NVIDIA 选择、必装质量/OCR、项目内日志和发布门禁；第三方声明
   已列出冻结模型身份和原始链接，但许可证仍标记待核对，故 validator 必须失败。生产清单、
   CPython Release、真实模型推理、干净机/GPU 和公开链接仍未验证，不能宣称功能已发布。
+- 2026-08-12：Task 9 新鲜验证：source-bootstrap 测试 45 项、desktop-control 6 项、fixture
+  2 项全部通过，`install.py`/`probes.py` 编译通过；frontend Node v24.18.0 typecheck/build
+  通过后已删除 `frontend/node_modules`，没有启动开发服务器，`vite` 进程数为 0。
+- 2026-08-12：`Verify-Project.ps1 -Level Fast -OcrMode Auto` 因隔离 worktree 缺少被忽略的
+  `.runtime-build` 退出 1；`Validate-SourceBootstrapRelease.ps1` 因缺少真实
+  `install-manifest.json` 退出 1。R14/R15 的干净机、真实模型推理、许可证、公开 URL 和 Release
+  仍是阻断项，不能把本地 fixture 证据描述为可交付安装。

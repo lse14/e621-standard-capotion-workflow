@@ -570,14 +570,14 @@ git commit -m "feat: complete source bootstrap installer validation"
 - Modify: ROADMAP.md
 - Modify: MEMORY.md
 
-- [ ] **Step 1: Compare final diff to approved design.**
+- [x] **Step 1: Compare final diff to approved design.**
 
 ~~~
 git diff 2e85063...HEAD --stat
 git diff 2e85063...HEAD -- Install-WebUI.bat packaging/installer packaging/scripts/bootstrap_install.ps1 packaging/scripts/desktop_control.ps1 README.md docs/THIRD_PARTY_NOTICES.md ROADMAP.md MEMORY.md
 ~~~
 
-- [ ] **Step 2: Run available project-local verification.**
+- [x] **Step 2: Run available project-local verification.**
 
 ~~~
 & .\.runtime-build\runtimes\core\python.exe -B -I -m unittest discover -s tests\unit -p 'test_source_bootstrap_*.py' -v
@@ -590,14 +590,14 @@ git status --short
 
 Record exact command outputs and no-server evidence; import-only is never replacement for a probe.
 
-- [ ] **Step 3: Commit verification record after fresh evidence.**
+- [x] **Step 3: Commit verification record after fresh evidence.**
 
 ~~~
 git add ROADMAP.md MEMORY.md
 git commit -m "docs: record source bootstrap verification"
 ~~~
 
-- [ ] **Step 4: Report only actual evidence and gates.**
+- [x] **Step 4: Report only actual evidence and gates.**
 
 Report branch, commits, changed modules, tests, run method and no-server status. Do not push/create/upload a Release or claim public availability without new authorization.
 
