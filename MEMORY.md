@@ -144,3 +144,11 @@ CLIP 文件使用 OpenAI 官方 CDN：
   immutable E621/quality/Qwen3/OCR artifact inventory；因此上述 fixture 机制不能表述为真实
   模型安装、CPU/NVIDIA 离线推理、干净机测试或公开 Release 验证。PowerShell 已传递
   `--bootstrap-runtime`，但实际目标机安装仍受该清单与 Task 7 probes 门禁阻断。
+- 2026-08-12：Task 7 新增 `packaging/installer/probes.py`。每个子进程清除代理变量、设置
+  Hugging Face/Transformers/Paddle 离线标记并封锁 socket；证据验证拒绝 import-only、错误
+  accelerator、非有限质量分数和 OCR CPU/GPU 样例文本不一致。CUDA Caption/Policy 探测组失败时，
+  `install.py` 延后共享 Tagger/质量资源的失败，重建 CPU runtime 后重探整组；共享资源仍失败会
+  fail closed。OCR GPU 探测失败只丢弃 GPU staging，保留 CPU OCR。
+- 2026-08-12：项目内嵌 CPython 3.11.15 的新鲜验证为 source-bootstrap 单测 42 项、离线
+  fixture 1 项、desktop-control 单测 6 项及 `install.py`/`probes.py` 编译通过。该证据不包含
+  真实生产模型、GPU、干净机、中文路径或公开 URL；不可据此宣称一键安装已可交付。

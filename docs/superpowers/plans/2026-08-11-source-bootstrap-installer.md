@@ -88,7 +88,7 @@ Add independent tests for non-HTTPS, zero size, invalid SHA, case-folded duplica
 - [ ] **Step 2: Run RED.**
 
 ~~~
-& .\.runtime-build\runtimes\core\python.exe -B -I -m unittest tests.unit.test_source_bootstrap_manifest -v
+& .\.runtime-build\runtimes\core\python.exe -B -I -m unittest discover -s tests\unit -p 'test_source_bootstrap_manifest.py' -v
 ~~~
 
 Expected: module import failure.
@@ -117,7 +117,8 @@ Top level is exactly schemaVersion, releaseVersion, sourceCommit, allowedHosts, 
 - [ ] **Step 4: Run green verification.**
 
 ~~~
-& .\.runtime-build\runtimes\core\python.exe -B -I -m unittest tests.unit.test_source_bootstrap_manifest tests.unit.test_resource_catalog -v
+& .\.runtime-build\runtimes\core\python.exe -B -I -m unittest discover -s tests\unit -p 'test_source_bootstrap_manifest.py' -v
+& .\.runtime-build\runtimes\core\python.exe -B -I -m unittest discover -s tests\unit -p 'test_resource_catalog.py' -v
 ~~~
 
 - [ ] **Step 5: Update R6 to [-], MEMORY, and commit.**
@@ -160,7 +161,7 @@ Add 200-to-Range restart, forbidden redirect, mismatch deletion, transient reten
 - [ ] **Step 2: Run RED.**
 
 ~~~
-& .\.runtime-build\runtimes\core\python.exe -B -I -m unittest tests.unit.test_source_bootstrap_download -v
+& .\.runtime-build\runtimes\core\python.exe -B -I -m unittest discover -s tests\unit -p 'test_source_bootstrap_download.py' -v
 ~~~
 
 - [ ] **Step 3: Implement downloader.**
@@ -183,7 +184,8 @@ Append only valid 206 matching Content-Range. A 200 response to Range deletes pa
 - [ ] **Step 4: Run green verification.**
 
 ~~~
-& .\.runtime-build\runtimes\core\python.exe -B -I -m unittest tests.unit.test_source_bootstrap_download tests.unit.test_source_bootstrap_manifest -v
+& .\.runtime-build\runtimes\core\python.exe -B -I -m unittest discover -s tests\unit -p 'test_source_bootstrap_download.py' -v
+& .\.runtime-build\runtimes\core\python.exe -B -I -m unittest discover -s tests\unit -p 'test_source_bootstrap_manifest.py' -v
 ~~~
 
 - [ ] **Step 5: Update R9 to [-], MEMORY, and commit.**
@@ -220,7 +222,7 @@ Cover absolute drive/device paths, case collision, ZIP symlink bits, staging out
 - [ ] **Step 2: Run RED.**
 
 ~~~
-& .\.runtime-build\runtimes\core\python.exe -B -I -m unittest tests.unit.test_source_bootstrap_paths -v
+& .\.runtime-build\runtimes\core\python.exe -B -I -m unittest discover -s tests\unit -p 'test_source_bootstrap_paths.py' -v
 ~~~
 
 - [ ] **Step 3: Implement ProjectLayout and transaction API.**
@@ -232,7 +234,8 @@ Journal to .runtime-build/transactions/<uuid>.json; rename existing target to sa
 - [ ] **Step 4: Run green verification.**
 
 ~~~
-& .\.runtime-build\runtimes\core\python.exe -B -I -m unittest tests.unit.test_source_bootstrap_paths tests.unit.test_source_bootstrap_download -v
+& .\.runtime-build\runtimes\core\python.exe -B -I -m unittest discover -s tests\unit -p 'test_source_bootstrap_paths.py' -v
+& .\.runtime-build\runtimes\core\python.exe -B -I -m unittest discover -s tests\unit -p 'test_source_bootstrap_download.py' -v
 ~~~
 
 - [ ] **Step 5: Update R13 to [-], MEMORY, and commit.**
@@ -272,7 +275,8 @@ Parse bootstrap through System.Management.Automation.Language.Parser.ParseFile. 
 - [ ] **Step 2: Run RED.**
 
 ~~~
-& .\.runtime-build\runtimes\core\python.exe -B -I -m unittest tests.unit.test_source_bootstrap_powershell tests.unit.test_desktop_control -v
+& .\.runtime-build\runtimes\core\python.exe -B -I -m unittest discover -s tests\unit -p 'test_source_bootstrap_powershell.py' -v
+& .\.runtime-build\runtimes\core\python.exe -B -I -m unittest discover -s tests\unit -p 'test_desktop_control.py' -v
 ~~~
 
 - [ ] **Step 3: Implement BAT and PowerShell bootstrap.**
@@ -291,7 +295,8 @@ PowerShell validates Windows/x64/plain writable root, creates UTF-8 logs only be
 - [ ] **Step 4: Run green verification.**
 
 ~~~
-& .\.runtime-build\runtimes\core\python.exe -B -I -m unittest tests.unit.test_source_bootstrap_powershell tests.unit.test_desktop_control -v
+& .\.runtime-build\runtimes\core\python.exe -B -I -m unittest discover -s tests\unit -p 'test_source_bootstrap_powershell.py' -v
+& .\.runtime-build\runtimes\core\python.exe -B -I -m unittest discover -s tests\unit -p 'test_desktop_control.py' -v
 ~~~
 
 - [ ] **Step 5: Update R8 to [-], MEMORY, and commit.**
@@ -336,7 +341,7 @@ Also assert base ZIP contains python.exe, python311.dll, Lib, python311._pth and
 - [ ] **Step 2: Run RED.**
 
 ~~~
-& .\.runtime-build\runtimes\core\python.exe -B -I -m unittest tests.unit.test_source_bootstrap_release_build -v
+& .\.runtime-build\runtimes\core\python.exe -B -I -m unittest discover -s tests\unit -p 'test_source_bootstrap_release_build.py' -v
 ~~~
 
 - [ ] **Step 3: Implement release-only builder and lock inventory.**
@@ -369,7 +374,8 @@ CUDA-named inputs copy current approved GPU sets and receive complete CPython 3.
 
 ~~~
 & .\.runtime-build\runtimes\core\python.exe -B -I packaging\scripts\build_install_manifest.py --repository-root . --output packaging\installer\install-manifest.json --validate-only
-& .\.runtime-build\runtimes\core\python.exe -B -I -m unittest tests.unit.test_source_bootstrap_release_build tests.unit.test_source_bootstrap_manifest -v
+& .\.runtime-build\runtimes\core\python.exe -B -I -m unittest discover -s tests\unit -p 'test_source_bootstrap_release_build.py' -v
+& .\.runtime-build\runtimes\core\python.exe -B -I -m unittest discover -s tests\unit -p 'test_source_bootstrap_manifest.py' -v
 ~~~
 
 - [ ] **Step 5: Update R7/R10 to [-], MEMORY, and commit.**
@@ -408,7 +414,7 @@ Also test skip requires component fingerprint/all files/runtime manifest; drift 
 - [ ] **Step 2: Run RED.**
 
 ~~~
-& .\.runtime-build\runtimes\core\python.exe -B -I -m unittest tests.unit.test_source_bootstrap_install -v
+& .\.runtime-build\runtimes\core\python.exe -B -I -m unittest discover -s tests\unit -p 'test_source_bootstrap_install.py' -v
 ~~~
 
 - [ ] **Step 3: Implement deterministic assembly.**
@@ -420,7 +426,8 @@ Create ResourceCatalog-compatible resource JSON/defaults; E621 is mandatory and 
 - [ ] **Step 4: Run green verification.**
 
 ~~~
-& .\.runtime-build\runtimes\core\python.exe -B -I -m unittest tests.unit.test_source_bootstrap_install tests.unit.test_engineering_scripts.RuntimeManifestGenerationTests -v
+& .\.runtime-build\runtimes\core\python.exe -B -I -m unittest discover -s tests\unit -p 'test_source_bootstrap_install.py' -v
+& .\.runtime-build\runtimes\core\python.exe -B -I -m unittest discover -s tests\unit -p 'test_engineering_scripts.py' -v
 ~~~
 
 Run fixture install twice and assert second run makes zero download requests.
@@ -443,7 +450,7 @@ git commit -m "feat: assemble mandatory source bootstrap components"
 - Modify: ROADMAP.md
 - Modify: MEMORY.md
 
-- [ ] **Step 1: Write failing probe/fallback tests.**
+- [x] **Step 1: Write failing probe/fallback tests.**
 
 ~~~
 def test_gpu_probe_failure_rebuilds_caption_policy_cpu_keeps_ocr_cpu(self) -> None:
@@ -459,13 +466,13 @@ def test_gpu_probe_failure_rebuilds_caption_policy_cpu_keeps_ocr_cpu(self) -> No
 
 Also reject import-only result, CPU showing CUDA, GPU with no device, network-enabled probe environment, and quality/OCR failure publishing state.
 
-- [ ] **Step 2: Run RED.**
+- [x] **Step 2: Run RED.**
 
 ~~~
-& .\.runtime-build\runtimes\core\python.exe -B -I -m unittest tests.unit.test_source_bootstrap_install -v
+& .\.runtime-build\runtimes\core\python.exe -B -I -m unittest discover -s tests\unit -p 'test_source_bootstrap_install.py' -v
 ~~~
 
-- [ ] **Step 3: Implement network-blocked representative probes.**
+- [x] **Step 3: Implement network-blocked representative probes.**
 
 Clear proxy variables, set HF_HUB_OFFLINE/TRANSFORMERS_OFFLINE, patch socket connection. Proof targets:
 
@@ -480,14 +487,14 @@ ocr-gpu:    report CUDA and gpu:0, process sample within CPU tolerance
 
 nvidia-smi only selects. Failed Caption/Policy CUDA rebuilds CPU. Failed OCR GPU drops GPU staging while preserving CPU; no GPU success text is emitted.
 
-- [ ] **Step 4: Run unit/fixture CPU probes.**
+- [x] **Step 4: Run unit/fixture CPU probes.**
 
 ~~~
-& .\.runtime-build\runtimes\core\python.exe -B -I -m unittest tests.unit.test_source_bootstrap_install -v
-& .\.runtime-build\runtimes\core\python.exe -B -I -m unittest tests.integration.test_source_bootstrap_fixture.SourceBootstrapFixtureTests.test_cpu_fixture_install_runs_offline_probes -v
+& .\.runtime-build\runtimes\core\python.exe -B -I -m unittest discover -s tests\unit -p 'test_source_bootstrap_install.py' -v
+& .\.runtime-build\runtimes\core\python.exe -B -I -m unittest discover -s tests\integration -p 'test_source_bootstrap_fixture.py' -v
 ~~~
 
-- [ ] **Step 5: Update ROADMAP/MEMORY and commit.**
+- [x] **Step 5: Update ROADMAP/MEMORY and commit.**
 
 ~~~
 git add packaging/installer/probes.py packaging/installer/assemble.py packaging/installer/install.py tests/unit/test_source_bootstrap_install.py tests/integration/test_source_bootstrap_fixture.py ROADMAP.md MEMORY.md
@@ -522,7 +529,7 @@ Add disk shortfall before request, interrupted Range resume, repeated install no
 - [ ] **Step 2: Run RED.**
 
 ~~~
-& .\.runtime-build\runtimes\core\python.exe -B -I -m unittest tests.integration.test_source_bootstrap_fixture -v
+& .\.runtime-build\runtimes\core\python.exe -B -I -m unittest discover -s tests\integration -p 'test_source_bootstrap_fixture.py' -v
 ~~~
 
 - [ ] **Step 3: Implement cleanup, static frontend and validator.**
@@ -542,7 +549,7 @@ Success deletes bootstrap/complete-cache/staging/build-cache/journal; leaves sta
 - [ ] **Step 4: Run verification matrix.**
 
 ~~~
-& .\.runtime-build\runtimes\core\python.exe -B -I -m unittest tests.integration.test_source_bootstrap_fixture tests.unit.test_source_bootstrap_manifest tests.unit.test_source_bootstrap_download tests.unit.test_source_bootstrap_paths tests.unit.test_source_bootstrap_install tests.unit.test_source_bootstrap_powershell -v
+& .\.runtime-build\runtimes\core\python.exe -B -I -m unittest discover -s tests -p 'test_source_bootstrap_*.py' -v
 & .\packaging\scripts\Validate-SourceBootstrapRelease.ps1 -ProjectRoot .
 & .\.toolchains\node-v24.18.0-win-x64\npm.cmd --prefix frontend run typecheck
 & .\.toolchains\node-v24.18.0-win-x64\npm.cmd --prefix frontend run build
@@ -573,7 +580,9 @@ git diff 2e85063...HEAD -- Install-WebUI.bat packaging/installer packaging/scrip
 - [ ] **Step 2: Run available project-local verification.**
 
 ~~~
-& .\.runtime-build\runtimes\core\python.exe -B -I -m unittest tests.unit.test_source_bootstrap_manifest tests.unit.test_source_bootstrap_download tests.unit.test_source_bootstrap_paths tests.unit.test_source_bootstrap_install tests.unit.test_source_bootstrap_powershell tests.unit.test_desktop_control tests.integration.test_source_bootstrap_fixture -v
+& .\.runtime-build\runtimes\core\python.exe -B -I -m unittest discover -s tests\unit -p 'test_source_bootstrap_*.py' -v
+& .\.runtime-build\runtimes\core\python.exe -B -I -m unittest discover -s tests\unit -p 'test_desktop_control.py' -v
+& .\.runtime-build\runtimes\core\python.exe -B -I -m unittest discover -s tests\integration -p 'test_source_bootstrap_fixture.py' -v
 & .\packaging\scripts\Verify-Project.ps1 -Level Fast -OcrMode Auto
 & .\packaging\scripts\Validate-SourceBootstrapRelease.ps1 -ProjectRoot .
 git status --short

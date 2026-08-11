@@ -3,12 +3,14 @@ from __future__ import annotations
 import hashlib
 import importlib
 import json
+import subprocess
 import sys
 import tempfile
 import unittest
 import zipfile
 import importlib.util
 from pathlib import Path
+from types import SimpleNamespace
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -117,6 +119,15 @@ def _install_module():
         sys.path.pop(0)
 
 
+def _probes_module():
+    sys.path.insert(0, str(INSTALLER_ROOT))
+    try:
+        sys.modules.pop("probes", None)
+        return importlib.import_module("probes")
+    finally:
+        sys.path.pop(0)
+
+
 def _runtime_manifest_generator():
     path = ROOT / "packaging" / "scripts" / "generate_runtime_manifests.py"
     spec = importlib.util.spec_from_file_location("runtime_manifest_generator_for_source_bootstrap_test", path)
@@ -141,7 +152,253 @@ def fixture_install_manifest() -> dict[str, object]:
     return value
 
 
+def fallback_fixture_manifest(*, include_probe_companions: bool = False) -> dict[str, object]:
+    value = fixture_manifest()
+    selected = {"caption-e621", "policy", "ocr-cpu", "ocr-gpu"}
+    value["components"] = [
+        component for component in value["components"]
+        if component["componentId"] in selected
+    ]
+    if include_probe_companions:
+        value["components"].extend(
+            [
+                {
+                    "componentId": "e621-tagger",
+                    "kind": "resource",
+                    "required": True,
+                    "targetRelativePath": "resource-library/e621-tagger",
+                    "variants": {"shared": _variant("e621-tagger-resource", "models/tagger.json")},
+                },
+                {
+                    "componentId": "quality-stack",
+                    "kind": "resource",
+                    "required": True,
+                    "targetRelativePath": "resource-library/quality-stack",
+                    "variants": {"shared": _variant("quality-stack-resource", "models/quality.json")},
+                },
+            ]
+        )
+    return value
+
+
 class SourceBootstrapInstallTests(unittest.TestCase):
+    def test_representative_probe_rejects_import_only_and_wrong_accelerator_evidence(self) -> None:
+        probes = _probes_module()
+        calls: list[tuple[object, dict[str, object]]] = []
+
+        def runner(command, **kwargs):
+            calls.append((command, kwargs))
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                '{"kind":"caption","provider":"CPUExecutionProvider","tags":["alpha","beta"]}\n',
+                "",
+            )
+
+        evidence = probes.run_json_probe(
+            Path("C:/fixture/python.exe"),
+            "print('fixture')",
+            (),
+            cwd=ROOT,
+            environment={"HTTP_PROXY": "http://proxy.invalid", "UNCHANGED": "value"},
+            runner=runner,
+        )
+
+        self.assertTrue(probes.validate_evidence("caption-e621", "cpu", evidence))
+        command, kwargs = calls[0]
+        self.assertIn("socket.socket.connect", command[4])
+        self.assertNotIn("HTTP_PROXY", kwargs["env"])
+        self.assertEqual("1", kwargs["env"]["HF_HUB_OFFLINE"])
+        self.assertEqual("1", kwargs["env"]["TRANSFORMERS_OFFLINE"])
+        self.assertEqual("value", kwargs["env"]["UNCHANGED"])
+
+        with self.assertRaisesRegex(probes.ProbeError, "import-only"):
+            probes.validate_evidence("caption-e621", "cpu", {"kind": "import", "module": "onnxruntime"})
+        with self.assertRaisesRegex(probes.ProbeError, "CPU"):
+            probes.validate_evidence(
+                "caption-e621",
+                "cpu",
+                {"kind": "caption", "provider": "CUDAExecutionProvider", "tags": ["alpha"]},
+            )
+        with self.assertRaisesRegex(probes.ProbeError, "GPU"):
+            probes.validate_evidence(
+                "ocr-gpu",
+                "cuda",
+                {"kind": "ocr", "device": "cpu", "resultCount": 1, "texts": []},
+            )
+
+    def test_default_probe_rejects_gpu_ocr_result_outside_cpu_tolerance(self) -> None:
+        probes = _probes_module()
+        with tempfile.TemporaryDirectory() as temporary_name:
+            root = Path(temporary_name)
+            targets: dict[str, Path] = {}
+            for component_id, runtime_id, variant in (
+                ("core", "core", "cpu"),
+                ("caption-e621", "caption-e621", "cpu"),
+                ("policy", "policy", "cpu"),
+                ("token-budget", "token-budget", "cpu"),
+                ("ocr-cpu", "ocr-paddle", "cpu"),
+                ("ocr-gpu", "ocr-paddle-gpu", "cuda"),
+            ):
+                target = root / "runtimes" / runtime_id
+                target.mkdir(parents=True)
+                targets[component_id] = target
+            for component_id in ("e621-tagger", "quality-stack", "qwen3-tokenizer", "ocr-models", "e621-indexes"):
+                target = root / "resource-library" / component_id
+                target.mkdir(parents=True)
+                manifest: dict[str, object] = {"fingerprint": "a" * 64}
+                if component_id == "qwen3-tokenizer":
+                    manifest.update({"resourceId": "tokenizer-qwen3-0.6b-anima-v1", "contextLimit": 32768})
+                (target / "resource.json").write_text(json.dumps(manifest), encoding="utf-8")
+                targets[component_id] = target
+            components = tuple(
+                SimpleNamespace(
+                    component=SimpleNamespace(component_id=component_id),
+                    variant=SimpleNamespace(name=variant),
+                )
+                for component_id, variant in (
+                    ("core", "cpu"),
+                    ("caption-e621", "cpu"),
+                    ("e621-tagger", "shared"),
+                    ("policy", "cpu"),
+                    ("quality-stack", "shared"),
+                    ("token-budget", "cpu"),
+                    ("qwen3-tokenizer", "shared"),
+                    ("ocr-cpu", "cpu"),
+                    ("ocr-gpu", "cuda"),
+                    ("ocr-models", "shared"),
+                    ("e621-indexes", "shared"),
+                )
+            )
+            observed_environments: list[dict[str, str]] = []
+
+            def runner(command, **kwargs):
+                observed_environments.append(kwargs["env"])
+                script = command[4]
+                self.assertIn("socket.socket.connect", script)
+                if 'runpy.run_module("anima_core"' in script:
+                    output = "anima-core-runtime-ok\n"
+                elif "anima_caption_worker.model" in script:
+                    output = '{"kind":"caption","provider":"CPUExecutionProvider","tags":["alpha"]}\n'
+                elif "Lse14Scorer" in script:
+                    output = '{"kind":"quality","device":"cpu","loaded":["clip","fusion","jtp3","waifu"],"score":1.0}\n'
+                elif "tokenizer_count_many" in script:
+                    output = '{"kind":"tokenizer","counts":[3,4]}\n'
+                elif "create_paddle_engine" in script:
+                    output = (
+                        '{"kind":"ocr","device":"cpu","resultCount":1,"texts":["offline"]}\n'
+                        if command[-1] == "cpu"
+                        else '{"kind":"ocr","device":"gpu:0","resultCount":1,"texts":["different"]}\n'
+                    )
+                elif "ResourceCatalog" in script:
+                    output = '{"kind":"indexes","resourceCount":2}\n'
+                else:
+                    self.fail(f"unexpected probe script: {script}")
+                return subprocess.CompletedProcess(command, 0, output, "")
+
+            results = probes.run_offline_probes(components, component_targets=targets, runner=runner)
+
+            self.assertTrue(results["ocr-cpu"])
+            self.assertFalse(results["ocr-gpu"])
+            self.assertTrue(all("HTTP_PROXY" not in environment for environment in observed_environments))
+            self.assertTrue(all(environment["HF_HUB_OFFLINE"] == "1" for environment in observed_environments))
+
+    def test_resource_descriptor_calculates_catalog_fingerprint_without_a_stored_field(self) -> None:
+        probes = _probes_module()
+        with tempfile.TemporaryDirectory() as temporary_name:
+            root = Path(temporary_name)
+            target = root / "resource-library" / "tagging-models" / "fixture"
+            target.mkdir(parents=True)
+            manifest = {
+                "schemaVersion": 1,
+                "kind": "tagging-model",
+                "resourceId": "caption-e621-eva02-large-full-v1",
+                "resourceVersion": "fixture-v1",
+                "profile": "e621",
+                "displayName": {"zh-CN": "fixture", "en": "fixture"},
+                "description": {"zh-CN": "fixture", "en": "fixture"},
+                "runtimeFormat": "e621-eva02-onnx-v1",
+                "entrypoints": {"model": "models/model.onnx"},
+                "files": {"models/model.onnx": {"sizeBytes": 1, "sha256": "a" * 64}},
+                "metadata": {"tagCount": 8783, "categories": ["general", "character", "species", "rating"]},
+                "documentation": [],
+            }
+            (target / "resource.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+            _install_root, _relative, fingerprint, _value = probes._resource_descriptor(target)
+
+            unsigned = {
+                "schemaVersion": manifest["schemaVersion"],
+                "kind": manifest["kind"],
+                "resourceId": manifest["resourceId"],
+                "resourceVersion": manifest["resourceVersion"],
+                "profile": manifest["profile"],
+                "runtimeFormat": manifest["runtimeFormat"],
+                "entrypoints": {"model": "models\\model.onnx"},
+                "files": {"models\\model.onnx": {"sizeBytes": 1, "sha256": "a" * 64}},
+                "metadata": manifest["metadata"],
+            }
+            expected = hashlib.sha256(
+                json.dumps(unsigned, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+            ).hexdigest()
+            self.assertEqual(expected, fingerprint)
+
+    def test_cuda_probe_group_failure_defers_its_resource_companion_until_cpu_retry(self) -> None:
+        install_module = _install_module()
+        pending = [
+            SimpleNamespace(component=SimpleNamespace(component_id=component_id), variant=SimpleNamespace(name=variant))
+            for component_id, variant in (
+                ("caption-e621", "cuda"),
+                ("e621-tagger", "shared"),
+                ("policy", "cuda"),
+                ("quality-stack", "shared"),
+                ("ocr-cpu", "cpu"),
+                ("ocr-gpu", "cuda"),
+            )
+        ]
+
+        fallback_ids, discarded_gpu, failures = install_module._classify_probe_failures(
+            pending,
+            {
+                "caption-e621": False,
+                "e621-tagger": False,
+                "policy": False,
+                "quality-stack": False,
+                "ocr-cpu": True,
+                "ocr-gpu": False,
+            },
+        )
+
+        self.assertEqual({"caption-e621", "policy"}, fallback_ids)
+        self.assertEqual({"ocr-gpu"}, discarded_gpu)
+        self.assertEqual([], failures)
+
+    def test_cpu_retry_keeps_group_resource_failure_fatal(self) -> None:
+        install_module = _install_module()
+        pending = [
+            SimpleNamespace(component=SimpleNamespace(component_id=component_id), variant=SimpleNamespace(name=variant))
+            for component_id, variant in (
+                ("caption-e621", "cpu"),
+                ("e621-tagger", "shared"),
+                ("policy", "cpu"),
+                ("quality-stack", "shared"),
+            )
+        ]
+
+        fallback_ids, discarded_gpu, failures = install_module._classify_probe_failures(
+            pending,
+            {
+                "caption-e621": True,
+                "e621-tagger": False,
+                "policy": True,
+                "quality-stack": False,
+            },
+        )
+
+        self.assertEqual(set(), fallback_ids)
+        self.assertEqual(set(), discarded_gpu)
+        self.assertEqual(["e621-tagger", "quality-stack"], failures)
+
     def test_nvidia_plan_has_cpu_and_gpu_ocr_but_cpu_plan_never_selects_cuda(self) -> None:
         assemble, manifest_module = _modules()
         manifest = manifest_module.load_manifest(fixture_manifest())
@@ -439,6 +696,131 @@ class SourceBootstrapInstallTests(unittest.TestCase):
             self.assertEqual((), second.installed_component_ids)
             self.assertEqual(("core", "fixture-resource"), second.skipped_component_ids)
             self.assertEqual([], calls)
+
+    def test_gpu_probe_failure_rebuilds_caption_policy_cpu_keeps_ocr_cpu(self) -> None:
+        install_module = _install_module()
+        _, manifest_module = _modules()
+        manifest = manifest_module.load_manifest(fallback_fixture_manifest(include_probe_companions=True))
+        with tempfile.TemporaryDirectory() as temporary_name:
+            root = Path(temporary_name)
+            base = root / "bootstrap-base"
+            (base / "Lib").mkdir(parents=True)
+            for filename in ("python.exe", "python311.dll", "python311._pth"):
+                (base / filename).write_bytes(filename.encode("ascii"))
+            for relative in (
+                "workers/caption/src/anima_caption_worker",
+                "workers/policy/src/anima_policy_worker",
+                "workers/ocr/src/anima_ocr_worker",
+            ):
+                source = root / relative
+                source.mkdir(parents=True)
+                (source / "__init__.py").write_text("VALUE = 'fixture'\n", encoding="ascii")
+            artifact_paths: dict[str, Path] = {}
+            for component in manifest.components:
+                for variant in component.variants.values():
+                    for artifact in variant.artifacts:
+                        wheel = root / f"{artifact.artifact_id}.whl"
+                        with zipfile.ZipFile(wheel, "w") as archive:
+                            archive.writestr(
+                                "Lib/site-packages/fixture_pkg/__init__.py",
+                                "VALUE = 1\n",
+                            )
+                        artifact_paths[artifact.artifact_id] = wheel
+            probe_calls: list[tuple[str, str]] = []
+
+            def fetch(artifact):
+                return artifact_paths[artifact.artifact_id]
+
+            def probe(item, target):
+                probe_calls.append((item.component.component_id, item.variant.name))
+                self.assertTrue(target.is_dir())
+                if item.component.component_id in {"e621-tagger", "quality-stack"}:
+                    return probe_calls.count((item.component.component_id, item.variant.name)) > 1
+                return (item.component.component_id, item.variant.name) not in {
+                    ("caption-e621", "cuda"),
+                    ("policy", "cuda"),
+                    ("ocr-gpu", "cuda"),
+                }
+
+            def write_runtime_manifest(item, layout):
+                target = layout.runtime_root / "manifests" / "runtimes" / f"{item.runtime_id}.json"
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(json.dumps({"runtime": {"runtimeId": item.runtime_id}}), encoding="utf-8")
+                return str(target.relative_to(layout.project_root)).replace("/", "\\")
+
+            result = install_module.install_project(
+                project_root=root,
+                source_root=root,
+                manifest=manifest,
+                accelerator="nvidia",
+                base_runtime=base,
+                fetch_artifact=fetch,
+                probe_component=probe,
+                write_runtime_manifest=write_runtime_manifest,
+                require_mandatory_e621=False,
+            )
+
+            state = json.loads(result.state_path.read_text(encoding="utf-8"))
+            self.assertEqual("cpu", state["components"]["caption-e621"]["variant"])
+            self.assertEqual("cpu", state["components"]["policy"]["variant"])
+            self.assertEqual("cpu", state["components"]["ocr-cpu"]["variant"])
+            self.assertNotIn("ocr-gpu", state["components"])
+            self.assertIn(("caption-e621", "cuda"), probe_calls)
+            self.assertIn(("caption-e621", "cpu"), probe_calls)
+            self.assertIn(("policy", "cuda"), probe_calls)
+            self.assertIn(("policy", "cpu"), probe_calls)
+            self.assertIn(("ocr-gpu", "cuda"), probe_calls)
+            self.assertGreaterEqual(probe_calls.count(("e621-tagger", "shared")), 2)
+            self.assertGreaterEqual(probe_calls.count(("quality-stack", "shared")), 2)
+            self.assertTrue(any("caption-e621 CUDA offline probe failed" in message for message in result.messages))
+            self.assertTrue(any("policy CUDA offline probe failed" in message for message in result.messages))
+            self.assertTrue(any("OCR GPU offline probe failed" in message for message in result.messages))
+            self.assertFalse(any("GPU runtime installed" in message for message in result.messages))
+
+    def test_required_quality_or_ocr_probe_failure_never_publishes_state(self) -> None:
+        install_module = _install_module()
+        _, manifest_module = _modules()
+        for failed_component in ("policy", "ocr-cpu"):
+            with self.subTest(component=failed_component), tempfile.TemporaryDirectory() as temporary_name:
+                root = Path(temporary_name)
+                base = root / "bootstrap-base"
+                (base / "Lib").mkdir(parents=True)
+                for filename in ("python.exe", "python311.dll", "python311._pth"):
+                    (base / filename).write_bytes(filename.encode("ascii"))
+                for relative in (
+                    "workers/caption/src/anima_caption_worker",
+                    "workers/policy/src/anima_policy_worker",
+                    "workers/ocr/src/anima_ocr_worker",
+                ):
+                    source = root / relative
+                    source.mkdir(parents=True)
+                    (source / "__init__.py").write_text("VALUE = 'fixture'\n", encoding="ascii")
+                manifest = manifest_module.load_manifest(fallback_fixture_manifest())
+                artifact_paths: dict[str, Path] = {}
+                for component in manifest.components:
+                    for variant in component.variants.values():
+                        for artifact in variant.artifacts:
+                            wheel = root / f"{artifact.artifact_id}.whl"
+                            with zipfile.ZipFile(wheel, "w") as archive:
+                                archive.writestr("Lib/site-packages/fixture_pkg/__init__.py", "VALUE = 1\n")
+                            artifact_paths[artifact.artifact_id] = wheel
+
+                with self.assertRaisesRegex(Exception, "offline probe failed"):
+                    install_module.install_project(
+                        project_root=root,
+                        source_root=root,
+                        manifest=manifest,
+                        accelerator="cpu",
+                        base_runtime=base,
+                        fetch_artifact=lambda artifact: artifact_paths[artifact.artifact_id],
+                        probe_component=lambda item, _target: item.component.component_id != failed_component,
+                        write_runtime_manifest=lambda item, layout: str(
+                            (layout.runtime_root / "manifests" / "runtimes" / f"{item.runtime_id}.json")
+                            .relative_to(layout.project_root)
+                        ).replace("/", "\\"),
+                        require_mandatory_e621=False,
+                    )
+                self.assertFalse((root / ".runtime-build" / "manifests" / "install-state.json").exists())
 
 
 if __name__ == "__main__":

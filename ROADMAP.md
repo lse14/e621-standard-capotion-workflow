@@ -33,8 +33,8 @@ SDK，即可得到可离线运行的 E621 打标、质量评分、Qwen3 tokenize
 - [-] R8: 实现 PowerShell 首阶段自举、日志、空间检查和基础资产获取。
 - [-] R9: 实现 Python 下载器、断点续传、哈希验证和事务发布。
 - [-] R10: 增加 Caption 和 Policy 的 CPU/CUDA 安装变体。
-- [ ] R11: 接入 E621、Qwen3、质量评分和 E621 索引资源下载。
-- [ ] R12: 接入默认 OCR CPU，以及 NVIDIA 机器的 OCR GPU 安装。
+- [-] R11: 接入 E621、Qwen3、质量评分和 E621 索引资源下载。
+- [-] R12: 接入默认 OCR CPU，以及 NVIDIA 机器的 OCR GPU 安装。
 - [-] R13: 接入幂等修复、缓存清理和失败恢复。
 - [ ] R14: 在无开发环境的 CPU 和 NVIDIA 干净机上完成端到端验收。
 - [ ] R15: 发布版本化基础资产和源码下载入口，并复验公开链接。
@@ -159,3 +159,13 @@ SDK，即可得到可离线运行的 E621 打标、质量评分、Qwen3 tokenize
 - [-] 2026-08-11：`bootstrap_install.ps1` 现在将已安全展开的项目内 CPython base 目录传入
   `install.py`。默认 probe 当前明确 fail-closed；尚未生产 `install-manifest.json`，也没有真实
   E621、质量、Qwen3 或 OCR artifact / resource JSON / 离线推理证据，不能标记 R11 或 R12 完成。
+- [x] 2026-08-12：Task 7 的 `probes.py` 以独立 `-B -I` 子进程清除代理、设置离线环境并封锁
+  socket；fixture 验证拒绝 import-only、错误 CPU/GPU 证据和 OCR CPU/GPU 文本不一致。CUDA
+  Caption/Policy 组失败会延后其共享 Tagger/质量资源判定，重建 CPU 后重新探测整组；资源仍失败时
+  不发布状态。OCR GPU 失败会丢弃 GPU staging，CPU OCR 保留。
+- [x] 2026-08-12：项目内嵌 CPython 3.11.15 执行 `test_source_bootstrap_*.py` 42 项、
+  `test_source_bootstrap_fixture.py` 1 项、`test_desktop_control.py` 6 项全部通过；
+  `py_compile packaging/installer/install.py packaging/installer/probes.py` 退出码为 0。
+- [!] 上述是 stub/fixture 与网络封锁行为的本地证据，不是实际 E621、Qwen3、完整质量栈或
+  PaddleOCR 模型加载/推理，也不是 NVIDIA、干净机、中文路径或公开下载链接验收；生产清单与
+  不可变 artifact inventory 仍缺失。
