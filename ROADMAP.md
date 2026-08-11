@@ -30,7 +30,7 @@ SDK，即可得到可离线运行的 E621 打标、质量评分、Qwen3 tokenize
 - [x] R5: 编写可执行实施计划，并按依赖顺序拆分任务。
 - [-] R6: 建立冻结的安装组件清单和清单验证器。
 - [ ] R7: 建立预编译 CPython 3.11.15 基础资产的构建、探测和发布流程。
-- [ ] R8: 实现 PowerShell 首阶段自举、日志、空间检查和基础资产获取。
+- [-] R8: 实现 PowerShell 首阶段自举、日志、空间检查和基础资产获取。
 - [-] R9: 实现 Python 下载器、断点续传、哈希验证和事务发布。
 - [ ] R10: 增加 Caption 和 Policy 的 CPU/CUDA 安装变体。
 - [ ] R11: 接入 E621、Qwen3、质量评分和 E621 索引资源下载。
@@ -88,6 +88,22 @@ SDK，即可得到可离线运行的 E621 打标、质量评分、Qwen3 tokenize
 - [!] 生产 `install-manifest.json` 仍不能冻结：CPython 基础资产和项目生成 E621
   索引必须使用实际公开 Release URL、大小和 SHA-256；尚未得到可验证的资产清单，
   不会填入猜测值。
+
+## R8 进行记录
+
+- [-] 2026-08-11：`Install-WebUI.bat` 已改为只调用 Windows 自带
+  `bootstrap_install.ps1`；新脚本检查 Windows x64、项目根/重解析点、项目内可写日志、
+  固定清单、NVIDIA 路线、`Get-Volume` 空间和 Range 续传的 CPython 基础资产下载，
+  只在项目内 `.runtime-build` 写入状态、缓存、staging 和日志。
+- [-] 2026-08-11：桌面控制脚本的 launcher 状态和 stdout/stderr 日志已迁入
+  `.runtime-build\\launcher`；`Install` 仅接受带 `install-state.json` 的完整安装，
+  不再提示或跳过 OCR。
+- [-] 2026-08-11：项目内嵌 CPython 3.11.15 运行
+  `test_source_bootstrap_*.py` 23 项和 `test_desktop_control.py` 6 项通过；其中真实
+  Windows PowerShell 临时目录测试验证缺少清单时非零退出并只创建项目内 UTF-8 日志。
+- [!] 生产清单、其固定 SHA-256 和 CPython Release 基础资产仍不存在，故 bootstrap
+  当前在任何下载前明确停止；未运行真实下载、解压、CPU/GPU 安装或干净机验证，不能
+  视为一键安装已经可用。
 
 ## R9 进行记录
 

@@ -1,7 +1,6 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)][ValidateSet('Install', 'Start', 'Stop')][string]$Action,
-    [ValidateSet('Prompt', 'None', 'Cpu', 'Gpu')][string]$OcrMode = 'Prompt',
     [ValidateRange(1024, 65535)][int]$Port = 8765
 )
 
@@ -15,10 +14,8 @@ $runtimeRoot = if (Test-Path -LiteralPath (Join-Path $projectRoot 'runtimes\core
 $corePython = Join-Path $runtimeRoot 'runtimes\core\python.exe'
 $frontendRoot = Join-Path $projectRoot 'frontend\dist'
 $resourceRoot = Join-Path $projectRoot 'resource-library'
-$launcherRoot = Join-Path $env:LOCALAPPDATA 'AnimaDatasetTool\launcher'
-if ($Action -ne 'Install' -and $OcrMode -ne 'Prompt') {
-    throw 'OcrMode may be used only with Action Install'
-}
+$launcherRoot = Join-Path $projectRoot '.runtime-build\launcher'
+$installStatePath = Join-Path $projectRoot '.runtime-build\manifests\install-state.json'
 
 function Get-InstallationStateId([string]$InstallRoot) {
     $bytes = [System.Text.Encoding]::UTF8.GetBytes($InstallRoot.ToLowerInvariant())
@@ -35,9 +32,19 @@ function Get-WebUiInstanceId([string]$InstallRoot, [int]$LocalPort) {
 $installationStateId = Get-InstallationStateId $projectRoot
 $instanceId = Get-WebUiInstanceId $projectRoot $Port
 $statePath = Join-Path $launcherRoot ("webui-{0}.json" -f $instanceId)
-$legacyStatePath = Join-Path $launcherRoot ("webui-{0}.json" -f $installationStateId)
 
 function Assert-ReleaseBundle {
+    if (-not (Test-Path -LiteralPath $installStatePath -PathType Leaf)) {
+        throw "Source bootstrap installation is incomplete: $installStatePath"
+    }
+    try {
+        $installState = Get-Content -LiteralPath $installStatePath -Raw -Encoding UTF8 | ConvertFrom-Json
+        if ([int]$installState.schemaVersion -ne 1 -or [string]::IsNullOrWhiteSpace([string]$installState.installManifestSha256)) {
+            throw 'invalid installation state'
+        }
+    } catch {
+        throw "Source bootstrap installation state is invalid: $installStatePath"
+    }
     if (-not (Test-Path -LiteralPath $corePython -PathType Leaf)) {
         throw "Distributed core runtime is missing: $corePython"
     }
@@ -52,36 +59,6 @@ function Assert-ReleaseBundle {
     }
     & $corePython -B -I -m anima_core --check-runtime
     if ($LASTEXITCODE -ne 0) { throw 'Distributed core runtime verification failed' }
-}
-
-function Resolve-OcrInstallMode {
-    if ($OcrMode -ne 'Prompt') { return $OcrMode }
-    $choice = Read-Host 'Optional OCR mode [None/Cpu/Gpu] (default None)'
-    if ([string]::IsNullOrWhiteSpace($choice)) { return 'None' }
-    switch ($choice.Trim().ToLowerInvariant()) {
-        'none' { return 'None' }
-        'cpu' { return 'Cpu' }
-        'gpu' { return 'Gpu' }
-        default { throw 'OCR mode must be None, Cpu, or Gpu' }
-    }
-}
-
-function Install-OptionalOcr {
-    $selected = Resolve-OcrInstallMode
-    if ($selected -eq 'None') {
-        Write-Output 'OCR mode None selected; existing complete OCR installation was not changed.'
-        return
-    }
-    $componentScript = Join-Path $PSScriptRoot 'ocr_component.py'
-    $modelRoot = Join-Path $projectRoot 'ocr-model-archives'
-    if (-not (Test-Path -LiteralPath $componentScript -PathType Leaf)) {
-        throw "Optional OCR installer is missing: $componentScript"
-    }
-    if (-not (Test-Path -LiteralPath $modelRoot -PathType Container)) {
-        throw "ocr_models_required: local model archive directory is missing: $modelRoot"
-    }
-    & $corePython -B -I $componentScript install --app-root $projectRoot --mode $selected.ToLowerInvariant() --model-root $modelRoot
-    if ($LASTEXITCODE -ne 0) { throw "Optional OCR $selected installation failed" }
 }
 
 function Get-Listener([int]$LocalPort) {
@@ -113,13 +90,6 @@ function Read-StateFile([string]$Path) {
 function Read-State {
     if (Test-Path -LiteralPath $statePath -PathType Leaf) {
         return (Read-StateFile $statePath)
-    }
-    if (-not (Test-Path -LiteralPath $legacyStatePath -PathType Leaf)) { return $null }
-    $legacyState = Read-StateFile $legacyStatePath
-    if ([string]$legacyState.installRoot -eq [string]$projectRoot -and [int]$legacyState.port -eq $Port) {
-        New-Item -ItemType Directory -Force -Path $launcherRoot | Out-Null
-        Move-Item -LiteralPath $legacyStatePath -Destination $statePath -Force
-        return $legacyState
     }
     return $null
 }
@@ -218,9 +188,8 @@ function Stop-WebUi {
 switch ($Action) {
     'Install' {
         Assert-ReleaseBundle
-        Install-OptionalOcr
         New-Item -ItemType Directory -Force -Path $launcherRoot | Out-Null
-        Write-Output 'Anima WebUI release bundle is ready.'
+        Write-Output 'Anima source bootstrap installation is ready.'
     }
     'Start' { Start-WebUi }
     'Stop' { Stop-WebUi }

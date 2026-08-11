@@ -104,3 +104,13 @@ CLIP 文件使用 OpenAI 官方 CDN：
   ZIP 穿越/链接/非普通条目/大小写碰撞，staging 仅位于项目内，且事务发布仅允许
   `.runtime-build\\runtimes` 或 `resource-library`，失败清理保留 `.partial` 与日志。
   真实组件幂等修复和端到端故障矩阵尚未实施，不能据此声称安装器已完整可用。
+- 2026-08-11：`Install-WebUI.bat` 现在只启动 Windows PowerShell 的
+  `packaging/scripts/bootstrap_install.ps1`；它使用项目内 `.runtime-build` 日志、缓存
+  和 staging，检查 Windows x64、路径、空间、清单身份和所有 bootstrap 重定向主机，
+  并在 CPython 可用后调用标准库 `installer/install.py`。`desktop_control.ps1` 的
+  launcher 文件已迁入 `.runtime-build\\launcher`，且只有完整 `install-state.json` 才允许
+  Install/Start。
+- 2026-08-11：项目内嵌 CPython 运行 23 项 source-bootstrap 单测和 6 项 desktop-control
+  单测均通过；PowerShell 临时目录实际执行证明缺清单时会写项目内 UTF-8 日志后非零退出。
+  `ExpectedInstallManifestSha256` 仍故意为空，因为没有经实际核对的生产清单和 CPython
+  Release 资产；当前 fail-closed 行为不是一次成功安装或公开链接验证的证据。

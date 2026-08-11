@@ -11,11 +11,14 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class DesktopControlTests(unittest.TestCase):
-    def test_bat_entrypoints_delegate_to_the_single_control_script(self) -> None:
-        for action, filename in (("Install", "Install-WebUI.bat"), ("Start", "Start-WebUI.bat"), ("Stop", "Stop-WebUI.bat")):
+    def test_start_and_stop_keep_the_control_script_while_install_uses_bootstrap(self) -> None:
+        for action, filename in (("Start", "Start-WebUI.bat"), ("Stop", "Stop-WebUI.bat")):
             contents = (ROOT / filename).read_text(encoding="ascii")
             self.assertIn("desktop_control.ps1", contents)
             self.assertIn(f"-Action {action}", contents)
+        install = (ROOT / "Install-WebUI.bat").read_text(encoding="ascii")
+        self.assertIn("bootstrap_install.ps1", install)
+        self.assertNotIn("desktop_control.ps1", install)
 
     def test_launcher_uses_only_the_embedded_core_and_safe_stop_protocol(self) -> None:
         script = (ROOT / "packaging" / "scripts" / "desktop_control.ps1").read_text(encoding="utf-8")
@@ -28,10 +31,12 @@ class DesktopControlTests(unittest.TestCase):
         self.assertIn('("webui-{0}.json" -f $instanceId)', script)
         self.assertIn('("webui-{0}.stdout.log" -f $instanceId)', script)
         self.assertIn('("webui-{0}.stderr.log" -f $instanceId)', script)
-        self.assertIn("$legacyState.port -eq $Port", script)
+        self.assertNotIn("legacyStatePath", script)
         self.assertIn("/api/application/shutdown", script)
         self.assertIn("Get-NetTCPConnection", script)
         self.assertIn("RNGCryptoServiceProvider", script)
+        self.assertIn("$launcherRoot = Join-Path $projectRoot '.runtime-build\\launcher'", script)
+        self.assertNotIn("LOCALAPPDATA", script)
         stop_body = script.partition("function Stop-WebUi")[2]
         self.assertNotIn("Stop-Process", stop_body)
         self.assertNotIn("taskkill", script.lower())
@@ -48,13 +53,17 @@ class DesktopControlTests(unittest.TestCase):
         self.assertIn('Start-Process "http://127.0.0.1:$Port/"', start_body)
         self.assertIn("(@(Get-Listener $Port).Count -eq 0)", stop_body)
 
-    def test_install_ocr_mode_is_explicit_and_never_defaults_to_cpu(self) -> None:
+    def test_install_requires_complete_state_and_never_prompts_for_ocr(self) -> None:
         script = (ROOT / "packaging" / "scripts" / "desktop_control.ps1").read_text(encoding="utf-8")
         batch = (ROOT / "Install-WebUI.bat").read_text(encoding="ascii")
-        self.assertIn("[ValidateSet('Prompt', 'None', 'Cpu', 'Gpu')][string]$OcrMode = 'Prompt'", script)
-        self.assertIn("$OcrMode -ne 'Prompt'", script)
-        self.assertIn("ocr_component.py", script)
-        self.assertIn("-OcrMode None^|Cpu^|Gpu", batch)
+        install_body = script.partition("'Install' {")[2].partition("'Start'")[0]
+        self.assertIn("install-state.json", script)
+        self.assertIn("Assert-ReleaseBundle", install_body)
+        self.assertNotIn("Read-Host", script)
+        self.assertNotIn("Install-OptionalOcr", script)
+        self.assertNotIn("ocr_component.py", script)
+        self.assertNotIn("OcrMode", script)
+        self.assertNotIn("OcrMode", batch)
 
     def test_control_script_parses_in_windows_powershell(self) -> None:
         command = (
