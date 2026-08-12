@@ -12,6 +12,7 @@ packaging/wheelhouse/**/*.partial
 
 # Local runtimes, toolchains, assembled trees, and test output.
 .runtime-build/
+.release-candidate/
 .toolchains/
 .playwright-cli/
 .claude/

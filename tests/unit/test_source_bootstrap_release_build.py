@@ -13,6 +13,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 REQUIREMENTS = ROOT / "packaging" / "requirements"
 BOOTSTRAP_BUILDER = ROOT / "packaging" / "scripts" / "build_bootstrap_runtime.ps1"
+BOOTSTRAP_ASSET_VERIFIER = ROOT / "packaging" / "scripts" / "Test-BootstrapRuntimeAsset.ps1"
 MANIFEST_BUILDER = ROOT / "packaging" / "scripts" / "build_install_manifest.py"
 
 
@@ -130,6 +131,72 @@ class SourceBootstrapReleaseBuildTests(unittest.TestCase):
             check=False,
         )
         self.assertEqual(0, completed.returncode, completed.stdout + completed.stderr)
+
+    def test_bootstrap_asset_verifier_rejects_tampering(self) -> None:
+        self.assertTrue(BOOTSTRAP_ASSET_VERIFIER.is_file(), "bootstrap asset verifier must exist")
+        base_runtime = Path(sys.executable).resolve().parent
+        self.assertTrue((base_runtime / "python311.dll").is_file(), "tests require the project-embedded CPython base")
+        test_root = ROOT / ".test-tmp"
+        test_root.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=test_root) as temporary_name:
+            temporary = Path(temporary_name)
+            asset = temporary / "cpython-3.11.15-win-amd64.zip"
+            provenance = temporary / "cpython-3.11.15-win-amd64.provenance.json"
+            source_commit = "a" * 40
+            built = subprocess.run(
+                [
+                    "powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(BOOTSTRAP_BUILDER),
+                    "-BaseRuntime", str(base_runtime),
+                    "-OutputZip", str(asset),
+                    "-ProvenanceOutput", str(provenance),
+                    "-SourceCommit", source_commit,
+                    "-ReleaseVersion", "source-bootstrap-test",
+                ],
+                cwd=ROOT,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(0, built.returncode, built.stdout + built.stderr)
+
+            verified = subprocess.run(
+                [
+                    "powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(BOOTSTRAP_ASSET_VERIFIER),
+                    "-ProjectRoot", str(ROOT),
+                    "-AssetZip", str(asset),
+                    "-Provenance", str(provenance),
+                    "-ExpectedSourceCommit", source_commit,
+                ],
+                cwd=ROOT,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(0, verified.returncode, verified.stdout + verified.stderr)
+
+            with asset.open("r+b") as target:
+                target.seek(-1, 2)
+                original = target.read(1)
+                target.seek(-1, 2)
+                target.write(bytes([original[0] ^ 0x01]))
+            tampered = subprocess.run(
+                [
+                    "powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(BOOTSTRAP_ASSET_VERIFIER),
+                    "-ProjectRoot", str(ROOT),
+                    "-AssetZip", str(asset),
+                    "-Provenance", str(provenance),
+                    "-ExpectedSourceCommit", source_commit,
+                ],
+                cwd=ROOT,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=False,
+            )
+            self.assertNotEqual(0, tampered.returncode)
+            self.assertIn("SHA-256", tampered.stdout + tampered.stderr)
 
     def test_manifest_builder_rejects_missing_artifact_identity_and_lock_mismatch(self) -> None:
         module = _load_manifest_builder()

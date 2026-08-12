@@ -97,6 +97,11 @@ CLIP 文件使用 OpenAI 官方 CDN：
   CPython 候选资产、候选/已发布 Release 身份分离、机器可读许可证证据账本和真实干净机
   验收运行器。该计划明确禁止以本机/fixture 伪装 CPU/NVIDIA 干净机成功，也禁止在没有用户
   明确授权时创建 GitHub Release 或上传任何资产。
+- 2026-08-12：维护端新增 `Test-BootstrapRuntimeAsset.ps1`；它独立核对候选 CPython ZIP
+  的 provenance、大小/SHA-256、builder 脚本 SHA-256、安全解压和离线标准库探测。实际候选
+  位于被忽略的 `.release-candidate\bootstrap`，当前一次验证得到 33,264,397 bytes 与 SHA-256
+  `f7a36991fc6ac035f7e3bd30fd8badd06d4309590323bedda2ec958aa0d17096`。这不是公开资产，
+  每次源码提交后须以新 HEAD 重建；未授权前不可写入生产 Release 身份或声明发布通过。
 - 当前独立 worktree 不含被忽略的 `.runtime-build`、`.toolchains`、`resource-library`
   或 `frontend/dist`。实施测试只能使用经验证的项目内嵌 CPython，不得改用系统 Python；
   该现状不是任何功能测试通过的证据。

@@ -9,6 +9,18 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+function Get-Sha256Hex([string]$Path) {
+    $stream = [System.IO.File]::Open($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read)
+    $algorithm = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        return [System.BitConverter]::ToString($algorithm.ComputeHash($stream)).Replace('-', '').ToLowerInvariant()
+    }
+    finally {
+        $algorithm.Dispose()
+        $stream.Dispose()
+    }
+}
+
 function Assert-NoReparseAncestor([string]$Path, [string]$Label) {
     $current = [System.IO.Path]::GetFullPath($Path)
     while ($true) {
@@ -103,8 +115,10 @@ $provenance = [ordered]@{
     releaseVersion = $ReleaseVersion
     sourceCommit = $SourceCommit
     pythonVersion = '3.11.15'
-    baseRuntimeSha256 = (Get-FileHash -LiteralPath $output -Algorithm SHA256).Hash.ToLowerInvariant()
-    buildScriptSha256 = (Get-FileHash -LiteralPath $PSCommandPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    assetFileName = [System.IO.Path]::GetFileName($output)
+    assetSizeBytes = (Get-Item -LiteralPath $output -Force).Length
+    assetSha256 = Get-Sha256Hex $output
+    buildScriptSha256 = Get-Sha256Hex $PSCommandPath
     offlineProbe = 'bootstrap-stdlib-ok'
 }
 $provenanceTemporary = "$provenanceOutput.part"
