@@ -142,7 +142,7 @@ try {
         if (-not (Test-Path -LiteralPath $path)) { throw "Bootstrap ZIP is missing required entry: $relative" }
     }
     $python = Join-Path $stage 'python.exe'
-    $probe = & $python -B -I -c "import ssl, sys, zipfile; assert sys.version_info[:2] == (3, 11); assert ssl.OPENSSL_VERSION; assert zipfile.is_zipfile is not None; print('bootstrap-stdlib-ok')"
+    $probe = & $python -B -I -c "import ssl, sys, zipfile; assert sys.version_info[:3] == (3, 11, 15); assert ssl.OPENSSL_VERSION; assert zipfile.is_zipfile is not None; print('bootstrap-stdlib-ok')"
     if ($LASTEXITCODE -ne 0 -or ($probe -join '') -notmatch 'bootstrap-stdlib-ok') {
         throw 'Bootstrap asset failed its offline standard-library probe'
     }

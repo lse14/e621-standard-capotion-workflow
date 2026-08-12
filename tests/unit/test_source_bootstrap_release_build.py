@@ -115,6 +115,7 @@ class SourceBootstrapReleaseBuildTests(unittest.TestCase):
         self.assertIn("python311.dll", source)
         self.assertIn("python311._pth", source)
         self.assertIn("-B -I -c", source)
+        self.assertIn("sys.version_info[:3] == (3, 11, 15)", source)
         self.assertIn("Add-Type -AssemblyName System.IO.Compression\n", source)
         self.assertIn("System.IO.Compression", source)
         self.assertNotIn("pip install", source.lower())

@@ -252,3 +252,6 @@ CLIP 文件使用 OpenAI 官方 CDN：
 - 2026-08-12：基础资产验证器的安全解压新增反斜杠路径归一化；项目内嵌 Python 实际运行的
   release-build 单测确认 `Lib\\..\\outside.txt` ZIP 条目在解压前失败。该修正不改变候选
   资产的本地-only/未发布状态。
+- 2026-08-12：基础资产 builder/verifier 的离线标准库 probe 已收紧为精确 CPython
+  `3.11.15`（而非仅 `3.11`）；release-build 单测 5 项通过。后续源码提交仍需重新生成
+  候选 ZIP/provenance，不能复用旧 commit 身份。

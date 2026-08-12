@@ -296,3 +296,6 @@ SDK，即可得到可离线运行的 E621 打标、质量评分、Qwen3 tokenize
   上传、未生成 Release URL，也未能作为生产 `release-artifacts.json` 身份。
 - [!] 候选 provenance 当前对应构建时 commit；每个后续源码 commit 必须重新生成候选并
   核验，只有用户授权上传后，从实际公开 Release 重新下载并核对的 ZIP 才可写入生产清单。
+- [x] 2026-08-12：基础资产 builder 与 verifier 的离线探测现在要求精确
+  `sys.version_info[:3] == (3, 11, 15)`，不再把同一 minor 版本的其他 CPython 补丁版
+  当作可发布基础资产；项目内嵌 CPython 的 release-build 单测 5 项通过。
