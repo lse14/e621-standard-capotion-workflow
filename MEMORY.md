@@ -19,6 +19,10 @@
 - OCR：NVIDIA 机器同时安装 CPU/GPU，无 NVIDIA 机器安装 CPU。
 - 文件策略：续传、大小和 SHA-256 校验、staging、离线探测、事务发布。
 - 清理策略：成功后不保留 wheelhouse、完整 staging 或构建缓存。
+- 2026-08-12：用户确认 OCR 模型不由安装器下载或镜像。安装器仍安装 OCR runtime；
+  新任务 OCR 默认关闭。用户手动启用 OCR 时，只有完整、哈希验证并离线探测通过的本地
+  模型资源可用；缺失时预检阻止任务并给出 `OCR_MODEL_DOWNLOAD.md` 与
+  `ocr-model-archives\\` 指引。基础安装成功后应自动启动 WebUI。
 
 ## 冻结模型身份
 
