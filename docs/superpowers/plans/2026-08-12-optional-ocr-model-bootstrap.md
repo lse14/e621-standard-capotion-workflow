@@ -19,6 +19,7 @@
 | `packaging/installer/install.py` | Completes base install and invokes local OCR import only with complete user archives. |
 | `packaging/scripts/ocr_resource.py` | Validates, stages, probes, and publishes user-provided model archives without rebuilding a runtime. |
 | `packaging/scripts/bootstrap_install.ps1` | Starts WebUI after installer success and prints the OCR download guide. |
+| `packaging/scripts/Validate-SourceBootstrapRelease.ps1` | Requires OCR runtimes but not a mirrored manual OCR model component. |
 | `core/src/anima_core/job_preflight.py` | Explains how an OCR-enabled task is blocked when the validated model is absent. |
 | `OCR_MODEL_DOWNLOAD.md` | Canonical official URLs, names, sizes, hashes, and the one directory users populate. |
 | `tests/unit/test_source_bootstrap_install.py` | Base-plan and probe-selection regression tests. |
@@ -67,7 +68,16 @@ MANDATORY_E621_COMPONENTS = frozenset({
 })
 
 if "ocr-models" in selected:
-    run_group(("ocr-cpu", "ocr-models"), ...)
+    run_group(
+        ("ocr-cpu", "ocr-models"),
+        lambda: _probe_ocr(
+            _target(component_targets, "ocr-cpu"),
+            _target(component_targets, "ocr-models"),
+            "cpu",
+            runner=runner,
+        ),
+        "ocr-cpu",
+    )
 else:
     results["ocr-cpu"] = None
 ```
@@ -106,12 +116,34 @@ git commit -m "feat: make OCR models a delayed bootstrap resource"
 
 ```python
 def test_complete_manual_archives_trigger_model_only_import_after_base_install(self) -> None:
-    result = install_project(..., import_optional_ocr_models=self._importer)
+    result = install_project(
+        project_root=self.root,
+        source_root=self.root,
+        manifest=self.manifest,
+        accelerator="cpu",
+        base_runtime=self.base_runtime,
+        fetch_artifact=self.fetch,
+        probe_component=self.probe,
+        write_runtime_manifest=self.write_runtime_manifest,
+        require_mandatory_e621=False,
+        import_optional_ocr_models=self._importer,
+    )
     self.assertEqual([self.root], self.importer_roots)
     self.assertIn("OCR model import completed", result.messages)
 
 def test_missing_manual_archives_leave_base_install_complete(self) -> None:
-    result = install_project(..., import_ocr_models=self._importer)
+    result = install_project(
+        project_root=self.root,
+        source_root=self.root,
+        manifest=self.manifest,
+        accelerator="cpu",
+        base_runtime=self.base_runtime,
+        fetch_artifact=self.fetch,
+        probe_component=self.probe,
+        write_runtime_manifest=self.write_runtime_manifest,
+        require_mandatory_e621=False,
+        import_optional_ocr_models=self._importer,
+    )
     self.assertEqual([], self.importer_roots)
     self.assertIn("OCR_MODEL_DOWNLOAD.md", "\n".join(result.messages))
 ```
@@ -180,6 +212,9 @@ git commit -m "feat: start WebUI after source bootstrap"
 - Modify: `OCR_MODEL_DOWNLOAD.md`
 - Modify: `README.md`
 - Modify: `RULES.md`
+- Modify: `models/README.md`
+- Modify: `docs/THIRD_PARTY_NOTICES.md`
+- Modify: `packaging/scripts/Validate-SourceBootstrapRelease.ps1`
 - Modify: `ROADMAP.md`
 - Modify: `MEMORY.md`
 
@@ -212,6 +247,9 @@ raise ResourceCatalogError(
 ```
 
 Update every user-facing document to state: default OCR off; no `-OcrMode`; archive directory is `ocr-model-archives`; the three official URL/name/size/SHA records remain unchanged; model absence blocks only OCR-enabled jobs. Mark the matching ROADMAP item `[-]` until production manifest and clean-machine evidence exist.
+Update the release validator so `ocr-cpu` remains mandatory but `ocr-models` is not a required
+automatic-download component. It must still fail closed for the absent production manifest and
+unverified model licenses.
 
 - [ ] **Step 4: Run green documentation and unit verification.**
 
@@ -225,7 +263,7 @@ Expected: exit code 0 and no whitespace errors.
 - [ ] **Step 5: Commit the completed task.**
 
 ```powershell
-git add core/src/anima_core/job_preflight.py tests/unit/test_job_preflight.py OCR_MODEL_DOWNLOAD.md README.md RULES.md ROADMAP.md MEMORY.md
+git add core/src/anima_core/job_preflight.py tests/unit/test_job_preflight.py OCR_MODEL_DOWNLOAD.md README.md RULES.md models/README.md docs/THIRD_PARTY_NOTICES.md packaging/scripts/Validate-SourceBootstrapRelease.ps1 ROADMAP.md MEMORY.md
 git commit -m "docs: document manual OCR model bootstrap"
 ```
 
