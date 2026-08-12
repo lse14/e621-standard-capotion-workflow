@@ -262,8 +262,19 @@ function Get-RequiredPeakBytes([object]$Manifest, [bool]$NvidiaAvailable) {
     $bootstrap = Get-RequiredProperty $Manifest 'bootstrap'
     $total = [Int64](Get-RequiredProperty $bootstrap 'peakBytes') + [Int64](Get-RequiredProperty (Get-RequiredProperty $bootstrap 'artifact') 'sizeBytes')
     foreach ($component in @((Get-RequiredProperty $Manifest 'components'))) {
+        if ([string]$component.componentId -eq 'ocr-models') { continue }
         $variants = Get-RequiredProperty $component 'variants'
-        $variantName = if ($NvidiaAvailable -and $null -ne $variants.PSObject.Properties['cuda']) { 'cuda' } else { 'cpu' }
+        $variantName = if ($NvidiaAvailable -and $null -ne $variants.PSObject.Properties['cuda']) {
+            'cuda'
+        } elseif ($null -ne $variants.PSObject.Properties['cpu']) {
+            'cpu'
+        } elseif ($null -ne $variants.PSObject.Properties['shared']) {
+            'shared'
+        } elseif (-not [bool]$component.required) {
+            continue
+        } else {
+            throw "Frozen install manifest has no usable variant: $($component.componentId)"
+        }
         $variant = Get-RequiredProperty $variants $variantName
         $total += [Int64](Get-RequiredProperty $variant 'peakBytes')
         foreach ($artifact in @((Get-RequiredProperty $variant 'artifacts'))) {
@@ -371,6 +382,14 @@ try {
     $installerExitCode = $LASTEXITCODE
     foreach ($line in @($output)) { Write-InstallLog ([string]$line) }
     if ($installerExitCode -ne 0) { throw "Standard-library installer failed with exit code $installerExitCode" }
+    $guidePath = Get-ProjectPath (Join-Path $script:projectRoot 'OCR_MODEL_DOWNLOAD.md')
+    if (-not (Test-Path -LiteralPath $guidePath -PathType Leaf)) { throw "OCR model download guide is missing: $guidePath" }
+    Write-InstallLog ("OCR model guide: {0}" -f $guidePath)
+    $desktopControl = Get-ProjectPath (Join-Path $script:projectRoot 'packaging\scripts\desktop_control.ps1')
+    if (-not (Test-Path -LiteralPath $desktopControl -PathType Leaf)) { throw "WebUI control script is missing: $desktopControl" }
+    Write-InstallLog 'Starting WebUI.'
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $desktopControl -Action Start
+    if ($LASTEXITCODE -ne 0) { throw "WebUI failed to start; see $script:logPath" }
     Clear-BootstrapSuccessArtifacts
     Write-InstallLog 'Source bootstrap completed successfully.'
 } catch {

@@ -238,3 +238,24 @@ SDK，即可得到可离线运行的 E621 打标、质量评分、Qwen3 tokenize
   而非零退出。这两个结果是已知门禁，不可记录为通过。
 - [!] R14/R15 仍未完成：没有无开发环境 CPU/NVIDIA 干净机、真实模型离线推理、已核对许可证、
   公开基础资产 URL 或 GitHub Release 复验，因此不 push、不创建 Release、不声称公开可用。
+
+## R13.1 进行记录
+
+- [x] 2026-08-12：基础 `installation_plan()` 即使面对未来清单中的可选
+  `ocr-models` 组件也会排除它；PowerShell 空间预算同步跳过该延迟资源和 CPU 路线不可用的
+  仅 CUDA 可选组件。基础状态写入后，只有三个归档文件都存在于项目根
+  `ocr-model-archives\` 时才导入 OCR 模型；缺失时基础安装保持完整并提示
+  `OCR_MODEL_DOWNLOAD.md`。
+- [x] 2026-08-12：模型专用导入复用归档哈希校验、安全 staging、离线 CPU probe 与资源事务
+  发布，但使用已经发布的 `.runtime-build\runtimes\ocr-paddle`，不重建 runtime、wheelhouse
+  或工具链。`bootstrap_install.ps1` 在安装器成功后记录绝对指南路径并调用
+  `desktop_control.ps1 -Action Start`；Start 非零时保留安装状态和日志并非零退出。
+- [x] 2026-08-12：使用项目内嵌 CPython
+  `E:\Desktop\Anima idg标准标注处理\.runtime-build\runtimes\core\python.exe` 实际执行
+  `test_source_bootstrap_install.py` 22 项、`test_source_bootstrap_powershell.py` 7 项、
+  `test_desktop_control.py` 6 项及模型专用导入回归 1 项，均通过；
+  `assemble.py`、`install.py`、`ocr_resource.py` 的 `py_compile` 退出码为 0。
+- [!] 当前 worktree 未包含被 Git 忽略的 `.runtime-build`，因此整个
+  `test_ocr_resource_scripts.py` 仍无法在此 worktree 运行其调用实际 embedded Core runtime 的
+  旧 CLI/wrapper 用例；本项只记录上述不依赖该缺失路径的定向回归，不把它表述为真实 OCR
+  模型推理或干净机验收。

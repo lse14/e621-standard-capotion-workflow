@@ -78,6 +78,34 @@ class SourceBootstrapPowerShellTests(unittest.TestCase):
         self.assertTrue(value["rejected"])
         self.assertTrue(value["trailingRejected"])
 
+    def test_bootstrap_peak_calculation_skips_delayed_and_unavailable_optional_components(self) -> None:
+        command = (
+            "$tokens=$null; $errors=$null; "
+            "$ast=[System.Management.Automation.Language.Parser]::ParseFile("
+            "(Resolve-Path 'packaging\\scripts\\bootstrap_install.ps1'),[ref]$tokens,[ref]$errors); "
+            "if ($errors.Count) { exit 1 }; "
+            "foreach ($name in @('Get-RequiredProperty','Get-RequiredPeakBytes')) { "
+            "$node=$ast.FindAll({ param($item) $item -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $item.Name -eq $name },$true) | Select-Object -First 1; "
+            "Invoke-Expression $node.Extent.Text }; "
+            "$manifest=[pscustomobject]@{bootstrap=[pscustomobject]@{peakBytes=1;artifact=[pscustomobject]@{sizeBytes=2}};components=@("
+            "[pscustomobject]@{componentId='core';required=$true;variants=[pscustomobject]@{cpu=[pscustomobject]@{peakBytes=3;artifacts=@([pscustomobject]@{sizeBytes=4})}}},"
+            "[pscustomobject]@{componentId='ocr-gpu';required=$false;variants=[pscustomobject]@{cuda=[pscustomobject]@{peakBytes=100;artifacts=@([pscustomobject]@{sizeBytes=200})}}},"
+            "[pscustomobject]@{componentId='fixture-shared';required=$true;variants=[pscustomobject]@{shared=[pscustomobject]@{peakBytes=5;artifacts=@([pscustomobject]@{sizeBytes=6})}}},"
+            "[pscustomobject]@{componentId='ocr-models';required=$false;variants=[pscustomobject]@{shared=[pscustomobject]@{peakBytes=300;artifacts=@([pscustomobject]@{sizeBytes=400})}}}"
+            ")}; Get-RequiredPeakBytes $manifest $false"
+        )
+        completed = subprocess.run(
+            ["powershell.exe", "-NoProfile", "-Command", command],
+            cwd=ROOT,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(0, completed.returncode, completed.stdout + completed.stderr)
+        self.assertEqual("21", completed.stdout.strip())
+
     def test_bootstrap_missing_manifest_fails_with_a_project_local_utf8_log(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_name:
             project_root = Path(temporary_name)
@@ -104,6 +132,14 @@ class SourceBootstrapPowerShellTests(unittest.TestCase):
         self.assertIn("function Clear-BootstrapSuccessArtifacts", script)
         self.assertIn("Clear-BootstrapSuccessArtifacts", script)
         self.assertIn("Join-Path $script:runtimeBuildRoot 'source-bootstrap'", script)
+
+    def test_bootstrap_starts_webui_and_mentions_the_manual_ocr_guide(self) -> None:
+        script = self._bootstrap_text()
+
+        self.assertIn("desktop_control.ps1", script)
+        self.assertIn("-Action Start", script)
+        self.assertIn("OCR_MODEL_DOWNLOAD.md", script)
+        self.assertNotIn("OcrMode", script)
 
 
 if __name__ == "__main__":

@@ -144,7 +144,7 @@ class OcrResourceScriptTests(unittest.TestCase):
         self.assertTrue(
             all(
                 Path(record["cachePath"]).parent
-                == self.root / ".runtime-build" / "ocr-import" / "downloads" / "models"
+                == self.root / "ocr-model-archives"
                 for record in plan["models"]
             )
         )
@@ -218,6 +218,48 @@ class OcrResourceScriptTests(unittest.TestCase):
         self.assertEqual(set(record["name"] for record in artifacts), set(resolved))
         package = ResourcePackage.load(self.root / "stage-library", staged / "resource.json", "ocr-model")
         package.verify_files(verify_hashes=True)
+
+    def test_model_only_import_uses_the_published_runtime_without_rebuilding_it(self) -> None:
+        module = self._module()
+        model_root = self.root / "ocr-model-archives"
+        model_root.mkdir()
+        runtime = self.root / ".runtime-build" / "runtimes" / module.RUNTIME_ID
+        runtime.mkdir(parents=True)
+        (runtime / "python.exe").write_bytes(b"fixture runtime")
+        staging_root = self.root / ".runtime-build" / "ocr-model-import" / "staging"
+        observed: dict[str, Path] = {}
+
+        def stage_model_resource(model_input, stage_library, *, artifacts):
+            observed["modelRoot"] = model_input
+            observed["stageLibrary"] = stage_library
+            package = stage_library / "ocr-models" / module.RESOURCE_ID
+            package.mkdir(parents=True)
+            return package
+
+        with (
+            mock.patch.object(module, "resolve_model_archives", return_value={}) as resolver,
+            mock.patch.object(module, "stage_model_resource", side_effect=stage_model_resource),
+            mock.patch.object(module, "_offline_probe", return_value={"device": "cpu"}) as probe,
+            mock.patch.object(module, "install_resource_package", return_value="installed") as publisher,
+            mock.patch.object(module, "_build_environment") as build_environment,
+            mock.patch.object(module, "_resolve_and_stage_runtime") as rebuild_runtime,
+        ):
+            result = module.import_local_model_resource(
+                self.root,
+                model_root=model_root,
+                staging_root=staging_root,
+                runtime=runtime,
+                artifacts=self.artifacts,
+            )
+
+        resolver.assert_called_once_with(model_root, artifacts=self.artifacts)
+        self.assertEqual(model_root, observed["modelRoot"])
+        self.assertEqual(runtime, probe.call_args.args[0])
+        self.assertEqual("installed", result["resource"])
+        publisher.assert_called_once()
+        build_environment.assert_not_called()
+        rebuild_runtime.assert_not_called()
+        self.assertFalse(staging_root.exists())
 
     def test_cli_apply_reports_missing_manual_models_without_a_traceback(self) -> None:
         completed = subprocess.run(
@@ -490,7 +532,13 @@ class OcrResourceScriptTests(unittest.TestCase):
         self.assertTrue(DOWNLOAD_GUIDE.is_file(), "missing manual OCR model download guide")
         guide = DOWNLOAD_GUIDE.read_text(encoding="utf-8")
         self.assertIn("ocr-model-archives", guide)
-        self.assertIn("Install-WebUI.bat -OcrMode None|Cpu|Gpu", guide)
+        self.assertIn("Install-WebUI.bat", guide)
+        self.assertNotIn("OcrMode", guide)
+        self.assertIn("paddle-model-ecology.bj.bcebos.com", guide)
+        self.assertIn("88340480", guide)
+        self.assertIn("22a33e0ba6a21425ea4192da03bf4395c9a0c67902bd924b7328fc859073045d", guide)
+        self.assertIn("d99be2ffd348943ab52876179168be4fb5b14f5f0812f2ae4c76d89ec2ea750a", guide)
+        self.assertIn("6171f69605215a85624d650e9079fa45f7c3eaf944296181bcc5395bf3ddc7f6", guide)
         for artifact in self.artifacts:
             self.assertIn(str(artifact["name"]), guide)
 

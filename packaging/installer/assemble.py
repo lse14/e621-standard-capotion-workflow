@@ -37,6 +37,8 @@ MANDATORY_E621_COMPONENTS = frozenset(
     }
 )
 
+_DELAYED_LOCAL_COMPONENT_IDS = frozenset({"ocr-models"})
+
 
 def validate_mandatory_e621_components(manifest: InstallManifest) -> None:
     present = {component.component_id for component in manifest.components}
@@ -477,6 +479,8 @@ def installation_plan(manifest: InstallManifest, *, accelerator: str) -> Install
         raise ManifestError("accelerator is invalid")
     selected: list[PlannedComponent] = []
     for component in manifest.components:
+        if component.component_id in _DELAYED_LOCAL_COMPONENT_IDS:
+            continue
         result = _select_variant(component, accelerator)
         if result is None:
             continue

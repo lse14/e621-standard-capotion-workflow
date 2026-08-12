@@ -33,6 +33,18 @@ from paths import ProjectLayout, cleanup_failure, cleanup_success, publish_direc
 ArtifactFetcher = Callable[[Artifact], Path]
 Probe = Callable[[PlannedComponent, Path], bool]
 RuntimeManifestWriter = Callable[[PlannedComponent, ProjectLayout], str]
+OptionalOcrModelImporter = Callable[[Path], object]
+
+_MANUAL_OCR_ARCHIVE_FILENAMES = (
+    "PP-OCRv5_server_det_infer.tar",
+    "PP-OCRv5_server_rec_infer.tar",
+    "PP-LCNet_x1_0_textline_ori_infer.tar",
+)
+_OCR_RESOURCE_RELATIVE = (
+    Path("resource-library")
+    / "ocr-models"
+    / "ocr-ppocrv5-server-paddle-v1"
+)
 
 _RUNTIME_SOURCES: dict[str, dict[str, str]] = {
     "core": {"anima_core": "core/src/anima_core", "anima_caption_format": "shared/anima_caption_format/anima_caption_format"},
@@ -129,6 +141,40 @@ def _write_runtime_manifest_at(source_root: Path, item: PlannedComponent, runtim
 def _default_runtime_manifest_writer(source_root: Path, item: PlannedComponent, layout: ProjectLayout) -> str:
     manifest_path = _write_runtime_manifest_at(source_root, item, layout.runtime_root)
     return str(manifest_path.relative_to(layout.project_root)).replace("/", "\\")
+
+
+def _load_ocr_resource_module(source_root: Path):
+    path = source_root / "packaging" / "scripts" / "ocr_resource.py"
+    spec = importlib.util.spec_from_file_location("_source_bootstrap_ocr_resource", path)
+    if spec is None or spec.loader is None:
+        raise AssemblyError(f"OCR model importer is unavailable: {path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    try:
+        spec.loader.exec_module(module)
+    except Exception:
+        sys.modules.pop(spec.name, None)
+        raise
+    return module
+
+
+def _complete_manual_ocr_archives(project_root: Path) -> bool:
+    archive_root = project_root / "ocr-model-archives"
+    return all((archive_root / filename).is_file() for filename in _MANUAL_OCR_ARCHIVE_FILENAMES)
+
+
+def _has_optional_ocr_model_input(project_root: Path) -> bool:
+    return (project_root / "ocr-model-archives").exists() or (
+        project_root / _OCR_RESOURCE_RELATIVE
+    ).exists()
+
+
+def _import_available_ocr_models(source_root: Path, project_root: Path) -> object | None:
+    module = _load_ocr_resource_module(source_root)
+    try:
+        return module.import_available_local_model_resource(project_root)
+    except Exception as exc:
+        raise AssemblyError(f"OCR model import failed: {exc}") from exc
 
 
 def _published_target(layout: ProjectLayout, item: PlannedComponent) -> Path:
@@ -271,6 +317,7 @@ def install_project(
     probe_component: Probe | None = None,
     write_runtime_manifest: RuntimeManifestWriter | None = None,
     require_mandatory_e621: bool = True,
+    import_optional_ocr_models: OptionalOcrModelImporter | None = None,
 ) -> InstallResult:
     """Assemble, probe, publish and record a manifest-selected installation."""
     layout = ProjectLayout.create(project_root)
@@ -409,6 +456,28 @@ def install_project(
         state = build_install_state(manifest, final_plan, records)
         state_path = write_install_state(layout, state)
         cleanup_success(layout)
+        if import_optional_ocr_models is not None:
+            if _complete_manual_ocr_archives(layout.project_root):
+                import_optional_ocr_models(layout.project_root)
+                messages.append("OCR model import completed")
+            else:
+                messages.append(
+                    "OCR models are not installed; see OCR_MODEL_DOWNLOAD.md and place the exact archives in ocr-model-archives"
+                )
+        elif _has_optional_ocr_model_input(layout.project_root):
+            optional_result = _import_available_ocr_models(source, layout.project_root)
+            if optional_result is None:
+                messages.append(
+                    "OCR models are not installed; see OCR_MODEL_DOWNLOAD.md and place the exact archives in ocr-model-archives"
+                )
+            elif isinstance(optional_result, Mapping) and optional_result.get("resource") == "idempotent":
+                messages.append("OCR model resource is already verified")
+            else:
+                messages.append("OCR model import completed")
+        else:
+            messages.append(
+                "OCR models are not installed; see OCR_MODEL_DOWNLOAD.md and place the exact archives in ocr-model-archives"
+            )
         return InstallResult(
             tuple(item.component.component_id for item in final_pending),
             tuple(item.component.component_id for item in skipped),

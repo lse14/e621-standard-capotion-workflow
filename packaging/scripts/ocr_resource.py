@@ -61,7 +61,8 @@ INFERENCE_SETTINGS = {
     "textDetLimitType": "max",
 }
 CACHE_ROOT_RELATIVE = Path(".runtime-build") / "ocr-import" / "v1"
-MANUAL_MODEL_ROOT_RELATIVE = Path(".runtime-build") / "ocr-import" / "downloads" / "models"
+MANUAL_MODEL_ROOT_RELATIVE = Path("ocr-model-archives")
+MODEL_ONLY_STAGING_RELATIVE = Path(".runtime-build") / "ocr-model-bootstrap" / "staging"
 CLEANABLE_CACHE_RELATIVES = (
     str(CACHE_ROOT_RELATIVE / "build-environment"),
     str(CACHE_ROOT_RELATIVE / "downloads"),
@@ -652,6 +653,48 @@ def resolve_model_archives(
     return archives
 
 
+def has_complete_model_archives(
+    project_root: str | Path,
+    *,
+    artifacts: Iterable[Mapping[str, object]] = MODEL_ARTIFACTS,
+) -> bool:
+    """Return true only when every expected manual archive filename is present."""
+    layout = project_layout(project_root)
+    root = layout.manual_model_downloads
+    if not root.exists():
+        return False
+    root = _model_root(root)
+    return all((root / str(record["filename"])).is_file() for record in _artifact_records(artifacts))
+
+
+def _manual_model_input_state(
+    project_root: str | Path,
+    *,
+    artifacts: Iterable[Mapping[str, object]] = MODEL_ARTIFACTS,
+) -> str:
+    layout = project_layout(project_root)
+    if layout.resource_target.exists():
+        package = ResourcePackage.load(
+            layout.resource_root,
+            layout.resource_target / "resource.json",
+            "ocr-model",
+        )
+        package.verify_files(verify_hashes=True)
+        return "idempotent"
+    root = layout.manual_model_downloads
+    if not root.exists():
+        return "missing"
+    root = _model_root(root)
+    if not any(root.iterdir()):
+        return "missing"
+    if not has_complete_model_archives(layout.project_root, artifacts=artifacts):
+        raise OcrResourceError(
+            "manual OCR model archives are incomplete or invalid; "
+            f"see {MODEL_DOWNLOAD_GUIDE} and place all exact archives in {MANUAL_MODEL_ROOT_RELATIVE}"
+        )
+    return "ready"
+
+
 def stage_model_resource(
     model_root: Path,
     stage_library: Path,
@@ -830,6 +873,59 @@ def _offline_probe(runtime: Path, library: Path, package: Path) -> dict[str, obj
     if value != expected:
         raise OcrResourceError("offline OCR runtime probe identity is invalid")
     return value
+
+
+def import_local_model_resource(
+    project_root: str | Path,
+    *,
+    model_root: str | Path,
+    staging_root: str | Path,
+    runtime: str | Path,
+    artifacts: Iterable[Mapping[str, object]] = MODEL_ARTIFACTS,
+) -> dict[str, object]:
+    """Import local OCR model archives using an already-published OCR CPU runtime."""
+    layout = project_layout(project_root)
+    root = layout.project_root
+    model_directory = assert_project_path(root, model_root)
+    stage_parent = assert_project_path(root, staging_root)
+    runtime_root = assert_project_path(root, runtime)
+    if not (runtime_root / "python.exe").is_file():
+        raise OcrResourceError("published OCR CPU runtime is unavailable for model verification")
+    resolve_model_archives(model_directory, artifacts=artifacts)
+    if stage_parent.exists():
+        _assert_tree_safe(stage_parent)
+    stage_parent.mkdir(parents=True, exist_ok=True)
+    stage = Path(tempfile.mkdtemp(prefix="import-", dir=stage_parent))
+    try:
+        library = stage / "resource-library"
+        resource = stage_model_resource(model_directory, library, artifacts=artifacts)
+        probe = _offline_probe(runtime_root, library, resource)
+        published = install_resource_package(root, resource)
+        return {"resource": published, "probe": probe}
+    finally:
+        if stage.exists():
+            _remove_safe_tree(root, stage)
+        if stage_parent.exists() and not any(stage_parent.iterdir()):
+            _remove_safe_tree(root, stage_parent)
+
+
+def import_available_local_model_resource(project_root: str | Path) -> dict[str, object] | None:
+    """Import supplied archives, or report an already verified package without rebuilding runtime."""
+    layout = project_layout(project_root)
+    state = _manual_model_input_state(layout.project_root)
+    if state == "missing":
+        return None
+    if state == "idempotent":
+        return {"resource": "idempotent"}
+    return import_local_model_resource(
+        layout.project_root,
+        model_root=layout.manual_model_downloads,
+        staging_root=assert_project_path(
+            layout.project_root,
+            layout.project_root / MODEL_ONLY_STAGING_RELATIVE,
+        ),
+        runtime=layout.runtime_target,
+    )
 
 
 def import_ocr_resource(project_root: str | Path, *, apply: bool = False) -> dict[str, object]:

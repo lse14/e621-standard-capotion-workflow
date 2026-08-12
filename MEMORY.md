@@ -206,3 +206,16 @@ CLIP 文件使用 OpenAI 官方 CDN：
   模板为 `https://static1.e621.net/data/db_export/{tags,tag_aliases,tag_implications,wiki_pages}.csv.gz`。
   E621 Terms <https://e621.net/terms_of_use> 第 4 节限制复制和再分发，已更新第三方声明；
   该索引提交不代表模型许可证或一键安装公开 Release 门禁已通过。
+- 2026-08-12：延迟 OCR 模型实现将归档固定为项目根 `ocr-model-archives\` 的三个 Paddle
+  文件。基础安装始终跳过任何清单中的 `ocr-models`，并在顶层 install state 落盘后才检查归档；
+  缺失时仅提示 `OCR_MODEL_DOWNLOAD.md`，齐全时调用模型专用导入。该导入以已发布的
+  `.runtime-build\runtimes\ocr-paddle` 作离线 CPU probe，不调用 `_build_environment`、
+  `_resolve_and_stage_runtime` 或 runtime/wheelhouse 发布。无效/不完整归档使模型导入失败，
+  但不删除已完成的基础状态，也不发布部分 OCR resource。
+- 2026-08-12：`bootstrap_install.ps1` 成功安装后记录绝对 `OCR_MODEL_DOWNLOAD.md` 路径并调用
+  `desktop_control.ps1 -Action Start`；Start 返回非零时 PowerShell 保留项目内安装状态/日志并退出
+  非零。PowerShell 组件选择和空间预算与 Python 对齐：CPU 可选的 CUDA-only 组件跳过，`shared`
+  变体仍可选择，`ocr-models` 始终跳过。
+- 2026-08-12：上述定向证据为项目内嵌 CPython 运行 source-bootstrap 22 项、PowerShell 7 项、
+  desktop-control 6 项、模型专用导入 1 项均通过，以及三个修改模块 `py_compile` 通过；这不等同
+  于真实 Paddle 模型、NVIDIA、干净机或公开 source ZIP 安装验证。

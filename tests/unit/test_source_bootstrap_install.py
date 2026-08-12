@@ -11,11 +11,17 @@ import zipfile
 import importlib.util
 from pathlib import Path
 from types import SimpleNamespace
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[2]
 INSTALLER_ROOT = ROOT / "packaging" / "installer"
 SOURCE_COMMIT = "2e85063591c266a14e2111da8ec6a3602139c61e"
+OCR_MODEL_ARCHIVE_FILENAMES = (
+    "PP-OCRv5_server_det_infer.tar",
+    "PP-OCRv5_server_rec_infer.tar",
+    "PP-LCNet_x1_0_textline_ori_infer.tar",
+)
 
 
 def _sha256(value: bytes) -> str:
@@ -138,7 +144,7 @@ def _runtime_manifest_generator():
     return module
 
 
-def fixture_install_manifest() -> dict[str, object]:
+def fixture_install_manifest(*, include_delayed_ocr_models: bool = False) -> dict[str, object]:
     value = fixture_manifest()
     core = next(component for component in value["components"] if component["componentId"] == "core")
     resource = {
@@ -149,6 +155,16 @@ def fixture_install_manifest() -> dict[str, object]:
         "variants": {"shared": _variant("fixture-resource-json", "resource.json")},
     }
     value["components"] = [core, resource]
+    if include_delayed_ocr_models:
+        value["components"].append(
+            {
+                "componentId": "ocr-models",
+                "kind": "resource",
+                "required": False,
+                "targetRelativePath": "resource-library/ocr-models/ocr-ppocrv5-server-paddle-v1",
+                "variants": {"shared": _variant("ocr-models-resource", "models/ocr-models.json")},
+            }
+        )
     return value
 
 
@@ -182,6 +198,49 @@ def fallback_fixture_manifest(*, include_probe_companions: bool = False) -> dict
 
 
 class SourceBootstrapInstallTests(unittest.TestCase):
+    def _prepare_fixture_install(
+        self,
+        root: Path,
+        *,
+        include_delayed_ocr_models: bool = False,
+    ):
+        install_module = _install_module()
+        _, manifest_module = _modules()
+        manifest = manifest_module.load_manifest(
+            fixture_install_manifest(include_delayed_ocr_models=include_delayed_ocr_models)
+        )
+        base = root / "bootstrap-base"
+        (base / "Lib").mkdir(parents=True)
+        for filename in ("python.exe", "python311.dll", "python311._pth"):
+            (base / filename).write_bytes(filename.encode("ascii"))
+        source = root / "core" / "src" / "anima_core"
+        source.mkdir(parents=True)
+        (source / "__init__.py").write_text("VALUE = 'core'\n", encoding="ascii")
+        (source / "__main__.py").write_text("VALUE = 'main'\n", encoding="ascii")
+        shared_source = root / "shared" / "anima_caption_format" / "anima_caption_format"
+        shared_source.mkdir(parents=True)
+        (shared_source / "__init__.py").write_text("VALUE = 'format'\n", encoding="ascii")
+        wheel = root / "core.whl"
+        with zipfile.ZipFile(wheel, "w") as archive:
+            archive.writestr("Lib/site-packages/fixture_pkg/__init__.py", "VALUE = 1\n")
+        resource = root / "resource.json"
+        resource.write_text('{"fixture":true}\n', encoding="utf-8")
+        paths = {"core-cpu-wheel": wheel, "fixture-resource-json": resource}
+
+        def fetch(artifact):
+            return paths[artifact.artifact_id]
+
+        def probe(item, target):
+            return target.is_dir() and item.component.component_id in {"core", "fixture-resource"}
+
+        def write_runtime_manifest(item, layout):
+            target = layout.runtime_root / "manifests" / "runtimes" / f"{item.runtime_id}.json"
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(json.dumps({"runtime": {"runtimeId": item.runtime_id}}), encoding="utf-8")
+            return str(target.relative_to(layout.project_root)).replace("/", "\\")
+
+        return install_module, manifest, base, fetch, probe, write_runtime_manifest
+
     def test_representative_probe_rejects_import_only_and_wrong_accelerator_evidence(self) -> None:
         probes = _probes_module()
         calls: list[tuple[object, dict[str, object]]] = []
@@ -412,6 +471,16 @@ class SourceBootstrapInstallTests(unittest.TestCase):
         self.assertNotIn("policy-cuda", cpu.lock_names)
         self.assertIn("caption-e621-cuda", nvidia.lock_names)
         self.assertIn("policy-cuda", nvidia.lock_names)
+
+    def test_installation_plan_excludes_optional_delayed_ocr_models(self) -> None:
+        assemble, manifest_module = _modules()
+        manifest = manifest_module.load_manifest(
+            fixture_install_manifest(include_delayed_ocr_models=True)
+        )
+
+        plan = assemble.installation_plan(manifest, accelerator="cpu")
+
+        self.assertNotIn("ocr-models", {item.component.component_id for item in plan.components})
 
     def test_production_plan_requires_all_mandatory_e621_components(self) -> None:
         assemble, manifest_module = _modules()
@@ -744,6 +813,136 @@ class SourceBootstrapInstallTests(unittest.TestCase):
             self.assertEqual((), second.installed_component_ids)
             self.assertEqual(("core", "fixture-resource"), second.skipped_component_ids)
             self.assertEqual([], calls)
+
+    def test_complete_manual_archives_import_after_base_state_publication(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_name:
+            root = Path(temporary_name)
+            install_module, manifest, base, fetch, probe, write_runtime_manifest = self._prepare_fixture_install(
+                root,
+                include_delayed_ocr_models=True,
+            )
+            archive_root = root / "ocr-model-archives"
+            archive_root.mkdir()
+            for filename in OCR_MODEL_ARCHIVE_FILENAMES:
+                (archive_root / filename).write_bytes(b"fixture archive")
+            importer_roots: list[Path] = []
+
+            def importer(project_root: Path):
+                self.assertTrue(
+                    (project_root / ".runtime-build" / "manifests" / "install-state.json").is_file()
+                )
+                importer_roots.append(project_root)
+                return {"resource": "installed"}
+
+            result = install_module.install_project(
+                project_root=root,
+                source_root=root,
+                manifest=manifest,
+                accelerator="cpu",
+                base_runtime=base,
+                fetch_artifact=fetch,
+                probe_component=probe,
+                write_runtime_manifest=write_runtime_manifest,
+                require_mandatory_e621=False,
+                import_optional_ocr_models=importer,
+            )
+
+            self.assertEqual([root], importer_roots)
+            self.assertIn("OCR model import completed", result.messages)
+            self.assertNotIn("ocr-models", result.installed_component_ids)
+
+    def test_missing_manual_archives_leave_base_install_complete(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_name:
+            root = Path(temporary_name)
+            install_module, manifest, base, fetch, probe, write_runtime_manifest = self._prepare_fixture_install(
+                root,
+                include_delayed_ocr_models=True,
+            )
+            importer_roots: list[Path] = []
+
+            def importer(project_root: Path):
+                importer_roots.append(project_root)
+                return {"resource": "installed"}
+
+            result = install_module.install_project(
+                project_root=root,
+                source_root=root,
+                manifest=manifest,
+                accelerator="cpu",
+                base_runtime=base,
+                fetch_artifact=fetch,
+                probe_component=probe,
+                write_runtime_manifest=write_runtime_manifest,
+                require_mandatory_e621=False,
+                import_optional_ocr_models=importer,
+            )
+
+            self.assertEqual([], importer_roots)
+            self.assertTrue(result.state_path.is_file())
+            self.assertIn("OCR_MODEL_DOWNLOAD.md", "\n".join(result.messages))
+
+    def test_base_install_without_manual_ocr_inputs_does_not_load_the_importer(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_name:
+            root = Path(temporary_name)
+            install_module, manifest, base, fetch, probe, write_runtime_manifest = self._prepare_fixture_install(root)
+
+            result = install_module.install_project(
+                project_root=root,
+                source_root=root,
+                manifest=manifest,
+                accelerator="cpu",
+                base_runtime=base,
+                fetch_artifact=fetch,
+                probe_component=probe,
+                write_runtime_manifest=write_runtime_manifest,
+                require_mandatory_e621=False,
+            )
+
+            self.assertTrue(result.state_path.is_file())
+            self.assertIn("OCR_MODEL_DOWNLOAD.md", "\n".join(result.messages))
+
+    def test_ocr_model_import_error_becomes_an_installer_error(self) -> None:
+        install_module = _install_module()
+        importer = SimpleNamespace(
+            import_available_local_model_resource=mock.Mock(
+                side_effect=RuntimeError("fixture archive hash mismatch")
+            )
+        )
+        with mock.patch.object(install_module, "_load_ocr_resource_module", return_value=importer):
+            with self.assertRaisesRegex(install_module.AssemblyError, "OCR model import failed"):
+                install_module._import_available_ocr_models(Path("source"), Path("project"))
+
+    def test_failed_ocr_model_import_preserves_published_base_state(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_name:
+            root = Path(temporary_name)
+            install_module, manifest, base, fetch, probe, write_runtime_manifest = self._prepare_fixture_install(root)
+            archive_root = root / "ocr-model-archives"
+            archive_root.mkdir()
+            (archive_root / OCR_MODEL_ARCHIVE_FILENAMES[0]).write_bytes(b"incomplete")
+            importer = SimpleNamespace(
+                import_available_local_model_resource=mock.Mock(
+                    side_effect=RuntimeError("fixture archive hash mismatch")
+                )
+            )
+
+            with mock.patch.object(install_module, "_load_ocr_resource_module", return_value=importer):
+                with self.assertRaisesRegex(install_module.AssemblyError, "OCR model import failed"):
+                    install_module.install_project(
+                        project_root=root,
+                        source_root=root,
+                        manifest=manifest,
+                        accelerator="cpu",
+                        base_runtime=base,
+                        fetch_artifact=fetch,
+                        probe_component=probe,
+                        write_runtime_manifest=write_runtime_manifest,
+                        require_mandatory_e621=False,
+                    )
+
+            self.assertTrue((root / ".runtime-build" / "manifests" / "install-state.json").is_file())
+            self.assertFalse(
+                (root / "resource-library" / "ocr-models" / "ocr-ppocrv5-server-paddle-v1").exists()
+            )
 
     def test_gpu_probe_failure_rebuilds_caption_policy_cpu_keeps_ocr_cpu(self) -> None:
         install_module = _install_module()
