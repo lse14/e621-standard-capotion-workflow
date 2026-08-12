@@ -32,6 +32,9 @@ CORE_PYTHON = ROOT / ".runtime-build" / "runtimes" / "core" / "python.exe"
 TOOLCHAIN_PYTHON = ROOT / ".toolchains" / "Python-3.11.15" / "PCbuild" / "amd64" / "python.exe"
 PROJECT_NPM = ROOT / ".toolchains" / "node-v24.18.0-win-x64" / "npm.cmd"
 README = ROOT / "README.md"
+RULES = ROOT / "RULES.md"
+MODELS_README = ROOT / "models" / "README.md"
+THIRD_PARTY_NOTICES = ROOT / "docs" / "THIRD_PARTY_NOTICES.md"
 PLAYWRIGHT_CONFIG = ROOT / "frontend" / "playwright.config.ts"
 E2E_MOCK_API = ROOT / "frontend" / "tests" / "e2e" / "mockApi.ts"
 E2E_GLOBAL_SETUP = ROOT / "frontend" / "tests" / "e2e" / "globalSetup.ts"
@@ -1325,29 +1328,21 @@ class ReadmeDocumentationTests(unittest.TestCase):
         for expected in required_text:
             self.assertIn(expected, contents)
 
-    def test_root_readme_documents_ocr_v1_preview_operations_and_boundaries(self) -> None:
+    def test_root_readme_documents_manual_ocr_model_bootstrap_boundaries(self) -> None:
         self.assertTrue(README.is_file(), f"missing root README: {README}")
         contents = README.read_text(encoding="utf-8")
         required_text = (
-            r".\Import-OcrResource.bat",
-            r".\Import-OcrResource.bat -Apply",
-            r".\Reset-OcrRuntime.bat",
-            r".\Clean-OcrArtifacts.bat",
             "OCR is disabled by default",
             "ocr_annotations/<relative-image-path-with-extension>.ocr.json",
-            "CPU-only",
-            "local-only",
-            "license unverified",
-            "Install-WebUI.bat -OcrMode None|Cpu|Gpu",
+            "OCR_MODEL_DOWNLOAD.md",
             "ocr-model-archives",
-            "GPU includes the CPU fallback",
-            "partial OCR state fails closed",
-            "offline probe",
-            "never downloads or redistributes model weights",
+            "only OCR-enabled jobs are blocked",
+            "offline CPU OCR probe",
         )
 
         for expected in required_text:
             self.assertIn(expected, contents)
+        self.assertNotIn("Install-WebUI.bat -OcrMode", contents)
 
     def test_ocr_model_download_documents_optional_install_contract(self) -> None:
         guide = ROOT / "OCR_MODEL_DOWNLOAD.md"
@@ -1355,14 +1350,10 @@ class ReadmeDocumentationTests(unittest.TestCase):
         contents = guide.read_text(encoding="utf-8")
         required_text = (
             "ocr-model-archives",
-            "Install-WebUI.bat -OcrMode None|Cpu|Gpu",
-            "None",
-            "Cpu",
-            "Gpu",
-            "GPU includes the CPU fallback",
             "local-only",
-            "license unverified",
-            "no automatic model download",
+            "OCR is disabled by default",
+            "only a job where OCR is explicitly enabled is blocked",
+            "Install-WebUI.bat",
             "88340480",
             "22a33e0ba6a21425ea4192da03bf4395c9a0c67902bd924b7328fc859073045d",
             "84869120",
@@ -1372,6 +1363,14 @@ class ReadmeDocumentationTests(unittest.TestCase):
         )
         for expected in required_text:
             self.assertIn(expected, contents)
+        self.assertNotIn("Install-WebUI.bat -OcrMode", contents)
+
+    def test_manual_ocr_model_contract_is_synced_across_user_documents(self) -> None:
+        for document in (README, RULES, MODELS_README, THIRD_PARTY_NOTICES):
+            self.assertTrue(document.is_file(), f"missing OCR documentation: {document}")
+            contents = document.read_text(encoding="utf-8")
+            self.assertIn("OCR_MODEL_DOWNLOAD.md", contents)
+            self.assertIn("ocr-model-archives", contents)
 
     def test_root_readme_documents_v6_token_budget_operations_and_review_boundaries(self) -> None:
         self.assertTrue(README.is_file(), f"missing root README: {README}")

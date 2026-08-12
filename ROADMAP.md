@@ -259,3 +259,13 @@ SDK，即可得到可离线运行的 E621 打标、质量评分、Qwen3 tokenize
   `test_ocr_resource_scripts.py` 仍无法在此 worktree 运行其调用实际 embedded Core runtime 的
   旧 CLI/wrapper 用例；本项只记录上述不依赖该缺失路径的定向回归，不把它表述为真实 OCR
   模型推理或干净机验收。
+- [x] 2026-08-12：OCR-enabled 任务在模型资源缺失或 `SHA-256 mismatch` 时统一抛出
+  `ocr_resource_install_required`，并明确指向 `OCR_MODEL_DOWNLOAD.md`、项目根
+  `ocr-model-archives` 和再次双击 `Install-WebUI.bat`。OCR 默认关闭，未启用 OCR 的
+  任务不因此阻断。
+- [x] 2026-08-12：发布校验继续要求 `ocr-cpu`，但不再要求手动归档的 `ocr-models`；
+  README、RULES、models README、第三方声明和下载指南同步说明三份官方归档、本地哈希
+  校验、离线 CPU probe、无 `-OcrMode` 参数和不镜像权重的边界。
+- [x] 2026-08-12：项目内嵌 CPython 定向运行 7 项 OCR 预检、8 项 source-bootstrap
+  PowerShell 和 4 项文档契约测试均通过；`git diff --check` 无空白错误。未运行真实 OCR
+  模型、NVIDIA、干净机或公开 source ZIP 安装，R14/R15 仍为发布门禁。

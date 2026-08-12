@@ -100,5 +100,14 @@ E621 Terms 和适用法律完成核对。
 | CLIP `ViT-L-14.pt` | OpenAI CDN SHA-256 `b8cca3fd41ae0c99ba7e8951adf17d267cdb84cd88be6f7c2e0eca1737a03836` | <https://openaipublic.azureedge.net/clip/models/b8cca3fd41ae0c99ba7e8951adf17d267cdb84cd88be6f7c2e0eca1737a03836/ViT-L-14.pt> | 待核对 |
 | PaddleOCR PP-OCRv5 Server | 固定模型归档由发布清单记录 | <https://www.paddleocr.ai/latest/en/version3.x/model_list.html> | 待核对 |
 
+## PaddleOCR 手动模型归档
+
+PaddleOCR 模型权重不包含在源码、缓存或项目 Release 中，也不会由
+`Install-WebUI.bat` 自动下载或镜像。OCR 默认关闭；只有 OCR-enabled job 在本地模型
+缺失或 SHA-256 不符时被预检阻止。用户必须使用
+[OCR_MODEL_DOWNLOAD.md](../OCR_MODEL_DOWNLOAD.md) 中不变的三个官方 URL、文件名、大小和
+SHA-256，将原始归档放入项目根 `ocr-model-archives`，再双击 `Install-WebUI.bat`。该入口
+没有 `-OcrMode` 参数，且只在项目内离线探测成功后发布 OCR 资源。
+
 在逐项核对许可证、版本、来源和适用限制前，不得把上述模型镜像到项目 Release；
 `Validate-SourceBootstrapRelease.ps1` 会拒绝包含 `license unverified` 状态的公开门禁。

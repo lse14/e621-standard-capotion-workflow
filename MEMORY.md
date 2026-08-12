@@ -219,3 +219,16 @@ CLIP 文件使用 OpenAI 官方 CDN：
 - 2026-08-12：上述定向证据为项目内嵌 CPython 运行 source-bootstrap 22 项、PowerShell 7 项、
   desktop-control 6 项、模型专用导入 1 项均通过，以及三个修改模块 `py_compile` 通过；这不等同
   于真实 Paddle 模型、NVIDIA、干净机或公开 source ZIP 安装验证。
+- 2026-08-12：OCR-enabled 任务的模型资源缺失或 `SHA-256 mismatch` 现在都产生
+  `ocr_resource_install_required`，包含 `OCR_MODEL_DOWNLOAD.md`、`ocr-model-archives` 和
+  再次双击 `Install-WebUI.bat` 的可执行指引。OCR 默认关闭，因此未启用 OCR 的任务不会因
+  模型缺失而失败。
+- 2026-08-12：`Validate-SourceBootstrapRelease.ps1` 保留 `ocr-cpu` 作为基础安装组件，
+  不再把用户手动提供的 `ocr-models` 当作自动下载必装项；README、RULES、models README、
+  第三方声明和下载指南均明确三份官方归档、本地哈希/离线 probe、无 `-OcrMode` 参数及
+  不下载、不镜像、不发布 OCR 权重的界限。
+- 2026-08-12：使用项目内嵌 Core Python 定向执行 7 项 OCR 预检、8 项 source-bootstrap
+  PowerShell、4 项文档契约测试全部通过，`git diff --check` 无错误。完整
+  `test_ocr_resource_scripts.py` 仍不能在当前链接 worktree 运行其引用本 worktree 缺失的
+  `.runtime-build` 的旧 CLI/wrapper 用例；未把这一限制或未运行的真实模型/GPU/干净机测试
+  表述为通过。

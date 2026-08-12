@@ -9,6 +9,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 BOOTSTRAP = ROOT / "packaging" / "scripts" / "bootstrap_install.ps1"
+RELEASE_VALIDATOR = ROOT / "packaging" / "scripts" / "Validate-SourceBootstrapRelease.ps1"
 
 
 class SourceBootstrapPowerShellTests(unittest.TestCase):
@@ -140,6 +141,13 @@ class SourceBootstrapPowerShellTests(unittest.TestCase):
         self.assertIn("-Action Start", script)
         self.assertIn("OCR_MODEL_DOWNLOAD.md", script)
         self.assertNotIn("OcrMode", script)
+
+    def test_release_validator_requires_ocr_runtime_but_not_manual_ocr_models(self) -> None:
+        self.assertTrue(RELEASE_VALIDATOR.is_file(), "source bootstrap release validator must exist")
+        script = RELEASE_VALIDATOR.read_text(encoding="utf-8")
+
+        self.assertIn("'ocr-cpu'", script)
+        self.assertNotIn("'ocr-models'", script)
 
 
 if __name__ == "__main__":

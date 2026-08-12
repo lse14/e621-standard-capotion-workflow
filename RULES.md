@@ -8,7 +8,10 @@
    或注册表。
 4. 运行时、资源、状态、日志和临时下载只能位于项目目录。
 5. 首发只安装 E621 工作流，不增加 Danbooru 支持。
-6. 质量评分和 OCR 均为默认安装项，不提供静默缺失后的降级成功。
+6. 质量评分和 OCR runtime 均为默认安装项。OCR 模型是用户提供的延迟本地归档，OCR
+   默认关闭；缺失或 SHA-256 不符只能阻止 OCR-enabled job，必须指向
+   `OCR_MODEL_DOWNLOAD.md`、`ocr-model-archives` 和再次双击 `Install-WebUI.bat`，不得
+   静默声称 OCR 可用。
 
 ## 组件选择
 
@@ -17,6 +20,9 @@
 3. NVIDIA 可用时同时安装 OCR CPU 和 OCR GPU，默认执行 GPU 并保留 CPU 回退。
 4. 无 NVIDIA 或驱动不兼容时只安装 OCR CPU，不下载无效 GPU 负载。
 5. 安装器不得安装 NVIDIA 驱动；只检测并报告现有驱动能力。
+6. `Install-WebUI.bat` 没有 `-OcrMode` 参数；三份 OCR 模型归档只能由用户按
+   `OCR_MODEL_DOWNLOAD.md` 的官方 URL、文件名、大小和 SHA-256 放入
+   `ocr-model-archives`。
 
 ## 下载与供应链
 
@@ -27,6 +33,8 @@
 5. CLIP `ViT-L-14.pt` 只使用已验证的 OpenAI 官方 CDN 文件。
 6. 下载重定向后的主机必须属于清单允许列表，最终内容仍须通过大小和哈希验证。
 7. 第三方来源、许可证入口和版本必须同步维护在 `docs/THIRD_PARTY_NOTICES.md`。
+8. OCR 模型权重不自动下载、镜像或纳入 Release；其手动本地导入仍须通过哈希、离线
+   探测和事务发布。
 
 ## 文件安全
 
@@ -45,7 +53,8 @@
 3. GPU 预检通过但实际离线推理失败时，Caption/Policy 自动改走 CPU；OCR 使用已安装 CPU 回退。
 4. 自动下载失败时输出官方直链、目标文件名、大小和 SHA-256。
 5. 安装成功后删除 wheel、完整缓存和 staging；失败时只保留可续传 `.partial` 与日志。
-6. 完整安装状态只能在全部必装组件探测通过后写入。
+6. 基础安装状态只能在全部基础必装组件探测通过后写入；OCR-enabled job 还必须有
+   通过 `OCR_MODEL_DOWNLOAD.md` 归档导入的 OCR 资源。
 
 ## 验证纪律
 

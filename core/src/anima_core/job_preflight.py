@@ -241,12 +241,11 @@ class JobPreparationService:
                     profile="shared",
                 )
             except ResourceCatalogError as exc:
-                if "SHA-256 mismatch" in str(exc):
-                    raise
                 raise ResourceCatalogError(
                     "ocr_resource_install_required: selected OCR resource "
-                    f"{OCR_MODEL_RESOURCE_ID} is unavailable in resource-library/ocr-models; "
-                    "install the validated resource before enabling OCR"
+                    f"{OCR_MODEL_RESOURCE_ID} is unavailable ({exc}); download the exact archives "
+                    "listed in OCR_MODEL_DOWNLOAD.md into <project-root>/ocr-model-archives and "
+                    "run Install-WebUI.bat"
                 ) from exc
             frozen_path = config.ocr.get("resourceManifestRelativePath")
             frozen_fingerprint = config.ocr.get("resourceFingerprint")

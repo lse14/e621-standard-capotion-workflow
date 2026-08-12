@@ -13,25 +13,22 @@
 | Replacement Index | `resource-library/replacement-indexes/` | E621 替换规则 |
 | Policy Model | `resource-library/dropout-models/` | 可选质量评分模型 |
 | Tokenizer | `resource-library/tokenizers/` | Token Budget 精确计数 |
-| OCR Model | `resource-library/ocr-models/` | 可选 PaddleOCR 资源 |
+| OCR Model | `resource-library/ocr-models/` | 用户提供并验证后的 PaddleOCR 资源 |
 
 资源包必须带有项目要求的 manifest、文件哈希和兼容性元数据。不要只复制单个
 权重文件，也不要绕过导入脚本的预览和校验。
 
-## 导入入口
+## OCR 手动归档
 
-```powershell
-# 先预览
-.\Import-TokenizerResources.bat
-.\Import-OcrResource.bat
+OCR is disabled by default。`Install-WebUI.bat` 会安装 OCR CPU runtime；检测到 NVIDIA
+时也会安装 GPU runtime，但不会自动下载或重新分发 OCR 模型权重。请按项目根
+[OCR_MODEL_DOWNLOAD.md](../OCR_MODEL_DOWNLOAD.md) 中固定的三个官方 URL、文件名、大小和
+SHA-256，将未解压归档放入 `ocr-model-archives`，再双击 `Install-WebUI.bat`。
 
-# 确认目标后再应用
-.\Import-TokenizerResources.bat -Apply
-.\Import-OcrResource.bat -Apply
-```
-
-GPU OCR 是显式可选项，使用独立安装、重置和清理脚本。基础源码发布不包含 CPU
-或 GPU OCR 权重。
+安装器会验证归档、在项目内 staging 运行 offline CPU OCR probe 并发布
+`resource-library/ocr-models/`。没有通过该验证时，基础 WebUI 仍可用，only OCR-enabled
+jobs are blocked。`Install-WebUI.bat` 没有 `-OcrMode` 参数；OCR 归档、正式 OCR 资源和
+runtime 都不应提交到 Git。
 
 ## 上游来源
 

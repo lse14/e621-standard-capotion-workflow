@@ -91,10 +91,17 @@ Toolkit、Visual Studio 或 Windows SDK。
 
 安装器会检测现有 NVIDIA 驱动：NVIDIA 可用时安装 Caption/Policy CUDA、OCR CPU 和
 OCR GPU，并默认使用 GPU、保留 CPU 回退；其他机器只安装 CPU 变体。E621 Tagger、
-Qwen3 0.6B tokenizer、LSE14/JTP-3/Waifu/CLIP 质量栈和 OCR 都是必装项，任一离线
-探测失败都会使安装失败，不会报告成功。
+Qwen3 0.6B tokenizer 和 LSE14/JTP-3/Waifu/CLIP 质量栈是基础安装必装项。OCR runtime
+也是基础安装项，但 OCR model weights 不会被自动下载或重新分发。
 
-成功后双击 `Start-WebUI.bat`，使用完毕后双击 `Stop-WebUI.bat`。默认端口为 `8765`，
+OCR is disabled by default。将三个官方 Paddle 归档原样放入项目根
+`ocr-model-archives` 后，再双击 `Install-WebUI.bat`；归档名称、官方 URL、大小和
+SHA-256 见 [OCR_MODEL_DOWNLOAD.md](OCR_MODEL_DOWNLOAD.md)。基础 WebUI 可以在没有
+OCR 模型时启动，only OCR-enabled jobs are blocked，直到安装器验证归档并完成 offline
+CPU OCR probe。该入口没有 `-OcrMode` 参数。
+
+`Install-WebUI.bat` 成功后会自动启动 WebUI；之后可双击 `Start-WebUI.bat` 再次启动，
+使用完毕后双击 `Stop-WebUI.bat`。默认端口为 `8765`，
 启动成功后会打开 `http://127.0.0.1:8765/`。日志位于 `.runtime-build\logs`；下载失败时
 安装窗口会打印官方直链、目标文件名、大小和 SHA-256，用户放入指定缓存后可再次双击继续。
 
@@ -117,7 +124,9 @@ resource-library/（已提交的 E621 分类/Count 与替换索引除外）
 - 第三方代码与上游资源说明：见
   [docs/THIRD_PARTY_NOTICES.md](docs/THIRD_PARTY_NOTICES.md)。
 
-一键安装只从冻结清单中的上游 HTTPS URL 下载并校验模型，不把模型权重提交到 Git。
+一键安装只从冻结清单中的上游 HTTPS URL 下载并校验自动安装的模型，不把模型权重提交
+到 Git。OCR model weights 是例外：它们只按 `OCR_MODEL_DOWNLOAD.md` 由用户本地下载，
+安装器不自动下载或镜像。
 源码目标电脑不会运行 npm，`frontend/dist` 已随源码提供。发布前必须通过
 `Validate-SourceBootstrapRelease.ps1`：生产清单、基础 Python Release 身份、前端产物和
 第三方许可证任一缺失或未核对都会阻止发布。Danbooru 不在首发支持范围，也不会回退到
@@ -137,7 +146,7 @@ E621 资源。
 - `Full`：在 Fast 基础上增加前端构建及已安装 OCR 的集成检查。
 - `Release`：增加发布树漂移、Playwright E2E 和资源校验。
 
-缺少项目内 Playwright Chromium、正式资源或必装 OCR 组件时，对应检查不能视为
+缺少项目内 Playwright Chromium、正式资源，或 OCR-enabled job 所需的已验证 OCR 模型时，对应检查不能视为
 已经验证。
 
 ### 项目内工具链
@@ -167,11 +176,17 @@ E621 资源。
 
 ## OCR 资源边界
 
-OCR 是一键安装的必装组件。CPU runtime 始终存在；检测到可用 NVIDIA 驱动时还会安装
-GPU runtime，默认执行 GPU 并保留 CPU 回退。OCR 结果位于
-`ocr_annotations/<relative-image-path-with-extension>.ocr.json`。partial OCR state fails
-closed，安装后的 offline probe 不得访问网络。当前模型许可证仍是公开 Release 门禁；在
-许可证未核对前，安装器不会把任何开发快照描述为可公开发布的一键安装版本。
+OCR CPU runtime 始终属于基础安装；检测到可用 NVIDIA 驱动时还会安装 GPU runtime，默认
+执行 GPU 并保留 CPU 回退。OCR is disabled by default，OCR 结果位于
+`ocr_annotations/<relative-image-path-with-extension>.ocr.json`。
+
+模型归档不是源码、缓存或 Release 负载。请使用
+[OCR_MODEL_DOWNLOAD.md](OCR_MODEL_DOWNLOAD.md) 中不变的三个官方 URL、文件名、大小和
+SHA-256，将原始归档放到 `ocr-model-archives`，再双击 `Install-WebUI.bat`。归档缺失、
+损坏或 SHA-256 不符时，基础 WebUI 仍可用，但 only OCR-enabled jobs are blocked；安装器
+会在项目内安全 staging、运行 offline CPU OCR probe 后才发布资源。当前模型许可证仍是
+公开 Release 门禁；在许可证未核对前，安装器不会把任何开发快照描述为可公开发布的一键
+安装版本。
 
 ## Token Budget 边界
 

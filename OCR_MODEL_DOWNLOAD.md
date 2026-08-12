@@ -3,7 +3,8 @@
 `Install-WebUI.bat` installs the WebUI and OCR runtimes, but it does not download
 or redistribute OCR model weights. OCR is disabled by default. The WebUI can be
 used without these files; only a job where OCR is explicitly enabled is blocked
-until the local OCR resource passes verification.
+until the local OCR resource passes verification. `Install-WebUI.bat` has no
+`-OcrMode` parameter.
 
 Download the following three files from their official Paddle HTTPS URLs. Do not
 rename, unpack, or edit them. Create `ocr-model-archives` in the project root and
@@ -21,6 +22,10 @@ against the already installed project-local runtime, and publishes the OCR resou
 only after that probe succeeds. It does not rebuild the OCR runtime or download
 model files. Incomplete, renamed, corrupt, or hash-mismatched archives do not
 publish a partial OCR resource.
+
+The same guide is shown when an OCR-enabled job finds a missing or hash-mismatched
+resource. Replace the affected archive in `ocr-model-archives` and double-click
+`Install-WebUI.bat`; jobs with OCR disabled remain available.
 
 These models remain local-only. Their upstream terms and license status are not a
 permission to mirror them in a project Release; see

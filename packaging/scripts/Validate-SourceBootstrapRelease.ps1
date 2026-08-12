@@ -100,7 +100,7 @@ function Assert-Manifest([object]$Manifest) {
     [void](Assert-SafeRelative ([string](Get-RequiredProperty $bootstrap 'entryRelativePath' 'bootstrap')) 'bootstrap entryRelativePath')
     if ([Int64](Get-RequiredProperty $bootstrap 'peakBytes' 'bootstrap') -le 0) { Stop-ReleaseGate 'bootstrap peakBytes is invalid' }
 
-    $mandatory = @('core', 'caption-e621', 'classify-e621', 'replace-e621', 'nl', 'policy', 'export', 'token-budget', 'ocr-cpu', 'e621-indexes', 'e621-tagger', 'qwen3-tokenizer', 'quality-stack', 'ocr-models')
+    $mandatory = @('core', 'caption-e621', 'classify-e621', 'replace-e621', 'nl', 'policy', 'export', 'token-budget', 'ocr-cpu', 'e621-indexes', 'e621-tagger', 'qwen3-tokenizer', 'quality-stack')
     $components = @($Manifest.components)
     if ($components.Count -eq 0) { Stop-ReleaseGate 'install manifest has no components' }
     $ids = @{}

@@ -515,7 +515,10 @@ class JobPreflightTests(unittest.TestCase):
             catalog, _ = _write_test_resource_library(root, include_ocr=False)
             service = JobPreparationService(root / "state.db", resource_catalog=catalog)
             try:
-                with self.assertRaisesRegex(JobPreflightError, "ocr_resource_install_required"):
+                with self.assertRaisesRegex(
+                    JobPreflightError,
+                    r"ocr_resource_install_required.*OCR_MODEL_DOWNLOAD\.md.*ocr-model-archives",
+                ):
                     service.preflight(self._ocr_config(source, enabled=True))
             finally:
                 service.close()
@@ -556,7 +559,10 @@ class JobPreflightTests(unittest.TestCase):
             target.write_bytes(b"rec-paramx")
             tampered_service = JobPreparationService(root / "tampered.db", resource_catalog=catalog)
             try:
-                with self.assertRaisesRegex(JobPreflightError, "SHA-256 mismatch"):
+                with self.assertRaisesRegex(
+                    JobPreflightError,
+                    r"ocr_resource_install_required.*SHA-256 mismatch.*OCR_MODEL_DOWNLOAD\.md.*ocr-model-archives",
+                ):
                     tampered_service.preflight(self._ocr_config(source, enabled=True))
             finally:
                 tampered_service.close()
