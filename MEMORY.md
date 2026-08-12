@@ -232,3 +232,11 @@ CLIP 文件使用 OpenAI 官方 CDN：
   `test_ocr_resource_scripts.py` 仍不能在当前链接 worktree 运行其引用本 worktree 缺失的
   `.runtime-build` 的旧 CLI/wrapper 用例；未把这一限制或未运行的真实模型/GPU/干净机测试
   表述为通过。
+- 2026-08-12：`git merge-base --is-ancestor main HEAD` 返回成功；当前分支只跟踪两套
+  E621 索引包的六个清单约束文件，不含模型权重、runtime、OCR archive 或其他资源库内容。
+- 2026-08-12：仅使用项目内嵌
+  `E:\Desktop\Anima idg标准标注处理\.runtime-build\runtimes\core\python.exe` 重新运行
+  source-bootstrap 54 项、desktop-control 6 项、source-bootstrap fixture 2 项，全部通过。
+  `Validate-SourceBootstrapRelease.ps1 -ProjectRoot .` 以 `install-manifest.json is missing`
+  退出 1，符合预期 fail-closed 行为；生产 manifest、公开基础资产/Release 身份、许可证闭环、
+  真实 OCR 模型、CPU/NVIDIA 干净机和公开 source ZIP 验收仍未完成，不能声称可公开一键安装。

@@ -269,3 +269,13 @@ SDK，即可得到可离线运行的 E621 打标、质量评分、Qwen3 tokenize
 - [x] 2026-08-12：项目内嵌 CPython 定向运行 7 项 OCR 预检、8 项 source-bootstrap
   PowerShell 和 4 项文档契约测试均通过；`git diff --check` 无空白错误。未运行真实 OCR
   模型、NVIDIA、干净机或公开 source ZIP 安装，R14/R15 仍为发布门禁。
+- [x] 2026-08-12：`main` 是当前 `codex/source-bootstrap-installer` 分支的祖先；Git
+  只跟踪 E621 分类索引的 `resource.json`、词典、Count SQLite，以及替换索引的
+  `resource.json`、CSV 和说明书，没有跟踪模型权重、runtime 或 OCR 归档。
+- [x] 2026-08-12：只使用项目内嵌
+  `E:\Desktop\Anima idg标准标注处理\.runtime-build\runtimes\core\python.exe` 新鲜运行
+  source-bootstrap 单元测试 54 项、desktop-control 单元测试 6 项和 source-bootstrap
+  fixture 集成测试 2 项，均通过。
+- [!] 2026-08-12：`Validate-SourceBootstrapRelease.ps1 -ProjectRoot .` 如预期以
+  `Source-bootstrap release gate failed: install-manifest.json is missing` 退出 1。它是
+  生产清单/Release 元数据缺失的 fail-closed 发布门禁，不是安装成功证据；R14/R15 仍未完成。
