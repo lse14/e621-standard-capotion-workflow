@@ -93,6 +93,10 @@ CLIP 文件使用 OpenAI 官方 CDN：
   `docs/superpowers/plans/2026-08-11-source-bootstrap-installer.md`；它按 TDD 拆分为
   清单、下载、路径/事务、PowerShell 自举、基础资产/CPU-CUDA 锁、组装、离线探测、
   故障矩阵与最终复核。
+- 2026-08-12：同一计划已追加 Release readiness continuation（Task 10-14）：本地可验证
+  CPython 候选资产、候选/已发布 Release 身份分离、机器可读许可证证据账本和真实干净机
+  验收运行器。该计划明确禁止以本机/fixture 伪装 CPU/NVIDIA 干净机成功，也禁止在没有用户
+  明确授权时创建 GitHub Release 或上传任何资产。
 - 当前独立 worktree 不含被忽略的 `.runtime-build`、`.toolchains`、`resource-library`
   或 `frontend/dist`。实施测试只能使用经验证的项目内嵌 CPython，不得改用系统 Python；
   该现状不是任何功能测试通过的证据。

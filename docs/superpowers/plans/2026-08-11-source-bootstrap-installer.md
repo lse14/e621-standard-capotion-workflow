@@ -623,3 +623,319 @@ Report branch, commits, changed modules, tests, run method and no-server status.
 - Placeholder scan: each task has files, RED, concrete behavior, green command, record update and commit.
 - Consistency: artifact fields, IDs, state, variants and probes are fixed across tasks.
 - Scope: no Danbooru feature or unrelated Core/worker refactor.
+
+---
+
+## Release Readiness Continuation (2026-08-12)
+
+**Goal:** Turn the existing fail-closed installer into a locally auditable release candidate: build a minimal CPython bootstrap asset, make production inventory/release identity evidence explicit, collect license facts without claiming legal approval that does not exist, and provide a real-machine acceptance runner that cannot mislabel a developer host as clean.
+
+**Boundary:** This continuation does not create a GitHub Release, upload an asset, mirror model weights, change system software, or claim CPU/NVIDIA clean-machine success until those external actions and machines exist. OCR model archives remain user-provided local-only artifacts.
+
+### Task 10: Make bootstrap asset provenance reproducible and independently verifiable
+
+**Files:**
+- Modify: `packaging/scripts/build_bootstrap_runtime.ps1`
+- Create: `packaging/scripts/Test-BootstrapRuntimeAsset.ps1`
+- Modify: `tests/unit/test_source_bootstrap_release_build.py`
+- Modify: `ROADMAP.md`
+- Modify: `MEMORY.md`
+
+- [ ] **Step 1: Add a failing asset-verifier test.**
+
+Add a test which builds a tiny CPython-shaped fixture tree in a temporary directory, invokes the builder, then invokes the verifier. The verifier must reject a ZIP whose bytes no longer match provenance and a provenance record whose `sourceCommit`, `pythonVersion`, `buildScriptSha256`, or `offlineProbe` is malformed.
+
+```python
+completed = subprocess.run(
+    ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(ASSET_VERIFIER),
+     "-AssetZip", str(asset_zip), "-Provenance", str(provenance),
+     "-ExpectedSourceCommit", "a" * 40],
+    cwd=ROOT, text=True, capture_output=True, check=False,
+)
+self.assertEqual(0, completed.returncode, completed.stdout + completed.stderr)
+asset_zip.write_bytes(asset_zip.read_bytes() + b"tamper")
+self.assertNotEqual(0, rerun.returncode)
+```
+
+- [ ] **Step 2: Run RED.**
+
+```powershell
+& $env:ANIMA_SOURCE_BOOTSTRAP_TEST_PYTHON -B -I -m unittest tests.unit.test_source_bootstrap_release_build.SourceBootstrapReleaseBuildTests.test_bootstrap_asset_verifier_rejects_tampering -v
+```
+
+Expected: failure because `Test-BootstrapRuntimeAsset.ps1` does not exist.
+
+- [ ] **Step 3: Implement the minimal verifier and tighten provenance.**
+
+Make the builder record only the deterministic ZIP identity and evidence actually available at build time:
+
+```powershell
+$provenance = [ordered]@{
+    schemaVersion = 1
+    releaseVersion = $ReleaseVersion
+    sourceCommit = $SourceCommit
+    pythonVersion = '3.11.15'
+    assetFileName = [IO.Path]::GetFileName($output)
+    assetSizeBytes = (Get-Item -LiteralPath $output).Length
+    assetSha256 = (Get-FileHash -LiteralPath $output -Algorithm SHA256).Hash.ToLowerInvariant()
+    buildScriptSha256 = (Get-FileHash -LiteralPath $PSCommandPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    offlineProbe = 'bootstrap-stdlib-ok'
+}
+```
+
+`Test-BootstrapRuntimeAsset.ps1` must use `System.IO.Compression.ZipFile`, reject path traversal/reparse entries, require `python.exe`, `python311.dll`, `python311._pth`, and `Lib`, recompute ZIP size/SHA-256, and execute the extracted `python.exe -B -I` standard-library probe in a temporary directory under the supplied project root. It must not call a package manager or modify system state.
+
+- [ ] **Step 4: Run GREEN and produce a local candidate asset.**
+
+```powershell
+$candidate = Join-Path (Resolve-Path .) '.release-candidate\bootstrap'
+New-Item -ItemType Directory -Force -Path $candidate | Out-Null
+& .\packaging\scripts\build_bootstrap_runtime.ps1 -BaseRuntime 'E:\Desktop\Anima idg标准标注处理\.runtime-build\runtimes\core' -OutputZip (Join-Path $candidate 'cpython-3.11.15-win-amd64.zip') -ProvenanceOutput (Join-Path $candidate 'cpython-3.11.15-win-amd64.provenance.json') -SourceCommit (git rev-parse HEAD) -ReleaseVersion 'source-bootstrap-candidate'
+& .\packaging\scripts\Test-BootstrapRuntimeAsset.ps1 -ProjectRoot . -AssetZip (Join-Path $candidate 'cpython-3.11.15-win-amd64.zip') -Provenance (Join-Path $candidate 'cpython-3.11.15-win-amd64.provenance.json') -ExpectedSourceCommit (git rev-parse HEAD)
+& $env:ANIMA_SOURCE_BOOTSTRAP_TEST_PYTHON -B -I -m unittest discover -s tests\unit -p 'test_source_bootstrap_release_build.py' -v
+```
+
+Expected: verifier exits zero for the generated candidate and nonzero for the test tamper case. The candidate remains ignored under `.release-candidate`; it is not a published Release asset.
+
+- [ ] **Step 5: Record evidence and commit.**
+
+```powershell
+git add packaging/scripts/build_bootstrap_runtime.ps1 packaging/scripts/Test-BootstrapRuntimeAsset.ps1 tests/unit/test_source_bootstrap_release_build.py ROADMAP.md MEMORY.md
+git commit -m "feat: verify bootstrap runtime release assets"
+```
+
+### Task 11: Add a complete inventory input and published-release identity verifier
+
+**Files:**
+- Create: `packaging/installer/source-bootstrap.inventory.json`
+- Modify: `packaging/scripts/build_install_manifest.py`
+- Modify: `packaging/scripts/Validate-SourceBootstrapRelease.ps1`
+- Modify: `tests/unit/test_source_bootstrap_release_build.py`
+- Modify: `tests/unit/test_source_bootstrap_powershell.py`
+- Modify: `tests/integration/test_source_bootstrap_fixture.py`
+- Modify: `ROADMAP.md`
+- Modify: `MEMORY.md`
+
+- [ ] **Step 1: Add failing inventory/release identity tests.**
+
+The inventory must contain every mandatory E621 component, exact artifact URL/host/size/SHA-256, full Hugging Face revision where relevant, lock selectors for every runtime variant, and a bootstrap record with a local candidate identity. Tests must prove that:
+
+```python
+with self.assertRaisesRegex(module.ManifestBuildError, "published release identity"):
+    module.build_manifest(candidate_only_inventory, REQUIREMENTS)
+
+with self.assertRaisesRegex(module.ManifestBuildError, "does not match"):
+    module.validate_published_asset(downloaded_path, declared_record)
+```
+
+Add a PowerShell test that `Validate-SourceBootstrapRelease.ps1 -VerifyPublishedBootstrap` rejects a candidate-only record and a URL whose downloaded bytes disagree with `release-artifacts.json`.
+
+- [ ] **Step 2: Run RED.**
+
+```powershell
+& $env:ANIMA_SOURCE_BOOTSTRAP_TEST_PYTHON -B -I -m unittest discover -s tests\unit -p 'test_source_bootstrap_release_build.py' -v
+& $env:ANIMA_SOURCE_BOOTSTRAP_TEST_PYTHON -B -I -m unittest discover -s tests\unit -p 'test_source_bootstrap_powershell.py' -v
+```
+
+Expected: the production inventory and `-VerifyPublishedBootstrap` behavior are absent.
+
+- [ ] **Step 3: Implement inventory states and strict publication verification.**
+
+Use one tracked inventory with this exact top-level shape:
+
+```json
+{
+  "schemaVersion": 1,
+  "manifest": { "schemaVersion": 1, "releaseVersion": "...", "sourceCommit": "..." },
+  "releaseArtifacts": {
+    "schemaVersion": 1,
+    "releaseVersion": "...",
+    "publicationState": "candidate",
+    "artifacts": []
+  },
+  "variantLocks": {}
+}
+```
+
+Extend the builder so `--validate-only` accepts a `candidate` release identity only for local inventory auditing, while `--output` requires `publicationState: "published"`, exact Release HTTPS asset URL, nonzero size, SHA-256, and byte-for-byte equality with the bootstrap artifact. `--release-output` writes canonical `release-artifacts.json` only in published mode. Do not generate `install-manifest.json` or patch `$ExpectedInstallManifestSha256` from a candidate identity.
+
+Extend the release validator with `-VerifyPublishedBootstrap`. In that mode it must range-download the declared bootstrap asset to a temporary directory under `.release-candidate`, recompute size/SHA-256, verify it against both JSON files, and delete the verified temporary download in `finally`. The default validator remains network-free.
+
+Populate all known local artifact facts from existing resource manifests and lock files. Do not invent URLs, revision values, file sizes, SHA-256 values, model licenses, or a GitHub Release URL. Any unresolved upstream item stays `candidate` and causes the production output/gate to fail closed.
+
+- [ ] **Step 4: Run GREEN local inventory verification.**
+
+```powershell
+& $env:ANIMA_SOURCE_BOOTSTRAP_TEST_PYTHON -B -I .\packaging\scripts\build_install_manifest.py --inventory .\packaging\installer\source-bootstrap.inventory.json --requirements-root .\packaging\requirements --validate-only
+& $env:ANIMA_SOURCE_BOOTSTRAP_TEST_PYTHON -B -I -m unittest discover -s tests\unit -p 'test_source_bootstrap_release_build.py' -v
+& $env:ANIMA_SOURCE_BOOTSTRAP_TEST_PYTHON -B -I -m unittest discover -s tests\unit -p 'test_source_bootstrap_manifest.py' -v
+& .\packaging\scripts\Validate-SourceBootstrapRelease.ps1 -ProjectRoot .
+```
+
+Expected: inventory audit succeeds only for facts present; public release gate deliberately fails with an explicit candidate/publication reason until an actual GitHub Release asset exists.
+
+- [ ] **Step 5: Record evidence and commit.**
+
+```powershell
+git add packaging/installer/source-bootstrap.inventory.json packaging/scripts/build_install_manifest.py packaging/scripts/Validate-SourceBootstrapRelease.ps1 tests/unit/test_source_bootstrap_release_build.py tests/unit/test_source_bootstrap_powershell.py tests/integration/test_source_bootstrap_fixture.py ROADMAP.md MEMORY.md
+git commit -m "feat: add release inventory publication gate"
+```
+
+### Task 12: Collect license evidence in a machine-readable fail-closed ledger
+
+**Files:**
+- Create: `packaging/installer/license-ledger.json`
+- Modify: `docs/THIRD_PARTY_NOTICES.md`
+- Modify: `packaging/scripts/Validate-SourceBootstrapRelease.ps1`
+- Modify: `tests/unit/test_source_bootstrap_powershell.py`
+- Modify: `ROADMAP.md`
+- Modify: `MEMORY.md`
+
+- [ ] **Step 1: Add a failing license ledger gate test.**
+
+Add a test fixture where a manifest component references a missing ledger entry, a local-only OCR resource is falsely marked mirrorable, and an E621-derived source index lacks a redistribution decision. Each case must cause `Validate-SourceBootstrapRelease.ps1` to fail.
+
+```python
+self.assertIn("license ledger entry is missing", completed.stdout + completed.stderr)
+self.assertIn("redistribution is not approved", completed.stdout + completed.stderr)
+```
+
+- [ ] **Step 2: Run RED.**
+
+```powershell
+& $env:ANIMA_SOURCE_BOOTSTRAP_TEST_PYTHON -B -I -m unittest discover -s tests\unit -p 'test_source_bootstrap_powershell.py' -v
+```
+
+Expected: no machine-readable ledger is checked yet.
+
+- [ ] **Step 3: Implement exact evidence states rather than a blanket "verified" string.**
+
+Use ledger entries with these required fields:
+
+```json
+{
+  "id": "qwen3-0.6b",
+  "delivery": "direct-upstream-only",
+  "officialSourceUrl": "https://huggingface.co/Qwen/Qwen3-0.6B",
+  "licenseEvidenceUrl": "https://.../LICENSE",
+  "evidenceRetrievedAtUtc": "2026-08-12T00:00:00Z",
+  "evidenceSha256": "...",
+  "reviewStatus": "evidence-collected",
+  "redistributionStatus": "not-mirrored"
+}
+```
+
+Permit only `direct-upstream-only` plus `not-mirrored` for model/tokenizer/OCR artifacts. For source-redistributed E621 indexes, record the official terms URL and an explicit `redistributionStatus` of `blocked`, `approved`, or `pending-human-review`; never infer approval from a model card or an API endpoint. The release validator must reject `blocked` and `pending-human-review` source content, reject absent/invalid SHA-256 evidence, and permit direct-download entries only when they are not mirrored by the project Release.
+
+Read each stated upstream license/terms file through its immutable revision or official URL, save only its URL/hash/excerpted factual classification in the ledger/notices, and retain original URLs in `docs/THIRD_PARTY_NOTICES.md`. Do not reproduce model weight files or make legal conclusions beyond the evidence. If an upstream has no redistributable license or E621 terms do not grant index redistribution, leave the gate blocked and state that fact.
+
+- [ ] **Step 4: Run GREEN license verification.**
+
+```powershell
+& $env:ANIMA_SOURCE_BOOTSTRAP_TEST_PYTHON -B -I -m unittest discover -s tests\unit -p 'test_source_bootstrap_powershell.py' -v
+& .\packaging\scripts\Validate-SourceBootstrapRelease.ps1 -ProjectRoot .
+```
+
+Expected: the validator reports the first remaining concrete license/distribution blocker rather than accepting a text-only notice. A passing public license gate is not claimed unless every source-redistributed entry has actual approval evidence.
+
+- [ ] **Step 5: Record evidence and commit.**
+
+```powershell
+git add packaging/installer/license-ledger.json docs/THIRD_PARTY_NOTICES.md packaging/scripts/Validate-SourceBootstrapRelease.ps1 tests/unit/test_source_bootstrap_powershell.py ROADMAP.md MEMORY.md
+git commit -m "docs: record source bootstrap license evidence"
+```
+
+### Task 13: Provide an evidence-backed clean-machine acceptance runner
+
+**Files:**
+- Create: `packaging/scripts/Invoke-SourceBootstrapAcceptance.ps1`
+- Create: `docs/SOURCE_BOOTSTRAP_ACCEPTANCE.md`
+- Modify: `.gitignore`
+- Modify: `tests/unit/test_source_bootstrap_powershell.py`
+- Modify: `README.md`
+- Modify: `ROADMAP.md`
+- Modify: `MEMORY.md`
+
+- [ ] **Step 1: Add a failing acceptance-contract test.**
+
+The test must parse the PowerShell script and assert that it accepts only `Cpu` or `Nvidia`, writes all evidence below `.runtime-build\\acceptance`, checks absence of Python/Node/CUDA Toolkit/Visual Studio/Windows SDK before installation, invokes only `Install-WebUI.bat`, calls `Stop-WebUI.bat` in `finally`, and refuses to emit `passed` when the clean-host preflight fails.
+
+```python
+self.assertIn("Clean-host preflight failed", output)
+self.assertNotIn('"status":"passed"', output)
+```
+
+- [ ] **Step 2: Run RED.**
+
+```powershell
+& $env:ANIMA_SOURCE_BOOTSTRAP_TEST_PYTHON -B -I -m unittest discover -s tests\unit -p 'test_source_bootstrap_powershell.py' -v
+```
+
+Expected: the acceptance runner is missing.
+
+- [ ] **Step 3: Implement the runner and acceptance schema.**
+
+The runner must collect Windows version/architecture, user-selected scenario, command discoveries for `python`, `py`, `node`, `npm`, `nvcc`, `cl`, Windows SDK directory checks, NVIDIA availability, source commit, manifest hash, installer exit code, install state variant map, WebUI Start/Stop result, and log paths. It writes one UTF-8 JSON result under `.runtime-build\\acceptance` with status exactly `passed`, `failed`, or `not-clean`; no external telemetry is sent.
+
+`-PreflightOnly` may run on the current host and must return `not-clean` when development dependencies are found. Full mode must stop the WebUI even if validation fails. CPU mode must reject CUDA/GPU components in `install-state.json`; NVIDIA mode must require CUDA Caption/Policy and OCR GPU evidence from the install state and logs. It must not treat a fixture, import-only test, or a machine with developer tools as an acceptance pass.
+
+Document exact fresh-machine procedure in `docs/SOURCE_BOOTSTRAP_ACCEPTANCE.md`, allow only that documentation file through `.gitignore`, and link it from README. The procedure includes four physical-machine runs: Windows 10 CPU, Windows 11 CPU interrupted-download, Windows 11 NVIDIA with actual GPU probe, and a Chinese/space source ZIP path.
+
+- [ ] **Step 4: Run GREEN static and non-clean-host evidence checks.**
+
+```powershell
+& $env:ANIMA_SOURCE_BOOTSTRAP_TEST_PYTHON -B -I -m unittest discover -s tests\unit -p 'test_source_bootstrap_powershell.py' -v
+& .\packaging\scripts\Invoke-SourceBootstrapAcceptance.ps1 -ProjectRoot . -Scenario Cpu -PreflightOnly
+```
+
+Expected: parser/contract tests pass; this development workstation reports `not-clean` or `failed`, never `passed`. Preserve its JSON evidence only under the project and do not call it clean-machine validation.
+
+- [ ] **Step 5: Record evidence and commit.**
+
+```powershell
+git add packaging/scripts/Invoke-SourceBootstrapAcceptance.ps1 docs/SOURCE_BOOTSTRAP_ACCEPTANCE.md .gitignore tests/unit/test_source_bootstrap_powershell.py README.md ROADMAP.md MEMORY.md
+git commit -m "feat: add source bootstrap clean-machine acceptance runner"
+```
+
+### Task 14: Run the local release-candidate gate and prepare external handoff
+
+**Files:**
+- Modify: `ROADMAP.md`
+- Modify: `MEMORY.md`
+
+- [ ] **Step 1: Run full local source-bootstrap verification with the candidate.**
+
+```powershell
+& $env:ANIMA_SOURCE_BOOTSTRAP_TEST_PYTHON -B -I -m unittest discover -s tests\unit -p 'test_source_bootstrap_*.py' -v
+& $env:ANIMA_SOURCE_BOOTSTRAP_TEST_PYTHON -B -I -m unittest discover -s tests\unit -p 'test_desktop_control.py' -v
+& $env:ANIMA_SOURCE_BOOTSTRAP_TEST_PYTHON -B -I -m unittest discover -s tests\integration -p 'test_source_bootstrap_fixture.py' -v
+& .\packaging\scripts\Test-BootstrapRuntimeAsset.ps1 -ProjectRoot . -AssetZip .\.release-candidate\bootstrap\cpython-3.11.15-win-amd64.zip -Provenance .\.release-candidate\bootstrap\cpython-3.11.15-win-amd64.provenance.json -ExpectedSourceCommit (git rev-parse HEAD)
+& .\packaging\scripts\Validate-SourceBootstrapRelease.ps1 -ProjectRoot .
+git diff --check
+git status --short
+```
+
+Expected: all unit/fixture mechanics pass; the final public release gate remains nonzero until publication identity, distribution approval, and real clean-machine evidence are present. Record actual exit codes and first gate error.
+
+- [ ] **Step 2: Check public assets only after explicit authorization.**
+
+After the user explicitly authorizes external GitHub writes, create/upload the exact candidate ZIP and provenance to a versioned GitHub Release, copy the returned immutable asset URL/size/SHA-256 into `release-artifacts.json`, regenerate `install-manifest.json`, update `ExpectedInstallManifestSha256`, and download the public asset again with `-VerifyPublishedBootstrap`. Do not upload OCR/model weights or any unapproved E621-derived data.
+
+- [ ] **Step 3: Obtain actual CPU/NVIDIA evidence only from real isolated machines.**
+
+Run `Invoke-SourceBootstrapAcceptance.ps1` on the four documented physical/VM scenarios. Attach the resulting project-local JSON files to release review; mark R14/R15 complete only after their stated tests, real offline probes, and public URL re-downloads pass.
+
+- [ ] **Step 4: Commit local records and report blockers accurately.**
+
+```powershell
+git add ROADMAP.md MEMORY.md
+git commit -m "docs: record source bootstrap release readiness"
+```
+
+## Continuation self-review
+
+- Production manifest: Task 11 separates locally checked candidate facts from a real published HTTPS Release identity; it does not fabricate a URL.
+- Base asset: Task 10 gives the existing packager an independent ZIP/provenance verifier and leaves the binary ignored until authorized release upload.
+- License closure: Task 12 records official evidence and distribution decisions; E621-derived source content remains an explicit blocker unless a real authorization is recorded.
+- Clean machine: Task 13 produces a runner that distinguishes `not-clean` from `passed`; Task 14 reserves CPU/NVIDIA claims for real environments.
+- Scope: no model mirror, OCR automatic download, Danbooru change, system installation, or unrelated refactor is included.
