@@ -19,10 +19,17 @@ output/
 packaging/wheelhouse/
 
 # Local model/resource payloads and generated state are not source releases.
-resource-library/
+resource-library/*
+!resource-library/classification-indexes/
+resource-library/classification-indexes/*
+!resource-library/classification-indexes/e621-classify-20260724-v1/
+resource-library/classification-indexes/e621-classify-20260724-v1/*
+!resource-library/classification-indexes/e621-classify-20260724-v1/resource.json
+!resource-library/classification-indexes/e621-classify-20260724-v1/e621_tag_dictionary.json
 ocr-model-archives/
 *.db
 *.sqlite3
+!resource-library/classification-indexes/e621-classify-20260724-v1/e621_count_wiki.sqlite3
 *.log
 
 # Dataset/model payloads are local-only; keep only their public documentation.

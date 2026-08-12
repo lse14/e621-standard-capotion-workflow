@@ -1,0 +1,61 @@
+{
+  "schemaVersion": 1,
+  "kind": "classification-index",
+  "resourceId": "classify-e621-20260724-v1",
+  "resourceVersion": "e621-dictionary-20260723-wiki-audit-20260724-tagger-backfill-20260726-v1",
+  "profile": "e621",
+  "displayName": {
+    "zh-CN": "E621 分类与 Count 索引",
+    "en": "E621 Classification and Count Index"
+  },
+  "description": {
+    "zh-CN": "把标签整理为分类 JSON，并按 Count 规则补充人数信息。",
+    "en": "Organizes tags into classified JSON and applies Count rules."
+  },
+  "runtimeFormat": "e621-classification-index-v1",
+  "entrypoints": {
+    "dictionary": "e621_tag_dictionary.json",
+    "countDatabase": "e621_count_wiki.sqlite3"
+  },
+  "files": {
+    "e621_tag_dictionary.json": {
+      "sizeBytes": 37569404,
+      "sha256": "87c42e0021ea637bc93195c6d37ac4f8b967dd989a8bd5de4b7ebb7546264e59"
+    },
+    "e621_count_wiki.sqlite3": {
+      "sizeBytes": 73728,
+      "sha256": "6aa0f944f07de490413aa49bf59d6ead555b6eeaad2e00022dedd6109d0abff9"
+    }
+  },
+  "metadata": {
+    "dictionaryEntryCount": 120978,
+    "wikiDataSourceId": "e621-wiki-count-20260724-v1",
+    "wikiApplicationId": 1095648562,
+    "wikiSchemaVersion": 1,
+    "wikiSchemaFingerprint": "980a19c32fe96f7e4621380c9e41c29dd1e99e1c5fcccf55f3f16cd46b6d59ee",
+    "wikiPageTitles": [
+      "anthro_on_anthro",
+      "anthro_on_feral",
+      "crowd",
+      "duo",
+      "expression_sheet",
+      "feral_on_feral",
+      "group",
+      "human_on_anthro",
+      "human_on_feral",
+      "human_on_human",
+      "human_on_humanoid",
+      "humanoid_on_anthro",
+      "humanoid_on_feral",
+      "humanoid_on_humanoid",
+      "large_group",
+      "model_sheet",
+      "multiple_angles",
+      "multiple_poses",
+      "solo",
+      "trio",
+      "turnaround"
+    ]
+  },
+  "documentation": []
+}

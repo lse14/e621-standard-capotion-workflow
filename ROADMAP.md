@@ -70,6 +70,23 @@ SDK，即可得到可离线运行的 E621 打标、质量评分、Qwen3 tokenize
 - [x] 删除约 3.38 GiB 的可测 OCR 导入暂存内容。
 - [x] 清理后 Core 探测输出 `anima-core-runtime-ok`。
 
+## E621 分类索引发布记录
+
+- [x] 2026-08-12：按用户明确要求，只将
+  `resource-library/classification-indexes/e621-classify-20260724-v1` 纳入源码 Git。
+  `.gitignore` 保持其他 `resource-library`、运行时、模型、数据集和缓存为忽略状态。
+- [x] 2026-08-12：项目内嵌 Python 重新计算两个载荷的大小和 SHA-256，均与
+  `resource.json` 一致；`validate_resource_library.py` 识别默认 E621 profile，分类资源
+  fingerprint 为 `530323a5d1ca5c3f903c0d57b04d6f1014cdcc0ca01b8de5dc0a41e27e1d2baf`。
+- [!] 2026-08-12：该索引含 E621 标签/别名数据和 21 条 Wiki 投影；已在
+  `docs/THIRD_PARTY_NOTICES.md` 记录 E621 API/Terms URL 及第 4 节的再分发限制。
+  本次索引提交不构成生产安装清单、模型许可闭环、GitHub Release 或 R11/R15 验收完成。
+- [x] 2026-08-12：项目内嵌 Python 对 Git 暂存对象和由暂存树构造的临时源码 ZIP
+  分别重新核对两个载荷，均保持声明的大小/SHA-256；`test_resource_catalog.py` 23 项、
+  `test_classify_resource.py` 4 项通过，实际加载确认 E621 分类投影与 21 条 Wiki 记录。
+  `.gitattributes` 只对该受哈希保护的词典禁用 Git 文本换行转换和文本 diff，避免
+  `core.autocrlf=true` 改变发布字节。
+
 ## R5 验证记录
 
 - [x] 2026-08-11：已写入 `docs/superpowers/plans/2026-08-11-source-bootstrap-installer.md`，

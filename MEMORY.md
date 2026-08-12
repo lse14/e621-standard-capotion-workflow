@@ -174,3 +174,18 @@ CLIP 文件使用 OpenAI 官方 CDN：
   `.runtime-build` 退出 1；`Validate-SourceBootstrapRelease.ps1` 因缺少真实
   `install-manifest.json` 退出 1。R14/R15 的干净机、真实模型推理、许可证、公开 URL 和 Release
   仍是阻断项，不能把本地 fixture 证据描述为可交付安装。
+- 2026-08-12：用户明确要求把 E621 分类索引提交到 GitHub。只允许跟踪
+  `resource-library/classification-indexes/e621-classify-20260724-v1` 的
+  `resource.json`、`e621_tag_dictionary.json` 和 `e621_count_wiki.sqlite3`；不得将
+  `E:\Desktop\e621_normjson_tagger`、其他 `resource-library` 内容、模型、runtime、缓存或数据集
+  一并提交。两个载荷的 SHA-256 分别为
+  `87c42e0021ea637bc93195c6d37ac4f8b967dd989a8bd5de4b7ebb7546264e59` 和
+  `6aa0f944f07de490413aa49bf59d6ead555b6eeaad2e00022dedd6109d0abff9`。
+- 2026-08-12：该索引不是模型权重；字典含 120,978 个 E621 标签/别名条目，Count SQLite
+  含 21 条 Wiki 投影。E621 官方 Terms 第 4 节限制其网站内容复制和再分发，已将来源、
+  文件身份和该限制写入 `docs/THIRD_PARTY_NOTICES.md`；本次 Git 提交不替代模型许可或
+  一键安装 Release 门禁。
+- 2026-08-12：全局 Git `core.autocrlf=true` 会把词典的 CRLF 改为 LF，导致暂存字节
+  与 `resource.json` SHA-256 不符。新增 `.gitattributes` 仅将该词典设为 `-text -diff`，
+  保持 37,569,404 bytes 和固定 SHA-256。提交前已验证 Git 暂存对象及从暂存树构造的
+  临时 ZIP，并运行分类资源单测 27 项与实际分类/Count 加载探针。

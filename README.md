@@ -5,9 +5,9 @@ e621-standard-capotion-workflow 是一个面向 Windows 的本地图片数据集
 标准化处理流程。
 
 > 本仓库是源码发布，不包含数据集、模型权重、浏览器二进制、Python/Node
-> 运行时。发布源码包含已构建的 `frontend/dist`；运行时和模型只由安装器写入
-> 项目目录。当前开发快照未附带经过核对的生产安装清单，安装器会明确 fail-closed，
-> 不能替代已通过发布门禁的源码版本。
+> 运行时。发布源码包含已构建的 `frontend/dist` 和固定的 E621 分类/Count 索引；
+> 其余运行时和模型只由安装器写入项目目录。当前开发快照未附带经过核对的生产安装
+> 清单，安装器会明确 fail-closed，不能替代已通过发布门禁的源码版本。
 
 ## 主要功能
 
@@ -103,7 +103,7 @@ Qwen3 0.6B tokenizer、LSE14/JTP-3/Waifu/CLIP 质量栈和 OCR 都是必装项�
 .runtime-build/runtimes/core/python.exe
 .toolchains/Python-3.11.15/PCbuild/amd64/python.exe
 .toolchains/node-v24.18.0-win-x64/node.exe
-resource-library/
+resource-library/（已提交的 E621 分类/Count 索引除外）
 ```
 
 所有依赖安装、同步和验证脚本都只应操作项目目录内的运行时。不要用系统 Python
