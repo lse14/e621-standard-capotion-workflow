@@ -286,8 +286,9 @@ SDK，即可得到可离线运行的 E621 打标、质量评分、Qwen3 tokenize
 - [x] 2026-08-12：新增维护端 `Test-BootstrapRuntimeAsset.ps1`，独立核对基础 ZIP 的
   provenance 字段、文件名、大小、SHA-256、builder 脚本 SHA-256、安全 ZIP 条目和
   解压后的 `python.exe -B -I` 标准库探测。单测实际生成 ZIP、验证成功并以等长篡改触发
-  `SHA-256` 拒绝；builder 改为 .NET SHA-256，以兼容项目内嵌 Python 启动的 Windows
-  PowerShell 5.1（不依赖 `Get-FileHash` 的模块自动加载）。
+  `SHA-256` 拒绝，且拒绝反斜杠 `Lib\\..\\outside.txt` 路径穿越；builder 改为 .NET
+  SHA-256，以兼容项目内嵌 Python 启动的 Windows PowerShell 5.1（不依赖 `Get-FileHash`
+  的模块自动加载）。
 - [x] 2026-08-12：在项目内 `.release-candidate\bootstrap` 实际生成未跟踪候选
   `cpython-3.11.15-win-amd64.zip`，大小 `33,264,397` bytes，SHA-256
   `f7a36991fc6ac035f7e3bd30fd8badd06d4309590323bedda2ec958aa0d17096`，并由独立

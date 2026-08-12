@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import importlib.util
 import json
 import subprocess
 import sys
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 
 
@@ -197,6 +199,54 @@ class SourceBootstrapReleaseBuildTests(unittest.TestCase):
             )
             self.assertNotEqual(0, tampered.returncode)
             self.assertIn("SHA-256", tampered.stdout + tampered.stderr)
+
+    def test_bootstrap_asset_verifier_rejects_backslash_parent_entry(self) -> None:
+        self.assertTrue(BOOTSTRAP_ASSET_VERIFIER.is_file(), "bootstrap asset verifier must exist")
+        test_root = ROOT / ".test-tmp"
+        test_root.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=test_root) as temporary_name:
+            temporary = Path(temporary_name)
+            asset = temporary / "cpython-3.11.15-win-amd64.zip"
+            provenance = temporary / "cpython-3.11.15-win-amd64.provenance.json"
+            with zipfile.ZipFile(asset, "w") as archive:
+                archive.writestr("python.exe", b"not an executable")
+                archive.writestr("python311.dll", b"not a dll")
+                archive.writestr("python311._pth", b"Lib\nLib/site-packages\n")
+                archive.writestr("Lib/os.py", b"pass\n")
+                archive.writestr("Lib\\..\\outside.txt", b"unsafe")
+            asset_bytes = asset.read_bytes()
+            provenance.write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": 1,
+                        "releaseVersion": "source-bootstrap-test",
+                        "sourceCommit": "a" * 40,
+                        "pythonVersion": "3.11.15",
+                        "assetFileName": asset.name,
+                        "assetSizeBytes": len(asset_bytes),
+                        "assetSha256": hashlib.sha256(asset_bytes).hexdigest(),
+                        "buildScriptSha256": hashlib.sha256(BOOTSTRAP_BUILDER.read_bytes()).hexdigest(),
+                        "offlineProbe": "bootstrap-stdlib-ok",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            completed = subprocess.run(
+                [
+                    "powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(BOOTSTRAP_ASSET_VERIFIER),
+                    "-ProjectRoot", str(ROOT),
+                    "-AssetZip", str(asset),
+                    "-Provenance", str(provenance),
+                    "-ExpectedSourceCommit", "a" * 40,
+                ],
+                cwd=ROOT,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=False,
+            )
+            self.assertNotEqual(0, completed.returncode)
+            self.assertIn("unsafe entry", completed.stdout + completed.stderr)
 
     def test_manifest_builder_rejects_missing_artifact_identity_and_lock_mismatch(self) -> None:
         module = _load_manifest_builder()

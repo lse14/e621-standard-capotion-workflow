@@ -67,7 +67,7 @@ function Read-Provenance([string]$Path) {
 }
 
 function Get-SafeArchiveRelativePath([string]$Value) {
-    $normalized = $Value.Replace('\\', '/').TrimEnd('/')
+    $normalized = $Value.Replace([char]0x5c, [char]0x2f).TrimEnd('/')
     if ([string]::IsNullOrEmpty($normalized) -or $normalized.StartsWith('/') -or $normalized -match '^[A-Za-z]:' -or $normalized.Contains(':')) {
         throw "Bootstrap ZIP contains an unsafe entry: $Value"
     }

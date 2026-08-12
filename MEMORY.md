@@ -249,3 +249,6 @@ CLIP 文件使用 OpenAI 官方 CDN：
   `Validate-SourceBootstrapRelease.ps1 -ProjectRoot .` 以 `install-manifest.json is missing`
   退出 1，符合预期 fail-closed 行为；生产 manifest、公开基础资产/Release 身份、许可证闭环、
   真实 OCR 模型、CPU/NVIDIA 干净机和公开 source ZIP 验收仍未完成，不能声称可公开一键安装。
+- 2026-08-12：基础资产验证器的安全解压新增反斜杠路径归一化；项目内嵌 Python 实际运行的
+  release-build 单测确认 `Lib\\..\\outside.txt` ZIP 条目在解压前失败。该修正不改变候选
+  资产的本地-only/未发布状态。
