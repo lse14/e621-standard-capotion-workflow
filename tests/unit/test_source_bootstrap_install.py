@@ -420,6 +420,52 @@ class SourceBootstrapInstallTests(unittest.TestCase):
         with self.assertRaisesRegex(assemble.ManifestError, "mandatory E621 components"):
             assemble.validate_mandatory_e621_components(manifest)
 
+    def test_base_e621_validation_does_not_require_delayed_ocr_models(self) -> None:
+        assemble, manifest_module = _modules()
+        value = fixture_manifest()
+        for component_id in ("e621-indexes", "e621-tagger", "quality-stack", "qwen3-tokenizer"):
+            value["components"].append(
+                {
+                    "componentId": component_id,
+                    "kind": "resource",
+                    "required": True,
+                    "targetRelativePath": f"resource-library/{component_id}",
+                    "variants": {"shared": _variant(f"{component_id}-resource", f"resources/{component_id}.json")},
+                }
+            )
+        value["components"] = [
+            component
+            for component in value["components"]
+            if component["componentId"] != "ocr-models"
+        ]
+        manifest = manifest_module.load_manifest(value)
+
+        assemble.validate_mandatory_e621_components(manifest)
+
+    def test_ocr_runtime_without_a_selected_model_is_not_a_functional_probe_success(self) -> None:
+        probes = _probes_module()
+        with tempfile.TemporaryDirectory() as temporary_name:
+            root = Path(temporary_name)
+            runtime = root / "runtimes" / "ocr-paddle"
+            runtime.mkdir(parents=True)
+            components = (
+                SimpleNamespace(
+                    component=SimpleNamespace(component_id="ocr-cpu"),
+                    variant=SimpleNamespace(name="cpu"),
+                ),
+            )
+
+            def fail_runner(*_args, **_kwargs):
+                self.fail("OCR probe must not run without an OCR model component")
+
+            results = probes.run_offline_probes(
+                components,
+                component_targets={"ocr-cpu": runtime},
+                runner=fail_runner,
+            )
+
+            self.assertIsNone(results["ocr-cpu"])
+
     def test_runtime_manifest_uses_selected_caption_cpu_lock(self) -> None:
         generator = _runtime_manifest_generator()
         with tempfile.TemporaryDirectory() as temporary_name:

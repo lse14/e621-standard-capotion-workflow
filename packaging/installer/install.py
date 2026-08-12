@@ -228,7 +228,7 @@ def _fallback_group_component_ids(fallback_ids: set[str]) -> set[str]:
 
 def _classify_probe_failures(
     pending: list[PlannedComponent],
-    results: Mapping[str, bool],
+    results: Mapping[str, bool | None],
 ) -> tuple[set[str], set[str], list[str]]:
     """Separate CUDA fallbacks from fatal probe failures."""
     items = {item.component.component_id: item for item in pending}
@@ -251,6 +251,10 @@ def _classify_probe_failures(
         component_id
         for component_id in items
         if results.get(component_id) is not True
+        and not (
+            component_id in {"ocr-cpu", "ocr-gpu"}
+            and results.get(component_id) is None
+        )
         and component_id not in deferred | discarded_gpu
     )
     return fallback_ids, discarded_gpu, failures

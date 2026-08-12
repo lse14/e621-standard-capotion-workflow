@@ -34,7 +34,6 @@ MANDATORY_E621_COMPONENTS = frozenset(
         "e621-tagger",
         "qwen3-tokenizer",
         "quality-stack",
-        "ocr-models",
     }
 )
 

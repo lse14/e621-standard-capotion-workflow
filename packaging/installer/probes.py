@@ -438,7 +438,7 @@ def run_offline_probes(
     *,
     component_targets: Mapping[str, Path],
     runner: Runner | None = None,
-) -> dict[str, bool]:
+) -> dict[str, bool | None]:
     """Run all known functional probes and return one result for every selected component."""
     selected: dict[str, object] = {}
     variants: dict[str, str] = {}
@@ -451,7 +451,7 @@ def run_offline_probes(
             raise ProbeError("offline probe plan is invalid")
         selected[component_id] = item
         variants[component_id] = variant_name
-    results = {component_id: False for component_id in selected}
+    results: dict[str, bool | None] = {component_id: False for component_id in selected}
     evidence_by_component: dict[str, dict[str, object]] = {}
 
     def run_group(component_ids: tuple[str, ...], callback: Callable[[], dict[str, object]], evidence_component: str) -> None:
@@ -496,26 +496,31 @@ def run_offline_probes(
         ),
         "token-budget",
     )
-    run_group(
-        ("ocr-cpu", "ocr-models"),
-        lambda: _probe_ocr(
-            _target(component_targets, "ocr-cpu"),
-            _target(component_targets, "ocr-models"),
-            "cpu",
-            runner=runner,
-        ),
-        "ocr-cpu",
-    )
-    run_group(
-        ("ocr-gpu",),
-        lambda: _probe_ocr(
-            _target(component_targets, "ocr-gpu"),
-            _target(component_targets, "ocr-models"),
-            "cuda",
-            runner=runner,
-        ),
-        "ocr-gpu",
-    )
+    if "ocr-models" in selected:
+        run_group(
+            ("ocr-cpu", "ocr-models"),
+            lambda: _probe_ocr(
+                _target(component_targets, "ocr-cpu"),
+                _target(component_targets, "ocr-models"),
+                "cpu",
+                runner=runner,
+            ),
+            "ocr-cpu",
+        )
+        run_group(
+            ("ocr-gpu", "ocr-models"),
+            lambda: _probe_ocr(
+                _target(component_targets, "ocr-gpu"),
+                _target(component_targets, "ocr-models"),
+                "cuda",
+                runner=runner,
+            ),
+            "ocr-gpu",
+        )
+    else:
+        for component_id in ("ocr-cpu", "ocr-gpu"):
+            if component_id in selected:
+                results[component_id] = None
     if results.get("ocr-cpu") and results.get("ocr-gpu"):
         cpu_texts = evidence_by_component["ocr-cpu"].get("texts")
         gpu_texts = evidence_by_component["ocr-gpu"].get("texts")
