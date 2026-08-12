@@ -70,7 +70,7 @@ SDK，即可得到可离线运行的 E621 打标、质量评分、Qwen3 tokenize
 - [x] 删除约 3.38 GiB 的可测 OCR 导入暂存内容。
 - [x] 清理后 Core 探测输出 `anima-core-runtime-ok`。
 
-## E621 分类索引发布记录
+## E621 索引发布记录
 
 - [x] 2026-08-12：按用户明确要求，只将
   `resource-library/classification-indexes/e621-classify-20260724-v1` 纳入源码 Git。
@@ -86,6 +86,21 @@ SDK，即可得到可离线运行的 E621 打标、质量评分、Qwen3 tokenize
   `test_classify_resource.py` 4 项通过，实际加载确认 E621 分类投影与 21 条 Wiki 记录。
   `.gitattributes` 只对该受哈希保护的词典禁用 Git 文本换行转换和文本 diff，避免
   `core.autocrlf=true` 改变发布字节。
+- [x] 2026-08-12：按用户明确要求，将
+  `resource-library/replacement-indexes/e621-replace-20260726-v2` 的完整受清单约束资源包
+  纳入源码 Git：`resource.json`、`e621_tag_replacement_index.csv` 和随附说明书。CSV 为
+  3,902,020 bytes，SHA-256 为
+  `24ad8388580a6c3628dec44bd813897c278e4f1b04fccd810f22acaf97c1cbe7`；其资源
+  fingerprint 为 `3cabbeeffd379a893a0b53d427c3dbb26ea6c587f474ae761b21afde4ee4c47b`。
+- [x] 2026-08-12：项目内嵌 Python 运行 `test_replace_resource.py` 5 项、
+  `test_replace_processing.py` 3 项和 `test_resource_catalog.py` 23 项均通过；实际
+  `ReplaceWorker` 加载 86,922 条规则并验证 keep/replace/drop 输出。Git 暂存 CSV 与
+  暂存树 ZIP 均保持 3,902,020 bytes 及声明 SHA-256；ZIP 只包含 `resource.json`、CSV
+  和清单引用的说明书。
+- [!] 2026-08-12：替换索引使用 E621 tags、aliases、implications 和 Wiki 导出构建；E621
+  Terms <https://e621.net/terms_of_use> 第 4 节限制网站内容的复制和再分发。第三方声明
+  已记录来源、哈希和限制；本次提交不构成独立再分发许可、模型许可闭环、GitHub Release
+  或 R11/R15 验收完成。
 
 ## R5 验证记录
 

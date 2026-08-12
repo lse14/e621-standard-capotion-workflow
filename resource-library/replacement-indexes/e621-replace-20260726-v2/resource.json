@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "kind": "replacement-index",
+  "resourceId": "replace-e621-20260726-v2",
+  "resourceVersion": "e621-replacement-index-20260726-v2",
+  "profile": "e621",
+  "displayName": {
+    "zh-CN": "E621 默认替换索引",
+    "en": "E621 Default Replacement Index"
+  },
+  "description": {
+    "zh-CN": "统一、替换或删除不规范标签。",
+    "en": "Normalizes, replaces, or removes non-standard tags."
+  },
+  "runtimeFormat": "e621-replacement-csv-v1",
+  "entrypoints": {
+    "index": "e621_tag_replacement_index.csv"
+  },
+  "files": {
+    "e621_tag_replacement_index.csv": {
+      "sizeBytes": 3902020,
+      "sha256": "24ad8388580a6c3628dec44bd813897c278e4f1b04fccd810f22acaf97c1cbe7"
+    }
+  },
+  "metadata": {
+    "ruleCount": 86922,
+    "actionCounts": {
+      "keep": 56426,
+      "replace": 11600,
+      "drop": 18896
+    },
+    "pipeReplacementCount": 2151,
+    "literalKeepPipeCount": 1
+  },
+  "documentation": [
+    {
+      "path": "e621_tag_replacement_index_manual_zh.docx",
+      "language": "zh-CN",
+      "title": "替换索引说明书"
+    }
+  ]
+}

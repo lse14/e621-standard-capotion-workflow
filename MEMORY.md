@@ -189,3 +189,16 @@ CLIP 文件使用 OpenAI 官方 CDN：
   与 `resource.json` SHA-256 不符。新增 `.gitattributes` 仅将该词典设为 `-text -diff`，
   保持 37,569,404 bytes 和固定 SHA-256。提交前已验证 Git 暂存对象及从暂存树构造的
   临时 ZIP，并运行分类资源单测 27 项与实际分类/Count 加载探针。
+- 2026-08-12：用户明确要求将 E621 替换索引也提交到 GitHub。仅允许跟踪
+  `resource-library/replacement-indexes/e621-replace-20260726-v2` 的 `resource.json`、
+  `e621_tag_replacement_index.csv` 与该清单引用的中文说明书；不得一并提交 `_recovery`、
+  模型、runtime、缓存、数据集或 `E:\Desktop\e621_normjson_tagger`。
+- 2026-08-12：替换 CSV 为 3,902,020 bytes，SHA-256
+  `24ad8388580a6c3628dec44bd813897c278e4f1b04fccd810f22acaf97c1cbe7`，资源 fingerprint 为
+  `3cabbeeffd379a893a0b53d427c3dbb26ea6c587f474ae761b21afde4ee4c47b`。运行时加载除哈希外
+  还审计 86,922 条规则、keep/replace/drop 计数与 pipe 规则；资源目录校验要求三项受清单
+  约束文件全部存在。`.gitattributes` 对该 CSV 使用 `-text -diff` 保留固定 CRLF 字节。
+- 2026-08-12：说明书记录输入为 E621 tags、aliases、implications 和 Wiki 数据导出，官方
+  模板为 `https://static1.e621.net/data/db_export/{tags,tag_aliases,tag_implications,wiki_pages}.csv.gz`。
+  E621 Terms <https://e621.net/terms_of_use> 第 4 节限制复制和再分发，已更新第三方声明；
+  该索引提交不代表模型许可证或一键安装公开 Release 门禁已通过。

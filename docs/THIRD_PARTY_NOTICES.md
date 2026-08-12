@@ -5,8 +5,8 @@ Anima 源码依赖第三方开源软件，并可连接或加载第三方模型�
 许可证文本，也不改变 [项目许可证](../LICENSE)。
 
 本源码仓库不包含 Python/Node 运行时、浏览器二进制、模型权重、tokenizer
-文件、OCR 模型或数据集。`resource-library/classification-indexes/`
-中的 E621 分类/Count 索引是下述明确列出的例外。
+文件、OCR 模型或数据集。`resource-library/classification-indexes/` 和
+`resource-library/replacement-indexes/` 中明确列出的 E621 索引是下述例外。
 
 ## 前端与开发工具
 
@@ -46,17 +46,25 @@ Anima 源码依赖第三方开源软件，并可连接或加载第三方模型�
 传递依赖也适用各自许可证。生成或分发组装包时，应同时审查所选 lock 文件、wheel
 元数据及随包许可证文件。
 
-## 随源码提交的 E621 分类索引
+## 随源码提交的 E621 索引
 
-本仓库只随源码提交
+本仓库随源码提交
 `resource-library/classification-indexes/e621-classify-20260724-v1` 的三个文件，
-用于本地 E621 标签分类与 Count 规则；它不是模型权重或 tokenizer。该版本的
+用于本地 E621 标签分类与 Count 规则；还提交
+`resource-library/replacement-indexes/e621-replace-20260726-v2` 的 CSV、资源清单和
+本地构建说明书，用于本地 E621 标签规范化。它们不是模型权重或 tokenizer。分类版本的
 `resource.json` 固定如下文件身份：
 
 | 文件 | 大小（bytes） | SHA-256 |
 | --- | ---: | --- |
 | `e621_tag_dictionary.json` | 37,569,404 | `87c42e0021ea637bc93195c6d37ac4f8b967dd989a8bd5de4b7ebb7546264e59` |
 | `e621_count_wiki.sqlite3` | 73,728 | `6aa0f944f07de490413aa49bf59d6ead555b6eeaad2e00022dedd6109d0abff9` |
+
+替换版本的 `resource.json` 固定其 CSV 文件身份：
+
+| 文件 | 大小（bytes） | SHA-256 |
+| --- | ---: | --- |
+| `e621_tag_replacement_index.csv` | 3,902,020 | `24ad8388580a6c3628dec44bd813897c278e4f1b04fccd810f22acaf97c1cbe7` |
 
 字典元数据标记其来源为 E621，创建时间为 `2026-07-23T15:57:10+00:00`，包含
 120,978 个标签/别名条目。Count 数据库标记为
@@ -68,6 +76,13 @@ Anima 源码依赖第三方开源软件，并可连接或加载第三方模型�
 2026-08-12 核对时，E621 Terms of Use 第 4 节将网站内容置于其权利人保护下，
 并限制复制、分发、修改和再发布。本声明只记录来源和限制，不授予 E621 内容的
 独立再分发许可；任何下游分发者须自行核对上述条款及适用法律。
+
+替换 CSV 的随附说明书记录其生成输入为 E621 tags、aliases、implications 和 Wiki
+数据导出，官方导出 URL 模板为
+`https://static1.e621.net/data/db_export/{tags,tag_aliases,tag_implications,wiki_pages}.csv.gz`；
+Danbooru 索引仅作为本地辅助碰撞检测证据，未作为该 CSV 的上游再分发内容。本记录不构成
+对替换 CSV 或说明书的独立再分发许可；在公开 Release、镜像或下游再分发前，仍须按上述
+E621 Terms 和适用法律完成核对。
 
 ## 安装清单模型与 tokenizer
 
