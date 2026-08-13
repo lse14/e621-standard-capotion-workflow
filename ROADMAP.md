@@ -65,6 +65,11 @@ SDK，即可得到可离线运行的 E621 打标、质量评分、Qwen3 tokenize
   GitHub asset 元数据与公开重新下载均验证 `33,887,443` bytes 和 SHA-256
   `a7bef1285f1a0f4007de9ede5752f105dcf2b137d54670074d16503554fa0169`。
 - [!] R14 仍未完成：当前开发主机预检为 `not-clean`，不能替代 CPU/NVIDIA 干净机验收。
+- [x] 2026-08-13：在 `F:\AnimaSourceBootstrapNvidiaValidation-20260813-01` 的默认
+  `main` 新 clone 上实际执行 `Install-WebUI.bat`，复现首次下载尚无 `.partial` 时
+  PowerShell 将 `-and` 错绑为 `Test-Path` 参数的生产失败；四处布尔表达式均补齐子表达式
+  括号，并增加回归扫描。修复后 source-bootstrap 91 项、公开资产字节门禁和 manifest
+  绑定复核通过；需要发布修复后继续真实 NVIDIA 安装。
 
 ## 验收标准
 

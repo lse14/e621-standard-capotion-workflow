@@ -6,6 +6,7 @@ import unittest
 import json
 import hashlib
 import shutil
+import re
 from pathlib import Path
 
 
@@ -199,6 +200,11 @@ class SourceBootstrapPowerShellTests(unittest.TestCase):
             check=False,
         )
         self.assertEqual(0, completed.returncode, completed.stdout + completed.stderr)
+
+    def test_bootstrap_parenthesizes_test_path_before_boolean_operators(self) -> None:
+        script = self._bootstrap_text()
+        invalid = re.findall(r"if \(Test-Path[^\r\n]+ -(?:and|or)\b", script)
+        self.assertEqual([], invalid)
 
     def test_bootstrap_normalizes_safe_relative_paths_without_accepting_absolute_paths(self) -> None:
         self.assertTrue(BOOTSTRAP.is_file(), "source bootstrap PowerShell script must exist")

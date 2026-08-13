@@ -62,6 +62,12 @@ CLIP 文件使用 OpenAI 官方 CDN：
   `https://github.com/lse14/e621-standard-capotion-workflow/releases/download/source-bootstrap-e621-v1/cpython-3.11.15-win-amd64.zip`；
   GitHub 返回 `33,887,443` bytes、`sha256:a7bef1285f1a0f4007de9ede5752f105dcf2b137d54670074d16503554fa0169`，
   项目 `-VerifyPublishedBootstrap` 已重新下载并字节验证。R14 CPU/NVIDIA 干净机验收仍未执行。
+- 2026-08-13：默认 `main` 新 clone 在 RTX 4090 开发机真实执行安装，下载基础资产前失败：
+  `Test-Path -LiteralPath $partial -and ...` 被 Windows PowerShell 解析为不存在的 `-and`
+  参数，且 `Get-Item` 对缺失 `.partial` 抛错。`bootstrap_install.ps1` 中三处 partial 检查和
+  一处解压失败清理均改为 `(Test-Path ...) -and ...`；回归测试扫描该非法形态。修复后
+  source-bootstrap 91/91、公开 Release 重新下载门禁及 manifest SHA 绑定通过。该开发机
+  预检仍为 `not-clean`，本次发现/修复不能记作 R14 干净机通过。
 
 - `Install-WebUI.bat` 当前只把 `Install` 动作转给 `desktop_control.ps1`。
 - `desktop_control.ps1` 当前要求 Core runtime 和 `resource-library` 已存在。

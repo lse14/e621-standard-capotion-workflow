@@ -154,7 +154,7 @@ function Get-VerifiedBootstrapArtifact([object]$Artifact, [string]$CacheRoot) {
         if (Test-VerifiedArtifact $complete $Artifact) { return $complete }
         Remove-Item -LiteralPath $complete -Force
     }
-    if (Test-Path -LiteralPath $partial -and (Get-Item -LiteralPath $partial -Force).Length -ge $sizeBytes) {
+    if ((Test-Path -LiteralPath $partial) -and (Get-Item -LiteralPath $partial -Force).Length -ge $sizeBytes) {
         Remove-Item -LiteralPath $partial -Force
     }
     for ($attempt = 1; $attempt -le 3; $attempt++) {
@@ -192,7 +192,7 @@ function Get-VerifiedBootstrapArtifact([object]$Artifact, [string]$CacheRoot) {
             } finally { $target.Dispose() }
         } catch {
             if ($null -ne $response) { $response.Close() }
-            if (Test-Path -LiteralPath $partial -and (Get-Item -LiteralPath $partial -Force).Length -ge $sizeBytes) {
+            if ((Test-Path -LiteralPath $partial) -and (Get-Item -LiteralPath $partial -Force).Length -ge $sizeBytes) {
                 $actual = Get-Sha256Hex $partial
                 $actualSize = (Get-Item -LiteralPath $partial -Force).Length
                 Remove-Item -LiteralPath $partial -Force
@@ -206,7 +206,7 @@ function Get-VerifiedBootstrapArtifact([object]$Artifact, [string]$CacheRoot) {
             [System.IO.File]::Move($partial, $complete)
             return $complete
         }
-        if (Test-Path -LiteralPath $partial -and (Get-Item -LiteralPath $partial -Force).Length -ge $sizeBytes) {
+        if ((Test-Path -LiteralPath $partial) -and (Get-Item -LiteralPath $partial -Force).Length -ge $sizeBytes) {
             $actual = Get-Sha256Hex $partial
             $actualSize = (Get-Item -LiteralPath $partial -Force).Length
             Remove-Item -LiteralPath $partial -Force
@@ -251,7 +251,7 @@ function Expand-SafeBootstrapArchive([string]$ArchivePath, [string]$Destination)
             } finally { $output.Dispose() }
         }
     } catch {
-        if (Test-Path -LiteralPath $destination -and -not (Test-ReparsePoint $destination)) {
+        if ((Test-Path -LiteralPath $destination) -and -not (Test-ReparsePoint $destination)) {
             [System.IO.Directory]::Delete($destination, $true)
         }
         throw
