@@ -70,6 +70,12 @@ $required = @(
 foreach ($path in $required) {
     if (-not (Test-Path -LiteralPath $path)) { throw "Bootstrap base is missing required artifact: $path" }
 }
+$sitePackages = Join-Path $base 'Lib\site-packages'
+if (-not (Test-Path -LiteralPath $sitePackages -PathType Container) -or
+    (Get-Item -LiteralPath $sitePackages -Force).Attributes -band [System.IO.FileAttributes]::ReparsePoint -or
+    @(Get-ChildItem -LiteralPath $sitePackages -Force).Count -ne 0) {
+    throw 'Bootstrap base site-packages must be empty'
+}
 $pth = Get-Content -LiteralPath (Join-Path $base 'python311._pth') -Raw -Encoding UTF8
 if ($pth -notmatch '(?m)^Lib$' -or $pth -notmatch '(?m)^Lib/site-packages$') {
     throw 'Bootstrap python311._pth does not enable the bundled standard library'

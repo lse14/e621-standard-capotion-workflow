@@ -42,6 +42,13 @@ CLIP 文件使用 OpenAI 官方 CDN：
 
 ## 当前证据
 
+- 2026-08-14：外部日志 `source-bootstrap-20260813T151803Z.log` 记录 NVIDIA 路线已下载
+  bootstrap，但标准库安装器以 `duplicate wheel path: Lib\\site-packages\\anima_caption_format\\flat_txt.py`
+  退出。公开资产审计确认 ZIP 含 982 个 site-packages 条目，包括 `anima_core` 与
+  `anima_caption_format`；资产冲突文件为 2,939 bytes，而当前源码为 3,007 bytes。根因是
+  错把完整开发 core runtime 当作 CPython 基础输入，不是 WebUI 启动错误。基础资产 builder
+  现要求 `Lib\\site-packages` 存在、普通且为空，污染输入必须在写 ZIP 前失败。
+
 - 2026-08-13：用户报告安装后点击启动“闪退”。代码核对确认 `Start-WebUI.bat` 原先直接
   `exit /b %ERRORLEVEL%`，所以 PowerShell 前置错误会让双击窗口立即消失。已改为捕获退出码，
   失败时显示 launcher 日志目录并 `pause`；成功路径不变。该补丁只改善错误可见性，具体后端

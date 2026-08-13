@@ -204,6 +204,8 @@ class SourceBootstrapReleaseBuildTests(unittest.TestCase):
         self.assertIn("python311._pth", source)
         self.assertIn("-B -I -c", source)
         self.assertIn("sys.version_info[:3] == (3, 11, 15)", source)
+        self.assertIn("Lib\\site-packages", source)
+        self.assertIn("Bootstrap base site-packages must be empty", source)
         self.assertIn("Add-Type -AssemblyName System.IO.Compression\n", source)
         self.assertIn("System.IO.Compression", source)
         self.assertNotIn("pip install", source.lower())
