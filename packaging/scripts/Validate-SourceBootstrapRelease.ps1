@@ -119,7 +119,11 @@ function Read-JsonFile([string]$Path, [string]$Label) {
         Stop-ReleaseGate "$Label is missing"
     }
     try {
-        return [System.IO.File]::ReadAllText($Path, [System.Text.Encoding]::UTF8) | ConvertFrom-Json
+        $json = [System.IO.File]::ReadAllText($Path, [System.Text.Encoding]::UTF8)
+        if ((Get-Command ConvertFrom-Json).Parameters.ContainsKey('DateKind')) {
+            return $json | ConvertFrom-Json -DateKind String
+        }
+        return $json | ConvertFrom-Json
     } catch {
         Stop-ReleaseGate "$Label is not valid JSON"
     }
@@ -234,12 +238,20 @@ function Assert-LicenseEvidenceUri([string]$Value, [string]$Label) {
     return $uri.AbsoluteUri
 }
 
-function Assert-UtcTimestamp([string]$Value, [string]$Label) {
-    if ($Value -notmatch '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$') {
-        Stop-ReleaseGate "$Label is not an ISO-8601 UTC timestamp"
+function Assert-UtcTimestamp([string]$TimestampText, [string]$TimestampLabel) {
+    if ($TimestampText -notmatch '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$') {
+        Stop-ReleaseGate "$TimestampLabel is not an ISO-8601 UTC timestamp"
     }
-    try { [void][DateTime]::ParseExact($Value, 'yyyy-MM-ddTHH:mm:ssZ', [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::AssumeUniversal) }
-    catch { Stop-ReleaseGate "$Label is not an ISO-8601 UTC timestamp" }
+    try {
+        [void][DateTime]::ParseExact(
+            $TimestampText,
+            'yyyy-MM-ddTHH:mm:ssZ',
+            [Globalization.CultureInfo]::InvariantCulture,
+            [Globalization.DateTimeStyles]::AssumeUniversal
+        )
+    } catch {
+        Stop-ReleaseGate "$TimestampLabel is not an ISO-8601 UTC timestamp"
+    }
 }
 
 function Get-LicenseReferences([object]$Manifest) {
@@ -410,6 +422,7 @@ function Assert-Manifest([object]$Manifest) {
         $id = [string](Get-RequiredProperty $component 'componentId' 'component')
         if ($ids.ContainsKey($id)) { Stop-ReleaseGate "duplicate componentId: $id" }
         $ids[$id] = $true
+        $kind = [string](Get-RequiredProperty $component 'kind' "component $id")
         $target = Assert-SafeRelative ([string](Get-RequiredProperty $component 'targetRelativePath' "component $id")) "component $id targetRelativePath"
         if ($targets.ContainsKey($target.ToLowerInvariant())) { Stop-ReleaseGate "duplicate component target: $target" }
         $targets[$target.ToLowerInvariant()] = $true
@@ -420,7 +433,7 @@ function Assert-Manifest([object]$Manifest) {
             $record = $variantProperty.Value
             if ([Int64](Get-RequiredProperty $record 'peakBytes' "component $id/$variant") -le 0) { Stop-ReleaseGate "component $id/$variant peakBytes is invalid" }
             $artifacts = @((Get-RequiredProperty $record 'artifacts' "component $id/$variant"))
-            if ($artifacts.Count -eq 0) { Stop-ReleaseGate "component $id/$variant has no artifacts" }
+            if ($artifacts.Count -eq 0 -and $kind -ne 'runtime') { Stop-ReleaseGate "component $id/$variant has no artifacts" }
             $variantTargets = @{}
             foreach ($artifact in $artifacts) {
                 Assert-Artifact $artifact $hosts $root "component $id/$variant artifact"

@@ -3,26 +3,31 @@
   "manifest": {
     "schemaVersion": 1,
     "releaseVersion": "source-bootstrap-e621-v1",
-    "sourceCommit": "359e1836ce91c4c6718c0baadcbc8420090b9d6e",
+    "sourceCommit": "790502c806f813cca2609281fdf6a687886f90d8",
     "allowedHosts": [
       "files.pythonhosted.org",
       "huggingface.co",
       "openaipublic.azureedge.net",
       "download-r2.pytorch.org",
       "download.pytorch.org",
-      "paddle-whl.bj.bcebos.com"
+      "paddle-whl.bj.bcebos.com",
+      "github.com",
+      "release-assets.githubusercontent.com"
     ],
     "bootstrap": {
       "artifact": {
         "id": "cpython311-base",
-        "delivery": "candidate-release",
-        "candidatePath": ".release-candidate/bootstrap/cpython-3.11.15-win-amd64.zip",
-        "sizeBytes": 33264397,
-        "sha256": "f7a36991fc6ac035f7e3bd30fd8badd06d4309590323bedda2ec958aa0d17096",
+        "url": "https://github.com/lse14/anima-idg-standard-annotation-processing/releases/download/source-bootstrap-e621-v1/cpython-3.11.15-win-amd64.zip",
+        "allowedHosts": [
+          "github.com",
+          "release-assets.githubusercontent.com"
+        ],
+        "sizeBytes": 33887443,
+        "sha256": "a7bef1285f1a0f4007de9ede5752f105dcf2b137d54670074d16503554fa0169",
         "relativePath": "bootstrap/cpython-3.11.15-win-amd64.zip"
       },
       "entryRelativePath": "python.exe",
-      "peakBytes": 66528794
+      "peakBytes": 67774886
     },
     "components": [
       {
@@ -3021,13 +3026,13 @@
   "releaseArtifacts": {
     "schemaVersion": 1,
     "releaseVersion": "source-bootstrap-e621-v1",
-    "publicationState": "candidate",
+    "publicationState": "published",
     "artifacts": [
       {
         "id": "cpython311-base",
-        "candidatePath": ".release-candidate/bootstrap/cpython-3.11.15-win-amd64.zip",
-        "candidateSizeBytes": 33264397,
-        "candidateSha256": "f7a36991fc6ac035f7e3bd30fd8badd06d4309590323bedda2ec958aa0d17096"
+        "publishedUrl": "https://github.com/lse14/anima-idg-standard-annotation-processing/releases/download/source-bootstrap-e621-v1/cpython-3.11.15-win-amd64.zip",
+        "sizeBytes": 33887443,
+        "sha256": "a7bef1285f1a0f4007de9ede5752f105dcf2b137d54670074d16503554fa0169"
       }
     ]
   },

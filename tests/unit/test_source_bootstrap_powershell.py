@@ -5,6 +5,7 @@ import tempfile
 import unittest
 import json
 import hashlib
+import shutil
 from pathlib import Path
 
 
@@ -174,7 +175,8 @@ class SourceBootstrapPowerShellTests(unittest.TestCase):
         self.assertIn("[Environment]::Is64BitOperatingSystem", script)
         self.assertIn("Get-Volume", script)
         self.assertIn("install-manifest.json", script)
-        self.assertIn("Get-FileHash", script)
+        self.assertIn("Get-Sha256Hex", script)
+        self.assertNotIn("Get-FileHash", script)
         self.assertIn("Range", script)
         self.assertIn("install.py", script)
         self.assertIn("--bootstrap-runtime", script)
@@ -275,20 +277,26 @@ class SourceBootstrapPowerShellTests(unittest.TestCase):
             self.assertFalse((project_root / ".runtime-build" / "source-bootstrap").exists())
 
     def test_install_batch_passes_a_valid_project_root_to_powershell(self) -> None:
-        completed = subprocess.run(
-            ["cmd.exe", "/d", "/c", str(ROOT / "Install-WebUI.bat")],
-            cwd=ROOT,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            encoding="cp936",
-            errors="replace",
-            check=False,
-        )
-        output = completed.stdout + completed.stderr
-        self.assertNotEqual(0, completed.returncode)
-        self.assertIn("Frozen install manifest is missing", output)
-        self.assertNotIn("Illegal characters in path", output)
+        with tempfile.TemporaryDirectory() as temporary_name:
+            project_root = Path(temporary_name)
+            script_dir = project_root / "packaging" / "scripts"
+            script_dir.mkdir(parents=True)
+            (project_root / "Install-WebUI.bat").write_bytes((ROOT / "Install-WebUI.bat").read_bytes())
+            (script_dir / "bootstrap_install.ps1").write_bytes(BOOTSTRAP.read_bytes())
+            completed = subprocess.run(
+                ["cmd.exe", "/d", "/c", str(project_root / "Install-WebUI.bat")],
+                cwd=project_root,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding="cp936",
+                errors="replace",
+                check=False,
+            )
+            output = completed.stdout + completed.stderr
+            self.assertNotEqual(0, completed.returncode)
+            self.assertIn("Frozen install manifest is missing", output)
+            self.assertNotIn("Illegal characters in path", output)
 
     def test_bootstrap_has_a_private_success_cleanup_path(self) -> None:
         script = self._bootstrap_text()
@@ -438,6 +446,41 @@ class SourceBootstrapPowerShellTests(unittest.TestCase):
             )
             self.assertNotEqual(0, tampered.returncode)
             self.assertIn("source-tree artifact identity does not match", tampered.stdout + tampered.stderr)
+
+    def test_release_validator_accepts_strict_utc_ledger_timestamps_in_powershell_7(self) -> None:
+        pwsh = shutil.which("pwsh")
+        if pwsh is None:
+            self.skipTest("PowerShell 7 is not available")
+        with tempfile.TemporaryDirectory() as temporary_name:
+            root = Path(temporary_name)
+            self._write_published_release_fixture(root)
+            self._write_license_ledger_fixture(root)
+            completed = subprocess.run(
+                [pwsh, "-NoProfile", "-File", str(RELEASE_VALIDATOR), "-ProjectRoot", str(root)],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(0, completed.returncode, completed.stdout + completed.stderr)
+
+    def test_release_validator_rejects_invalid_utc_calendar_timestamp(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_name:
+            root = Path(temporary_name)
+            self._write_published_release_fixture(root)
+            ledger_path = self._write_license_ledger_fixture(root)
+            ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
+            ledger["entries"][0]["evidenceRetrievedAtUtc"] = "2026-99-99T00:00:00Z"
+            ledger_path.write_text(json.dumps(ledger), encoding="utf-8")
+            completed = subprocess.run(
+                ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(RELEASE_VALIDATOR), "-ProjectRoot", str(root)],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=False,
+            )
+            self.assertNotEqual(0, completed.returncode)
+            self.assertIn("is not an ISO-8601 UTC timestamp", completed.stdout + completed.stderr)
 
     def test_release_validator_rejects_missing_license_ledger_entry(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_name:

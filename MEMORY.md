@@ -42,6 +42,20 @@ CLIP 文件使用 OpenAI 官方 CDN：
 
 ## 当前证据
 
+- 2026-08-13：生产发布元数据已在 `codex/source-bootstrap-installer` 工作树生成；CPython
+  3.11.15 ZIP 的本地已核对身份为 `33,887,443` bytes、SHA-256
+  `a7bef1285f1a0f4007de9ede5752f105dcf2b137d54670074d16503554fa0169`，provenance
+  绑定实现提交 `790502c806f813cca2609281fdf6a687886f90d8`。安装器绑定的
+  `install-manifest.json` SHA-256 为
+  `1a0a968a83813ce5b54906f2f18b88473d10ebb4ef598693087ee86649ea3eb0`。
+- 发布前本地证据：source-bootstrap 单元测试 89/89、inventory 审计、候选资产独立
+  verifier、Windows PowerShell 5.1 与 PowerShell 7 发布门禁均通过。PowerShell 7 会把
+  ISO UTC JSON 值反序列化为 `DateTime`，validator 现使用 `ConvertFrom-Json -DateKind String`
+  保留严格 UTC 原文；回归测试覆盖该差异。
+- 上述不是公开 Release 或干净机成功证据。公开上传后必须用
+  `Validate-SourceBootstrapRelease.ps1 -VerifyPublishedBootstrap` 重新下载并核对；CPU 和
+  NVIDIA 仍必须在未安装开发工具的独立主机上执行验收脚本。
+
 - `Install-WebUI.bat` 当前只把 `Install` 动作转给 `desktop_control.ps1`。
 - `desktop_control.ps1` 当前要求 Core runtime 和 `resource-library` 已存在。
 - `.gitignore` 排除了 `.runtime-build`、`packaging/wheelhouse`、`resource-library` 和

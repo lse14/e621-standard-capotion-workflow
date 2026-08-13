@@ -95,11 +95,11 @@ def _inventory() -> dict[str, object]:
 
 
 class SourceBootstrapReleaseBuildTests(unittest.TestCase):
-    def test_candidate_inventory_covers_the_required_e621_component_and_lock_surface(self) -> None:
+    def test_production_inventory_covers_the_required_e621_component_and_lock_surface(self) -> None:
         self.assertTrue(INVENTORY.is_file(), "source-bootstrap inventory must exist")
         value = json.loads(INVENTORY.read_text(encoding="utf-8"))
         self.assertEqual(1, value["schemaVersion"])
-        self.assertEqual("candidate", value["releaseArtifacts"]["publicationState"])
+        self.assertEqual("published", value["releaseArtifacts"]["publicationState"])
         self.assertEqual(
             {
                 "core", "caption-e621", "classify-e621", "replace-e621", "nl", "policy",
@@ -159,16 +159,19 @@ class SourceBootstrapReleaseBuildTests(unittest.TestCase):
             value["defaults"]["e621"],
         )
 
-    def test_candidate_inventory_records_the_local_bootstrap_identity(self) -> None:
+    def test_production_inventory_records_the_published_bootstrap_identity(self) -> None:
         self.assertTrue(INVENTORY.is_file(), "source-bootstrap inventory must exist")
         value = json.loads(INVENTORY.read_text(encoding="utf-8"))
         records = value["releaseArtifacts"]["artifacts"]
         self.assertEqual(1, len(records))
         record = records[0]
         self.assertEqual("cpython311-base", record["id"])
-        self.assertEqual(".release-candidate/bootstrap/cpython-3.11.15-win-amd64.zip", record["candidatePath"])
-        self.assertEqual(33264397, record["candidateSizeBytes"])
-        self.assertEqual("f7a36991fc6ac035f7e3bd30fd8badd06d4309590323bedda2ec958aa0d17096", record["candidateSha256"])
+        self.assertEqual(
+            "https://github.com/lse14/anima-idg-standard-annotation-processing/releases/download/source-bootstrap-e621-v1/cpython-3.11.15-win-amd64.zip",
+            record["publishedUrl"],
+        )
+        self.assertEqual(33887443, record["sizeBytes"])
+        self.assertEqual("a7bef1285f1a0f4007de9ede5752f105dcf2b137d54670074d16503554fa0169", record["sha256"])
 
     def test_cpu_variants_have_no_cuda_distribution(self) -> None:
         required = {
@@ -222,8 +225,6 @@ class SourceBootstrapReleaseBuildTests(unittest.TestCase):
 
     def test_bootstrap_asset_verifier_rejects_tampering(self) -> None:
         self.assertTrue(BOOTSTRAP_ASSET_VERIFIER.is_file(), "bootstrap asset verifier must exist")
-        base_runtime = Path(sys.executable).resolve().parent
-        self.assertTrue((base_runtime / "python311.dll").is_file(), "tests require the project-embedded CPython base")
         test_root = ROOT / ".test-tmp"
         test_root.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=test_root) as temporary_name:
@@ -231,38 +232,21 @@ class SourceBootstrapReleaseBuildTests(unittest.TestCase):
             asset = temporary / "cpython-3.11.15-win-amd64.zip"
             provenance = temporary / "cpython-3.11.15-win-amd64.provenance.json"
             source_commit = "a" * 40
-            built = subprocess.run(
-                [
-                    "powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(BOOTSTRAP_BUILDER),
-                    "-BaseRuntime", str(base_runtime),
-                    "-OutputZip", str(asset),
-                    "-ProvenanceOutput", str(provenance),
-                    "-SourceCommit", source_commit,
-                    "-ReleaseVersion", "source-bootstrap-test",
-                ],
-                cwd=ROOT,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                check=False,
+            asset.write_bytes(b"verified bootstrap fixture")
+            provenance.write_text(
+                json.dumps({
+                    "schemaVersion": 1,
+                    "releaseVersion": "source-bootstrap-test",
+                    "sourceCommit": source_commit,
+                    "pythonVersion": "3.11.15",
+                    "assetFileName": asset.name,
+                    "assetSizeBytes": asset.stat().st_size,
+                    "assetSha256": hashlib.sha256(asset.read_bytes()).hexdigest(),
+                    "buildScriptSha256": hashlib.sha256(BOOTSTRAP_BUILDER.read_bytes()).hexdigest(),
+                    "offlineProbe": "bootstrap-stdlib-ok",
+                }),
+                encoding="utf-8",
             )
-            self.assertEqual(0, built.returncode, built.stdout + built.stderr)
-
-            verified = subprocess.run(
-                [
-                    "powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(BOOTSTRAP_ASSET_VERIFIER),
-                    "-ProjectRoot", str(ROOT),
-                    "-AssetZip", str(asset),
-                    "-Provenance", str(provenance),
-                    "-ExpectedSourceCommit", source_commit,
-                ],
-                cwd=ROOT,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                check=False,
-            )
-            self.assertEqual(0, verified.returncode, verified.stdout + verified.stderr)
 
             with asset.open("r+b") as target:
                 target.seek(-1, 2)

@@ -6,7 +6,7 @@ param(
 $ErrorActionPreference = 'Stop'
 
 # The release build replaces this only after publishing the exact matching inventory.
-$ExpectedInstallManifestSha256 = ''
+$ExpectedInstallManifestSha256 = '1a0a968a83813ce5b54906f2f18b88473d10ebb4ef598693087ee86649ea3eb0'
 $script:projectRoot = [System.IO.Path]::GetFullPath($ProjectRoot)
 $script:runtimeBuildRoot = Join-Path $script:projectRoot '.runtime-build'
 $script:logPath = $null
@@ -54,6 +54,13 @@ function Write-InstallLog([string]$Message) {
     Write-Host $Message
 }
 
+function Get-Sha256Hex([string]$Path) {
+    $stream = [System.IO.File]::Open($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read)
+    $algorithm = [System.Security.Cryptography.SHA256]::Create()
+    try { return [System.BitConverter]::ToString($algorithm.ComputeHash($stream)).Replace('-', '').ToLowerInvariant() }
+    finally { $algorithm.Dispose(); $stream.Dispose() }
+}
+
 function Get-RequiredProperty([object]$Value, [string]$Name) {
     $property = $Value.PSObject.Properties[$Name]
     if ($null -eq $property -or $null -eq $property.Value) {
@@ -99,7 +106,7 @@ function Format-ManualDownloadMessage([object]$Artifact, [string]$Reason) {
 function Test-VerifiedArtifact([string]$Path, [object]$Artifact) {
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $false }
     if ((Get-Item -LiteralPath $Path -Force).Length -ne [Int64]$Artifact.sizeBytes) { return $false }
-    return ((Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant() -eq ([string]$Artifact.sha256).ToLowerInvariant())
+    return ((Get-Sha256Hex $Path) -eq ([string]$Artifact.sha256).ToLowerInvariant())
 }
 
 function Open-ApprovedResponse([string]$Url, [object[]]$AllowedHosts, [Int64]$Offset) {
@@ -186,7 +193,7 @@ function Get-VerifiedBootstrapArtifact([object]$Artifact, [string]$CacheRoot) {
         } catch {
             if ($null -ne $response) { $response.Close() }
             if (Test-Path -LiteralPath $partial -and (Get-Item -LiteralPath $partial -Force).Length -ge $sizeBytes) {
-                $actual = (Get-FileHash -LiteralPath $partial -Algorithm SHA256).Hash.ToLowerInvariant()
+                $actual = Get-Sha256Hex $partial
                 $actualSize = (Get-Item -LiteralPath $partial -Force).Length
                 Remove-Item -LiteralPath $partial -Force
                 throw (Format-ManualDownloadMessage $Artifact "Bootstrap checksum mismatch: received $actualSize bytes with SHA-256 $actual")
@@ -200,7 +207,7 @@ function Get-VerifiedBootstrapArtifact([object]$Artifact, [string]$CacheRoot) {
             return $complete
         }
         if (Test-Path -LiteralPath $partial -and (Get-Item -LiteralPath $partial -Force).Length -ge $sizeBytes) {
-            $actual = (Get-FileHash -LiteralPath $partial -Algorithm SHA256).Hash.ToLowerInvariant()
+            $actual = Get-Sha256Hex $partial
             $actualSize = (Get-Item -LiteralPath $partial -Force).Length
             Remove-Item -LiteralPath $partial -Force
             throw (Format-ManualDownloadMessage $Artifact "Bootstrap checksum mismatch: received $actualSize bytes with SHA-256 $actual")
@@ -343,7 +350,7 @@ try {
     if ($ExpectedInstallManifestSha256 -notmatch '^[a-f0-9]{64}$') {
         throw 'This source snapshot has no published source-bootstrap manifest identity; obtain a matching released source ZIP.'
     }
-    $actualManifestSha256 = (Get-FileHash -LiteralPath $manifestPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $actualManifestSha256 = Get-Sha256Hex $manifestPath
     if ($actualManifestSha256 -ne $ExpectedInstallManifestSha256) { throw 'Frozen install manifest SHA-256 does not match the source release identity' }
     $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
     $nvidiaAvailable = Test-NvidiaAvailable

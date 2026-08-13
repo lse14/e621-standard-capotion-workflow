@@ -115,4 +115,4 @@ SHA-256，将原始归档放入项目根 `ocr-model-archives`，再双击 `Insta
 没有 `-OcrMode` 参数，且只在项目内离线探测成功后发布 OCR 资源。
 
 在逐项核对许可证、版本、来源和适用限制前，不得把上述模型镜像到项目 Release；
-`Validate-SourceBootstrapRelease.ps1` 会拒绝包含 `license unverified` 状态的公开门禁。
+`Validate-SourceBootstrapRelease.ps1` 会拒绝包含未解决许可证状态的公开门禁。
