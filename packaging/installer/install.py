@@ -261,12 +261,15 @@ def _assemble_component(
         for artifact in item.variant.artifacts
     }
     if item.runtime_id is not None:
-        wheels = [artifact_paths[artifact.artifact_id] for artifact in item.variant.artifacts]
+        wheels = [
+            (artifact_paths[artifact.artifact_id], artifact.relative_path)
+            for artifact in item.variant.artifacts
+        ]
         assemble_runtime(
             layout,
             item,
             base_runtime=base_runtime,
-            wheel_paths=wheels,
+            wheels=wheels,
             destination=stage,
             owner_sources=_owner_sources(source_root, item.runtime_id),
         )

@@ -353,6 +353,17 @@ class SourceBootstrapPowerShellTests(unittest.TestCase):
             self.assertFalse(result["bootstrap"])
             self.assertFalse(result["transactions"])
 
+    def test_failure_cleanup_cannot_replace_the_original_installer_error(self) -> None:
+        script = self._bootstrap_text()
+        outer_catch = script.rfind("} catch {\n    $originalError = $_")
+        self.assertNotEqual(-1, outer_catch)
+        catch_block = script[outer_catch:]
+
+        self.assertIn("$originalError = $_", catch_block)
+        self.assertLess(catch_block.index("$originalError = $_"), catch_block.index("Clear-BootstrapFailureArtifacts"))
+        self.assertIn("Bootstrap failure cleanup also failed", catch_block)
+        self.assertIn("$originalError.Exception.Message", catch_block)
+
     def test_bootstrap_starts_webui_and_mentions_the_manual_ocr_guide(self) -> None:
         script = self._bootstrap_text()
 

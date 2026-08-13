@@ -282,7 +282,7 @@ def assemble_runtime(
     item: PlannedComponent,
     *,
     base_runtime: str | Path,
-    wheel_paths: list[str | Path],
+    wheels: list[tuple[str | Path, str]],
     destination: str | Path,
     owner_sources: Mapping[str, str | Path] | None = None,
 ) -> tuple[str, ...]:
@@ -298,9 +298,10 @@ def assemble_runtime(
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copytree(base, target, symlinks=False)
         seen: set[str] = set()
-        for raw_wheel in wheel_paths:
+        for raw_wheel, manifest_relative_path in wheels:
             wheel = assert_within_root(layout.project_root, raw_wheel)
-            if not wheel.is_file() or wheel.suffix.lower() != ".whl":
+            manifest_name = PureWindowsPath(safe_relative(manifest_relative_path)).name
+            if not wheel.is_file() or wheel.is_symlink() or not manifest_name.lower().endswith(".whl"):
                 raise AssemblyError(f"wheel input is invalid: {wheel}")
             extracted = layout.staging / (".wheel-" + hashlib.sha256(str(wheel).encode("utf-8")).hexdigest())
             if extracted.exists():

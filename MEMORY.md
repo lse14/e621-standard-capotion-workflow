@@ -76,6 +76,15 @@ CLIP 文件使用 OpenAI 官方 CDN：
   后的受信任目录插入模块路径，测试及实际 `--help` 调用随后退出 0。提交前新鲜验证为
   source-bootstrap 92/92、Python 编译、PowerShell AST、inventory 审计、公开 Release 字节
   重下和发布门禁均成功。真实组件下载、离线 probe、WebUI 启动和 R14 干净机验收仍未完成。
+- 2026-08-13：公开 `main@3ff876ef0c513b3a1bcda61d095f89af25aeb589` 的新 clone
+  已进入真实 runtime 下载。首个 `annotated_doc-0.0.4` wheel 的 manifest 身份为 5,303 bytes、
+  SHA-256 `571ac1dc6991c450b25a9c2d84a3705e2ae7a53467b5d111c24fa8baabbed320`；下载器按
+  SHA 命名完整缓存，而 runtime 装配错误检查缓存文件名后缀，导致所有生产 wheel 必然被拒绝。
+  装配接口现同时接收缓存路径与受清单约束的相对路径，以后者验证 `.whl`、以前者安全解压；
+  回归覆盖无扩展名缓存成功、非 wheel 清单名拒绝、重复路径拒绝。另因 PowerShell catch 在保存
+  原始错误前清理刚退出的 bootstrap runtime，`libcrypto-3.dll` 的短暂占用会用 Access Denied
+  覆盖真正 wheel 错误；catch 现保留并最终报告原错，清理失败只作为附加日志。提交前新鲜执行
+  source-bootstrap 95/95、Python 编译、PowerShell AST、inventory 与公开发布门禁均成功。
 
 - `Install-WebUI.bat` 当前只把 `Install` 动作转给 `desktop_control.ps1`。
 - `desktop_control.ps1` 当前要求 Core runtime 和 `resource-library` 已存在。

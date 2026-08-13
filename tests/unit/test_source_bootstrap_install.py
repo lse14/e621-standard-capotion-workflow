@@ -764,10 +764,60 @@ class SourceBootstrapInstallTests(unittest.TestCase):
                     layout,
                     item,
                     base_runtime=base,
-                    wheel_paths=wheels,
+                    wheels=[(wheel, wheel.name) for wheel in wheels],
                     destination=layout.staging / "core",
                 )
             self.assertFalse((layout.staging / "core").exists())
+
+    def test_runtime_assembly_uses_manifest_name_for_hash_named_wheel_cache(self) -> None:
+        assemble, manifest_module = _modules()
+        manifest = manifest_module.load_manifest(fixture_manifest())
+        item = assemble.installation_plan(manifest, accelerator="cpu").components[0]
+        with tempfile.TemporaryDirectory() as temporary_name:
+            root = Path(temporary_name)
+            layout = assemble.ProjectLayout.create(root)
+            layout.ensure_directories()
+            base = root / "base"
+            (base / "Lib").mkdir(parents=True)
+            (base / "python.exe").write_bytes(b"python")
+            wheel_cache = root / ("a" * 64)
+            with zipfile.ZipFile(wheel_cache, "w") as archive:
+                archive.writestr("Lib/site-packages/fixture_pkg/__init__.py", "VALUE = 1\n")
+
+            destination = layout.staging / "core"
+            assemble.assemble_runtime(
+                layout,
+                item,
+                base_runtime=base,
+                wheels=[(wheel_cache, "wheels/core/fixture-1.0-py3-none-any.whl")],
+                destination=destination,
+            )
+
+            self.assertTrue((destination / "Lib" / "site-packages" / "fixture_pkg" / "__init__.py").is_file())
+
+    def test_runtime_assembly_rejects_non_wheel_manifest_name(self) -> None:
+        assemble, manifest_module = _modules()
+        manifest = manifest_module.load_manifest(fixture_manifest())
+        item = assemble.installation_plan(manifest, accelerator="cpu").components[0]
+        with tempfile.TemporaryDirectory() as temporary_name:
+            root = Path(temporary_name)
+            layout = assemble.ProjectLayout.create(root)
+            layout.ensure_directories()
+            base = root / "base"
+            (base / "Lib").mkdir(parents=True)
+            (base / "python.exe").write_bytes(b"python")
+            wheel_cache = root / ("b" * 64)
+            with zipfile.ZipFile(wheel_cache, "w") as archive:
+                archive.writestr("Lib/site-packages/fixture_pkg/__init__.py", "VALUE = 1\n")
+
+            with self.assertRaisesRegex(assemble.AssemblyError, "wheel input is invalid"):
+                assemble.assemble_runtime(
+                    layout,
+                    item,
+                    base_runtime=base,
+                    wheels=[(wheel_cache, "wheels/core/not-a-wheel.zip")],
+                    destination=layout.staging / "core",
+                )
 
     def test_runtime_assembly_copies_owner_source_and_strips_build_helpers(self) -> None:
         assemble, manifest_module = _modules()
@@ -800,7 +850,7 @@ class SourceBootstrapInstallTests(unittest.TestCase):
                 layout,
                 item,
                 base_runtime=base,
-                wheel_paths=[wheel],
+                wheels=[(wheel, wheel.name)],
                 destination=destination,
                 owner_sources={"anima_core": owner},
             )
@@ -869,7 +919,7 @@ class SourceBootstrapInstallTests(unittest.TestCase):
                     layout,
                     item,
                     base_runtime=base,
-                    wheel_paths=[],
+                    wheels=[],
                     destination=outside,
                 )
 

@@ -387,8 +387,15 @@ try {
     Clear-BootstrapSuccessArtifacts
     Write-InstallLog 'Source bootstrap completed successfully.'
 } catch {
-    Clear-BootstrapFailureArtifacts
-    $message = $_.Exception.Message
+    $originalError = $_
+    try {
+        Clear-BootstrapFailureArtifacts
+    } catch {
+        if ($null -ne $script:logPath) {
+            Write-InstallLog ("Bootstrap failure cleanup also failed: {0}" -f $_.Exception.Message)
+        }
+    }
+    $message = $originalError.Exception.Message
     if ($null -ne $script:logPath) { Write-InstallLog ("FAILED: $message") }
     Write-Error $message
     exit 1

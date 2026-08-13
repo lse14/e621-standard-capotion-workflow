@@ -78,6 +78,13 @@ SDK，即可得到可离线运行的 E621 打标、质量评分、Qwen3 tokenize
   通过；source-bootstrap 92 项、Python 编译、PowerShell AST、inventory 审计、公开资产
   字节重下和发布门禁均退出 0。尚需发布修复并从全新 clone 继续完整 NVIDIA 安装，R14
   不因此完成。
+- [x] 2026-08-13：公开 `main@3ff876ef0c513b3a1bcda61d095f89af25aeb589` 的
+  `F:\AnimaSourceBootstrapNvidiaValidation-20260813-03` 继续到首个 runtime wheel，确定性
+  复现 SHA-256 命名的无扩展名缓存被 `assemble_runtime()` 误判为非 `.whl`；PowerShell
+  失败清理同时因刚退出 Python 仍占用 `libcrypto-3.dll` 而用 Access Denied 覆盖原错。
+  runtime 现用受清单约束的 `artifact.relativePath` 判断 wheel 类型，仍从已校验缓存读取并
+  走安全 ZIP 解压；外层 catch 先保存原错，清理错误仅追加日志。两项均按红绿回归修复，
+  source-bootstrap 95 项及全部发布门禁通过；尚需发布后从新 clone 继续端到端安装。
 
 ## 验收标准
 
