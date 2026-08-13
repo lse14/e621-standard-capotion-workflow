@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 2,
+  "defaults": {
+    "e621": {
+      "replacementIndex": "replace-e621-20260726-v2",
+      "classificationIndex": "classify-e621-20260724-v1",
+      "taggingModel": "caption-e621-eva02-large-full-v1",
+      "dropoutModel": "lse14-scorer-5k-v1"
+    }
+  }
+}

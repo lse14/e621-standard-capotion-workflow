@@ -788,7 +788,7 @@ def _safe_extract_tar(archive_path: Path, destination: Path) -> Path:
 def _resolve_and_stage_runtime(layout: OcrProjectLayout, stage: Path, build_python: Path) -> tuple[Path, Path, Path]:
     stage_requirements = stage / "requirements"
     stage_wheelhouse = stage / "wheelhouse"
-    source_wheelhouse = assert_project_path(layout.project_root, layout.manual_model_downloads.parent / "wheels")
+    source_wheelhouse = assert_project_path(layout.project_root, layout.wheelhouse_target)
     if not source_wheelhouse.is_dir():
         raise OcrResourceError("project-local OCR wheel cache is unavailable")
     _assert_tree_safe(source_wheelhouse)

@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "kind": "tagging-model",
+  "resourceId": "caption-e621-eva02-large-full-v1",
+  "resourceVersion": "nzs234/eva02_large_E621_FULL_V1",
+  "profile": "e621",
+  "displayName": {
+    "zh-CN": "EVA02 Large E621 Full V1",
+    "en": "EVA02 Large E621 Full V1"
+  },
+  "description": {
+    "zh-CN": "从图片生成 E621 标签，适合通用图片打标。",
+    "en": "Generates E621 tags from images for general tagging."
+  },
+  "runtimeFormat": "e621-eva02-onnx-v1",
+  "entrypoints": {
+    "model": "model.onnx",
+    "modelData": "model.onnx.data",
+    "preprocess": "preprocess.json",
+    "tags": "tags.json",
+    "thresholds": "thresholds.json"
+  },
+  "files": {
+    "model.onnx": {
+      "sizeBytes": 2527938,
+      "sha256": "51f6873c7d8618cfceb6b335dbe41815d46992b5df41c153dbe08669b77ec49b"
+    },
+    "model.onnx.data": {
+      "sizeBytes": 1254617088,
+      "sha256": "989921eb3ab6e1e5c2cfb4d3c2a79c93c597b3593abe37d0ceca66f63f7478a3"
+    },
+    "preprocess.json": {
+      "sizeBytes": 686,
+      "sha256": "7636e9b8681f7546f1fe552c6435bec143df07149da14898e1a0a93cda204e3e"
+    },
+    "tags.json": {
+      "sizeBytes": 1158490,
+      "sha256": "c3c08618a2eca940d55a105318fd3983c3e9ea21603ee4941ee1a110082b1808"
+    },
+    "thresholds.json": {
+      "sizeBytes": 82,
+      "sha256": "eefb3b6d6fff504614aedfcdade6a984b241ddb1b45bb384b3f85a2eb028e5af"
+    }
+  },
+  "metadata": {
+    "tagCount": 8783,
+    "categories": [
+      "general",
+      "character",
+      "species",
+      "rating"
+    ]
+  },
+  "documentation": []
+}

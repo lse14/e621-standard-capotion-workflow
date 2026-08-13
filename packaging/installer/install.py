@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib.util
 import json
 import os
@@ -27,7 +28,15 @@ from assemble import (
 )
 from download import download_verified
 from manifest import Artifact, InstallManifest, ManifestError, load_manifest_path, sha256_bytes
-from paths import ProjectLayout, cleanup_failure, cleanup_success, publish_directories, recover_transactions, safe_relative
+from paths import (
+    ProjectLayout,
+    assert_within_root,
+    cleanup_failure,
+    cleanup_success,
+    publish_directories,
+    recover_transactions,
+    safe_relative,
+)
 
 
 ArtifactFetcher = Callable[[Artifact], Path]
@@ -164,7 +173,7 @@ def _complete_manual_ocr_archives(project_root: Path) -> bool:
 
 
 def _has_optional_ocr_model_input(project_root: Path) -> bool:
-    return (project_root / "ocr-model-archives").exists() or (
+    return _complete_manual_ocr_archives(project_root) or (
         project_root / _OCR_RESOURCE_RELATIVE
     ).exists()
 
@@ -193,6 +202,39 @@ def _stage_target(stage_root: Path, item: PlannedComponent) -> Path:
     return stage_root.joinpath(*relative)
 
 
+def _source_tree_artifact_path(source_root: Path, artifact: Artifact) -> Path:
+    if artifact.delivery != "source-tree" or artifact.source_relative_path is None:
+        raise AssemblyError(f"source-tree artifact identity is invalid: {artifact.artifact_id}")
+    try:
+        relative = safe_relative(artifact.source_relative_path)
+        path = assert_within_root(
+            source_root,
+            source_root / Path(relative.replace("\\", os.sep)),
+        )
+    except Exception as exc:
+        raise AssemblyError(f"source-tree artifact path is unsafe: {artifact.artifact_id}") from exc
+    if not path.is_file() or path.is_symlink():
+        raise AssemblyError(f"source-tree artifact is missing or unsafe: {artifact.artifact_id}")
+    digest = hashlib.sha256()
+    size = 0
+    try:
+        with path.open("rb") as source:
+            for chunk in iter(lambda: source.read(1024 * 1024), b""):
+                size += len(chunk)
+                digest.update(chunk)
+    except OSError as exc:
+        raise AssemblyError(f"source-tree artifact is unreadable: {artifact.artifact_id}") from exc
+    if size != artifact.size_bytes or digest.hexdigest() != artifact.sha256:
+        raise AssemblyError(f"source-tree artifact identity does not match: {artifact.artifact_id}")
+    return path
+
+
+def _resolve_artifact(source_root: Path, artifact: Artifact, fetch: ArtifactFetcher) -> Path:
+    if artifact.delivery == "source-tree":
+        return _source_tree_artifact_path(source_root, artifact)
+    return fetch(artifact)
+
+
 def _remove_staged_component(stage: Path) -> None:
     if not stage.exists():
         return
@@ -210,7 +252,10 @@ def _assemble_component(
     base_runtime: str | Path,
     fetch: ArtifactFetcher,
 ) -> None:
-    artifact_paths = {artifact.artifact_id: fetch(artifact) for artifact in item.variant.artifacts}
+    artifact_paths = {
+        artifact.artifact_id: _resolve_artifact(source_root, artifact, fetch)
+        for artifact in item.variant.artifacts
+    }
     if item.runtime_id is not None:
         wheels = [artifact_paths[artifact.artifact_id] for artifact in item.variant.artifacts]
         assemble_runtime(
@@ -291,7 +336,7 @@ def _classify_probe_failures(
         for component_id, item in items.items()
         if component_id == "ocr-gpu"
         and item.variant.name == "cuda"
-        and results.get(component_id) is not True
+        and results.get(component_id) is False
     }
     failures = sorted(
         component_id
@@ -415,6 +460,11 @@ def install_project(
                 final_components.remove(item)
                 final_pending.remove(item)
                 messages.append("OCR GPU offline probe failed; GPU runtime was not published and OCR CPU remains selected")
+        elif any(
+            item.component.component_id == "ocr-gpu" and results.get("ocr-gpu") is None
+            for item in pending
+        ):
+            messages.append("OCR GPU model functionality was not verified; GPU runtime remains installed")
 
         final_plan = InstallationPlan(plan.accelerator, tuple(final_components))
         if fallback_ids:

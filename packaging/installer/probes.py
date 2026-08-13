@@ -162,7 +162,7 @@ def validate_evidence(component_id: str, variant: str, evidence: Mapping[str, ob
         if component_id == "ocr-gpu" and (variant != "cuda" or not _device_is_gpu(device)):
             raise ProbeError("GPU OCR probe did not use CUDA")
         return True
-    if component_id == "e621-indexes":
+    if component_id in {"e621-indexes", "e621-replacement-indexes"}:
         if kind != "indexes" or type(evidence.get("resourceCount")) is not int or evidence["resourceCount"] < 1:
             raise ProbeError("E621 index probe evidence is invalid")
         return True
@@ -400,23 +400,34 @@ print(json.dumps({"kind": "ocr", "device": paddle.get_device(), "resultCount": l
     )
 
 
+def _index_kind_for_target(resource_target: Path) -> str:
+    parts = {part.casefold() for part in resource_target.parts}
+    if "classification-indexes" in parts:
+        return "classification-index"
+    if "replacement-indexes" in parts:
+        return "replacement-index"
+    raise ProbeError(f"offline probe target is not an E621 index package: {resource_target}")
+
+
 def _probe_indexes(runtime: Path, resource_target: Path, *, runner: Runner | None) -> dict[str, object]:
     library = _resource_root(resource_target)
+    kind = _index_kind_for_target(resource_target)
     script = """
 import json
 import sys
 from pathlib import Path
-from anima_core.resource_catalog import ResourceCatalog
+from anima_core.resource_catalog_package import ResourcePackage
 
-snapshot = ResourceCatalog(Path(sys.argv[1])).scan()
-if snapshot.invalid:
-    raise RuntimeError("resource catalog contains invalid E621 indexes")
-print(json.dumps({"kind": "indexes", "resourceCount": len(snapshot.resources)}, sort_keys=True))
+package_root = Path(sys.argv[1])
+kind = sys.argv[2]
+library = Path(sys.argv[3])
+package = ResourcePackage.load(library, package_root / "resource.json", kind)
+print(json.dumps({"kind": "indexes", "resourceCount": 1, "resourceId": package.resource_id}, sort_keys=True))
 """
     return run_json_probe(
         runtime / "python.exe",
         script,
-        (str(library),),
+        (str(resource_target), kind, str(library)),
         cwd=_runtime_root(runtime),
         environment=offline_environment(resource_root=library),
         runner=runner,
@@ -534,5 +545,14 @@ def run_offline_probes(
             runner=runner,
         ),
         "e621-indexes",
+    )
+    run_group(
+        ("e621-replacement-indexes",),
+        lambda: _probe_indexes(
+            _target(component_targets, "core"),
+            _target(component_targets, "e621-replacement-indexes"),
+            runner=runner,
+        ),
+        "e621-replacement-indexes",
     )
     return results

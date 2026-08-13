@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib.util
 import json
 import os
@@ -84,8 +85,6 @@ def parse_lock(path: Path) -> dict[str, LockedWheel]:
         if wheel.distribution in wheels:
             raise ManifestBuildError(f"wheel lock has duplicate distribution: {path}: {wheel.distribution}")
         wheels[wheel.distribution] = wheel
-    if not wheels:
-        raise ManifestBuildError(f"wheel lock has no artifacts: {path}")
     return wheels
 
 
@@ -135,13 +134,19 @@ def _raw_component_variant(manifest: dict[str, object], selector: str) -> list[o
     raise ManifestBuildError(f"variant lock selector has no matching component: {selector}")
 
 
-def _validate_release_identity(manifest: dict[str, object], release_artifacts: object, contract: Any) -> None:
+def _validated_release_artifacts(release_artifacts: object, contract: Any) -> dict[str, object]:
     try:
-        release = contract.validate_release_artifacts(release_artifacts)
+        return contract.validate_release_artifacts(release_artifacts)
     except contract.ManifestError as exc:
         raise ManifestBuildError(str(exc)) from exc
+
+
+def _validate_release_identity(manifest: dict[str, object], release_artifacts: object, contract: Any) -> None:
+    release = _validated_release_artifacts(release_artifacts, contract)
     if release["releaseVersion"] != manifest["releaseVersion"]:
         raise ManifestBuildError("release artifact version does not match install manifest")
+    if release["publicationState"] != "published":
+        raise ManifestBuildError("bootstrap artifact has no published release identity")
     records = {record["id"]: record for record in release["artifacts"]}
     bootstrap = manifest.get("bootstrap")
     if not isinstance(bootstrap, dict) or not isinstance(bootstrap.get("artifact"), dict):
@@ -155,19 +160,82 @@ def _validate_release_identity(manifest: dict[str, object], release_artifacts: o
             raise ManifestBuildError("bootstrap artifact does not match its published release identity")
 
 
-def build_manifest(inventory: object, requirements_root: str | Path) -> dict[str, object]:
+def _validate_candidate_identity(manifest: dict[str, object], release: dict[str, object], contract: Any) -> None:
+    if release["publicationState"] != "candidate":
+        return
+    bootstrap = manifest.get("bootstrap")
+    if not isinstance(bootstrap, dict) or not isinstance(bootstrap.get("artifact"), dict):
+        raise ManifestBuildError("bootstrap artifact is invalid")
+    artifact = bootstrap["artifact"]
+    if artifact.get("delivery") != "candidate-release":
+        return
+    records = {record["id"]: record for record in release["artifacts"]}
+    record = records.get(artifact.get("id"))
+    if record is None:
+        raise ManifestBuildError("candidate bootstrap artifact has no release record")
+    artifact_candidate_path = contract.load_manifest(
+        manifest,
+        allow_candidate_delivery=True,
+    ).bootstrap_artifact.candidate_path
+    if (
+        artifact_candidate_path != record["candidatePath"]
+        or artifact.get("sizeBytes") != record["candidateSizeBytes"]
+        or artifact.get("sha256") != record["candidateSha256"]
+    ):
+        raise ManifestBuildError("candidate bootstrap artifact does not match its release record")
+
+
+def validate_published_asset(path: str | Path, declared_record: object) -> dict[str, object]:
+    """Verify a downloaded public release asset against its declared immutable identity."""
+    if not isinstance(declared_record, dict) or set(declared_record) != {"id", "publishedUrl", "sizeBytes", "sha256"}:
+        raise ManifestBuildError("published release artifact record is invalid")
+    contract = _load_manifest_contract()
+    try:
+        release = contract.validate_release_artifacts(
+            {
+                "schemaVersion": 1,
+                "releaseVersion": "validation",
+                "publicationState": "published",
+                "artifacts": [declared_record],
+            }
+        )
+    except contract.ManifestError as exc:
+        raise ManifestBuildError(str(exc)) from exc
+    record = release["artifacts"][0]
+    asset = Path(path)
+    try:
+        digest = hashlib.sha256()
+        size = 0
+        with asset.open("rb") as source:
+            for chunk in iter(lambda: source.read(1024 * 1024), b""):
+                size += len(chunk)
+                digest.update(chunk)
+    except OSError as exc:
+        raise ManifestBuildError(f"published release asset is unreadable: {asset}") from exc
+    if size != record["sizeBytes"] or digest.hexdigest() != record["sha256"]:
+        raise ManifestBuildError("downloaded release asset does not match declared identity")
+    return record
+
+
+def audit_inventory(inventory: object, requirements_root: str | Path) -> dict[str, object]:
     """Validate a complete developer inventory and return the generated manifest value."""
-    if not isinstance(inventory, dict) or set(inventory) != {"manifest", "releaseArtifacts", "variantLocks"}:
+    if not isinstance(inventory, dict) or set(inventory) != {"schemaVersion", "manifest", "releaseArtifacts", "variantLocks"} or inventory["schemaVersion"] != 1:
         raise ManifestBuildError("inventory fields are invalid")
+    contract = _load_manifest_contract()
+    release = _validated_release_artifacts(inventory["releaseArtifacts"], contract)
     manifest = inventory["manifest"]
     if not isinstance(manifest, dict):
         raise ManifestBuildError("manifest inventory is invalid")
-    contract = _load_manifest_contract()
     try:
-        contract.load_manifest(manifest)
+        contract.load_manifest(
+            manifest,
+            allow_candidate_delivery=release["publicationState"] == "candidate",
+        )
     except contract.ManifestError as exc:
         raise ManifestBuildError(str(exc)) from exc
-    _validate_release_identity(manifest, inventory["releaseArtifacts"], contract)
+    if release["releaseVersion"] != manifest["releaseVersion"]:
+        raise ManifestBuildError("release artifact version does not match install manifest")
+    _validate_candidate_identity(manifest, release, contract)
     variant_locks = inventory["variantLocks"]
     if not isinstance(variant_locks, dict) or not variant_locks:
         raise ManifestBuildError("variant locks are invalid")
@@ -185,6 +253,13 @@ def build_manifest(inventory: object, requirements_root: str | Path) -> dict[str
             missing = ", ".join(sorted(set(locked) - matched))
             extra = ", ".join(sorted(matched - set(locked)))
             raise ManifestBuildError(f"wheel artifacts do not exactly match lock {lock_name}: missing={missing}; extra={extra}")
+    return manifest
+
+
+def build_manifest(inventory: object, requirements_root: str | Path) -> dict[str, object]:
+    """Return a production manifest only when its release identity is published."""
+    manifest = audit_inventory(inventory, requirements_root)
+    _validate_release_identity(manifest, inventory["releaseArtifacts"], _load_manifest_contract())
     return manifest
 
 
@@ -209,14 +284,22 @@ def main() -> int:
     parser.add_argument("--inventory", type=Path, required=True)
     parser.add_argument("--requirements-root", type=Path, required=True)
     parser.add_argument("--output", type=Path)
+    parser.add_argument("--release-output", type=Path)
     parser.add_argument("--validate-only", action="store_true")
     arguments = parser.parse_args()
     if not arguments.validate_only and arguments.output is None:
         parser.error("--output is required unless --validate-only is used")
+    if arguments.validate_only and (arguments.output is not None or arguments.release_output is not None):
+        parser.error("--validate-only cannot write release outputs")
     inventory = _read_inventory(arguments.inventory)
-    manifest = build_manifest(inventory, arguments.requirements_root)
+    manifest = audit_inventory(inventory, arguments.requirements_root) if arguments.validate_only else build_manifest(inventory, arguments.requirements_root)
     if arguments.output is not None:
         write_manifest(manifest, arguments.output, _load_manifest_contract())
+    if arguments.release_output is not None:
+        release = _validated_release_artifacts(inventory["releaseArtifacts"], _load_manifest_contract())
+        if release["publicationState"] != "published":
+            raise ManifestBuildError("release artifacts are not published")
+        write_manifest(release, arguments.release_output, _load_manifest_contract())
     print(f"validated source bootstrap manifest for {manifest['releaseVersion']}")
     return 0
 

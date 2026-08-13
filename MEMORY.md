@@ -255,3 +255,43 @@ CLIP 文件使用 OpenAI 官方 CDN：
 - 2026-08-12：基础资产 builder/verifier 的离线标准库 probe 已收紧为精确 CPython
   `3.11.15`（而非仅 `3.11`）；release-build 单测 5 项通过。后续源码提交仍需重新生成
   候选 ZIP/provenance，不能复用旧 commit 身份。
+- 2026-08-13：Task 12 新增 `packaging/installer/license-ledger.json` 并把它接入
+  `Validate-SourceBootstrapRelease.ps1`。每个 production manifest `licenseReference` 必须有
+  严格字段的账本条目；direct-upstream-only、local-only 与 project-source 必须为
+  `not-mirrored`，source-redistributed 只有 `approved` 且具有精确 source-tree 文件身份绑定的
+  决定才能通过。项目内嵌 CPython 运行定向 PowerShell 测试 14 项通过。
+- 2026-08-13：项目负责人通过 `user-confirmed-project-owner` 确认当前两套 E621 派生索引可
+  随源码/GitHub 分发。账本将决定限定为分类索引三文件和替换索引三文件的当前大小/SHA-256，
+  并记录 E621 Terms URL/响应 SHA-256。它是项目分发决定，不是 E621 上游许可或完整法律审核；
+  `docs/THIRD_PARTY_NOTICES.md` 保留 Terms 风险及下游核对边界。
+- 2026-08-13：Task 13 新增真实干净机验收运行器和公开说明，`.gitignore` 只放行
+  `docs/SOURCE_BOOTSTRAP_ACCEPTANCE.md`。运行器只在项目 `.runtime-build\acceptance` 写证据，
+  检查 Python/py/Node/npm/nvcc/cl/Windows SDK；完整模式才运行 `Install-WebUI.bat`，且 finally
+  调用 `Stop-WebUI.bat`。源码 ZIP 无 `.git` 时记录 `sourceCommit: null`，不使预检失败。
+- 2026-08-13：本开发机 `-PreflightOnly` 的真实 JSON 状态为 `not-clean`，退出 1；检测到系统
+  Python、py、Node、npm、nvcc、cl、Windows SDK，未调用安装器或 WebUI。它不能替代四个
+  物理/隔离 VM 场景中的 CPU/NVIDIA 验收。
+- 2026-08-13：Task 14 仅执行变更相关本地门禁：source-bootstrap PowerShell 测试 16 项、
+  inventory `--validate-only` 和 `git diff --check` 均成功。候选 CPython ZIP verifier 针对
+  HEAD `1cba8eb0617a2bf87b832461c12b58843ad8ffaf` 以 provenance commit 不匹配退出 1；默认
+  release validator 以 `install-manifest.json is missing` 退出 1。两者都是预期 fail-closed
+  结果，不得伪装为可公开发布或干净机成功。
+- 2026-08-13：后续缺陷复核补齐四项 source-bootstrap OCR 行为：指南测试只禁止实际
+  `Install-WebUI.bat -OcrMode` 命令形态；`ocr-gpu` 仅在离线 probe 显式 `False` 时丢弃，
+  `None` 保留 CUDA runtime 并记录模型未验证；1 或 2 个手动归档仅提示指南，三份齐全但
+  导入失败仍 fail closed；完整 OCR runtime 重建使用既有
+  `packaging\wheelhouse\ocr-paddle` 缓存。
+- 2026-08-13：干净机验收运行器不再在 Stop 前写入 `passed`。只有安装器、安装状态和
+  `Stop-WebUI.bat` 全部成功才通过；Stop 缺失或退出非零写入 `failed`，避免假阳性验收记录。
+- 2026-08-13：使用 `E:\Desktop\Anima idg标准标注处理\.runtime-build\runtimes\core\python.exe`
+  对 `D:` 工作树新鲜执行 source-bootstrap 单测 88 项、desktop-control 单测 6 项，均通过；
+  inventory audit 成功。完整 OCR script 套件为 14 项通过、2 项显式跳过，因为该隔离源码树
+  没有自己的 embedded Core runtime；该环境限制不构成 OCR 功能通过证据。
+- 2026-08-13：修复 Start 或后续步骤失败时的 bootstrap 缓存回归：失败清理保留完整和
+  `.partial` CPython 下载，仍删除 staging、展开 bootstrap 和 transactions。下次使用完整缓存前
+  继续做大小/SHA-256 校验，失效文件仍会删除。PowerShell 动态回归构造两类缓存并确认失败清理
+  后均保留。
+- 2026-08-13：真实运行 `Install-WebUI.bat` 发现 `-ProjectRoot "%~dp0"` 会因 `%~dp0` 的
+  尾部反斜杠把非法引号传给 Windows PowerShell。入口改用 `-ProjectRoot "%~dp0."`；动态回归
+  与实际 BAT 均确认路径错误消失，当前按设计停在缺少生产 `install-manifest.json` 的发布门禁。
+  `test_source_bootstrap_powershell.py` 22 项通过。

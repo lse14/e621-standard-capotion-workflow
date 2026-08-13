@@ -17,6 +17,7 @@ REQUIREMENTS = ROOT / "packaging" / "requirements"
 BOOTSTRAP_BUILDER = ROOT / "packaging" / "scripts" / "build_bootstrap_runtime.ps1"
 BOOTSTRAP_ASSET_VERIFIER = ROOT / "packaging" / "scripts" / "Test-BootstrapRuntimeAsset.ps1"
 MANIFEST_BUILDER = ROOT / "packaging" / "scripts" / "build_install_manifest.py"
+INVENTORY = ROOT / "packaging" / "installer" / "source-bootstrap.inventory.json"
 
 
 def _load_manifest_builder():
@@ -48,6 +49,7 @@ def _inventory() -> dict[str, object]:
     wheel_hash = "a" * 64
     bootstrap_hash = "b" * 64
     return {
+        "schemaVersion": 1,
         "manifest": {
             "schemaVersion": 1,
             "releaseVersion": "source-bootstrap-v1",
@@ -78,6 +80,7 @@ def _inventory() -> dict[str, object]:
         "releaseArtifacts": {
             "schemaVersion": 1,
             "releaseVersion": "source-bootstrap-v1",
+            "publicationState": "published",
             "artifacts": [
                 {
                     "id": "cpython311-base",
@@ -92,6 +95,81 @@ def _inventory() -> dict[str, object]:
 
 
 class SourceBootstrapReleaseBuildTests(unittest.TestCase):
+    def test_candidate_inventory_covers_the_required_e621_component_and_lock_surface(self) -> None:
+        self.assertTrue(INVENTORY.is_file(), "source-bootstrap inventory must exist")
+        value = json.loads(INVENTORY.read_text(encoding="utf-8"))
+        self.assertEqual(1, value["schemaVersion"])
+        self.assertEqual("candidate", value["releaseArtifacts"]["publicationState"])
+        self.assertEqual(
+            {
+                "core", "caption-e621", "classify-e621", "replace-e621", "nl", "policy",
+                "export", "token-budget", "ocr-cpu", "e621-indexes", "e621-tagger",
+                "e621-replacement-indexes", "qwen3-tokenizer", "quality-stack", "ocr-gpu",
+            },
+            {item["componentId"] for item in value["manifest"]["components"]},
+        )
+        self.assertEqual(
+            {
+                "core:cpu", "caption-e621:cpu", "caption-e621:cuda", "classify-e621:cpu",
+                "replace-e621:cpu", "nl:cpu", "policy:cpu", "policy:cuda", "export:cpu",
+                "token-budget:cpu", "ocr-cpu:cpu", "ocr-gpu:cuda",
+            },
+            set(value["variantLocks"]),
+        )
+        module = _load_manifest_builder()
+        self.assertIsNotNone(module, "source bootstrap manifest builder must exist")
+        self.assertEqual("source-bootstrap-e621-v1", module.audit_inventory(value, REQUIREMENTS)["releaseVersion"])
+
+    def test_candidate_inventory_keeps_e621_indexes_in_independent_resource_packages(self) -> None:
+        self.assertTrue(INVENTORY.is_file(), "source-bootstrap inventory must exist")
+        value = json.loads(INVENTORY.read_text(encoding="utf-8"))
+        components = {item["componentId"]: item for item in value["manifest"]["components"]}
+
+        expected = {
+            "e621-indexes": {
+                "target": "resource-library/classification-indexes/e621-classify-20260724-v1",
+                "files": {"resource.json", "e621_tag_dictionary.json", "e621_count_wiki.sqlite3"},
+            },
+            "e621-replacement-indexes": {
+                "target": "resource-library/replacement-indexes/e621-replace-20260726-v2",
+                "files": {"resource.json", "e621_tag_replacement_index.csv", "e621_tag_replacement_index_manual_zh.docx"},
+            },
+        }
+        for component_id, contract in expected.items():
+            with self.subTest(component_id=component_id):
+                component = components[component_id]
+                self.assertEqual(contract["target"], component["targetRelativePath"])
+                artifacts = component["variants"]["shared"]["artifacts"]
+                self.assertEqual(contract["files"], {artifact["relativePath"] for artifact in artifacts})
+                self.assertTrue(all(artifact["delivery"] == "source-tree" for artifact in artifacts))
+
+    def test_source_bootstrap_defaults_are_e621_only_and_tracked_for_the_installer(self) -> None:
+        defaults = ROOT / "resource-library" / "defaults.json"
+        self.assertTrue(defaults.is_file(), "source-bootstrap defaults must exist")
+        value = json.loads(defaults.read_text(encoding="utf-8"))
+        self.assertEqual(2, value["schemaVersion"])
+        self.assertEqual({"e621"}, set(value["defaults"]))
+        self.assertEqual(
+            {
+                "replacementIndex": "replace-e621-20260726-v2",
+                "classificationIndex": "classify-e621-20260724-v1",
+                "taggingModel": "caption-e621-eva02-large-full-v1",
+                "dropoutModel": "lse14-scorer-5k-v1",
+            },
+            value["defaults"]["e621"],
+        )
+
+    def test_candidate_inventory_records_the_local_bootstrap_identity(self) -> None:
+        self.assertTrue(INVENTORY.is_file(), "source-bootstrap inventory must exist")
+        value = json.loads(INVENTORY.read_text(encoding="utf-8"))
+        records = value["releaseArtifacts"]["artifacts"]
+        self.assertEqual(1, len(records))
+        record = records[0]
+        self.assertEqual("cpython311-base", record["id"])
+        self.assertEqual(".release-candidate/bootstrap/cpython-3.11.15-win-amd64.zip", record["candidatePath"])
+        self.assertEqual(33264397, record["candidateSizeBytes"])
+        self.assertEqual("f7a36991fc6ac035f7e3bd30fd8badd06d4309590323bedda2ec958aa0d17096", record["candidateSha256"])
+
     def test_cpu_variants_have_no_cuda_distribution(self) -> None:
         required = {
             "caption-e621-cpu.in", "caption-e621-cpu.lock", "caption-e621-cuda.in", "caption-e621-cuda.lock",
@@ -108,6 +186,13 @@ class SourceBootstrapReleaseBuildTests(unittest.TestCase):
         self.assertIn("onnxruntime-gpu==1.26.0", (REQUIREMENTS / "caption-e621-cuda.in").read_text(encoding="utf-8"))
         self.assertIn("torch==2.9.1+cu128", (REQUIREMENTS / "policy-cuda.in").read_text(encoding="utf-8"))
         self.assertIn("torch==2.9.1+cpu", (REQUIREMENTS / "policy-cpu.in").read_text(encoding="utf-8"))
+
+    def test_core_lock_excludes_unused_pywebview_and_the_sdist_only_proxy_tools(self) -> None:
+        core_input = (REQUIREMENTS / "core.in").read_text(encoding="utf-8").lower()
+        core_lock = (REQUIREMENTS / "core.lock").read_text(encoding="utf-8").lower()
+        self.assertNotIn("pywebview", core_input)
+        self.assertNotIn("pywebview", core_lock)
+        self.assertNotIn("proxy-tools", core_lock)
 
     def test_bootstrap_runtime_builder_has_an_offline_stdlib_contract_and_parses(self) -> None:
         self.assertTrue(BOOTSTRAP_BUILDER.is_file(), "bootstrap runtime builder must exist")
@@ -275,6 +360,96 @@ class SourceBootstrapReleaseBuildTests(unittest.TestCase):
             del incomplete_release["releaseArtifacts"]["artifacts"][0]["publishedUrl"]
             with self.assertRaisesRegex(module.ManifestBuildError, "release artifact record"):
                 module.build_manifest(incomplete_release, requirements_root)
+
+    def test_candidate_inventory_is_audit_only_and_cannot_build_manifest(self) -> None:
+        module = _load_manifest_builder()
+        self.assertIsNotNone(module, "source bootstrap manifest builder must exist")
+        with tempfile.TemporaryDirectory() as temporary_name:
+            requirements_root = Path(temporary_name)
+            (requirements_root / "caption-e621-cpu.lock").write_text(
+                "numpy==1.0 --hash=sha256:" + "a" * 64 + "\n", encoding="ascii"
+            )
+            candidate = _inventory()
+            candidate["releaseArtifacts"]["publicationState"] = "candidate"
+            candidate["releaseArtifacts"]["artifacts"] = [{
+                "id": "cpython311-base",
+                "candidatePath": ".release-candidate/bootstrap/cpython.zip",
+                "candidateSizeBytes": 1,
+                "candidateSha256": "b" * 64,
+            }]
+            with self.assertRaisesRegex(module.ManifestBuildError, "published release identity"):
+                module.build_manifest(candidate, requirements_root)
+
+    def test_candidate_inventory_can_be_audited_without_a_published_release(self) -> None:
+        module = _load_manifest_builder()
+        self.assertIsNotNone(module, "source bootstrap manifest builder must exist")
+        with tempfile.TemporaryDirectory() as temporary_name:
+            requirements_root = Path(temporary_name)
+            (requirements_root / "caption-e621-cpu.lock").write_text(
+                "numpy==1.0 --hash=sha256:" + "a" * 64 + "\n", encoding="ascii"
+            )
+            candidate = _inventory()
+            candidate["releaseArtifacts"]["publicationState"] = "candidate"
+            candidate["releaseArtifacts"]["artifacts"] = [{
+                "id": "cpython311-base",
+                "candidatePath": ".release-candidate/bootstrap/cpython.zip",
+                "candidateSizeBytes": 1,
+                "candidateSha256": "b" * 64,
+            }]
+
+            self.assertEqual("source-bootstrap-v1", module.audit_inventory(candidate, requirements_root)["releaseVersion"])
+
+    def test_candidate_inventory_accepts_a_safe_forward_slash_candidate_path(self) -> None:
+        module = _load_manifest_builder()
+        self.assertIsNotNone(module, "source bootstrap manifest builder must exist")
+        with tempfile.TemporaryDirectory() as temporary_name:
+            requirements_root = Path(temporary_name)
+            (requirements_root / "caption-e621-cpu.lock").write_text(
+                "numpy==1.0 --hash=sha256:" + "a" * 64 + "\n", encoding="ascii"
+            )
+            candidate = _inventory()
+            candidate["manifest"]["bootstrap"]["artifact"] = {
+                "id": "cpython311-base",
+                "delivery": "candidate-release",
+                "candidatePath": ".release-candidate/bootstrap/cpython.zip",
+                "sizeBytes": 1,
+                "sha256": "b" * 64,
+                "relativePath": "bootstrap/cpython.zip",
+            }
+            candidate["releaseArtifacts"]["publicationState"] = "candidate"
+            candidate["releaseArtifacts"]["artifacts"] = [{
+                "id": "cpython311-base",
+                "candidatePath": ".release-candidate/bootstrap/cpython.zip",
+                "candidateSizeBytes": 1,
+                "candidateSha256": "b" * 64,
+            }]
+
+            self.assertEqual("source-bootstrap-v1", module.audit_inventory(candidate, requirements_root)["releaseVersion"])
+
+    def test_published_asset_validation_rejects_size_or_digest_mismatch(self) -> None:
+        module = _load_manifest_builder()
+        self.assertIsNotNone(module, "source bootstrap manifest builder must exist")
+        with tempfile.TemporaryDirectory() as temporary_name:
+            asset = Path(temporary_name) / "asset.zip"
+            asset.write_bytes(b"published-bytes")
+            declared = {
+                "id": "bootstrap",
+                "publishedUrl": "https://github.com/example/project/releases/download/v1/asset.zip",
+                "sizeBytes": asset.stat().st_size,
+                "sha256": hashlib.sha256(asset.read_bytes()).hexdigest(),
+            }
+            self.assertEqual(declared["sha256"], module.validate_published_asset(asset, declared)["sha256"])
+            declared["sha256"] = "c" * 64
+            with self.assertRaisesRegex(module.ManifestBuildError, "does not match"):
+                module.validate_published_asset(asset, declared)
+
+    def test_empty_source_only_lock_is_valid(self) -> None:
+        module = _load_manifest_builder()
+        self.assertIsNotNone(module, "source bootstrap manifest builder must exist")
+        with tempfile.TemporaryDirectory() as temporary_name:
+            lock = Path(temporary_name) / "classify-e621.lock"
+            lock.write_text("# No third-party production dependencies for this runtime.\n", encoding="ascii")
+            self.assertEqual({}, module.parse_lock(lock))
 
 
 if __name__ == "__main__":

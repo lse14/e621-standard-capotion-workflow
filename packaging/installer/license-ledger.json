@@ -1,0 +1,147 @@
+{
+  "schemaVersion": 1,
+  "entries": [
+    {
+      "id": "python-runtime-wheels",
+      "delivery": "direct-upstream-only",
+      "officialSourceUrl": "https://www.python.org/downloads/windows/",
+      "licenseEvidenceUrl": "https://docs.python.org/3/license.html",
+      "evidenceRetrievedAtUtc": "2026-08-13T02:31:08Z",
+      "evidenceSha256": "bed8de5462473929065706d566170ef91eb4c21b6785d464507225a6a31630c2",
+      "reviewStatus": "evidence-collected",
+      "redistributionStatus": "not-mirrored"
+    },
+    {
+      "id": "onnxruntime-wheels",
+      "delivery": "direct-upstream-only",
+      "officialSourceUrl": "https://github.com/microsoft/onnxruntime",
+      "licenseEvidenceUrl": "https://raw.githubusercontent.com/microsoft/onnxruntime/main/LICENSE",
+      "evidenceRetrievedAtUtc": "2026-08-13T02:31:08Z",
+      "evidenceSha256": "2f07c72751aed99790b8a4869cf2311df85a860b22ded05fa22803587a48922c",
+      "reviewStatus": "evidence-collected",
+      "redistributionStatus": "not-mirrored"
+    },
+    {
+      "id": "project-source",
+      "delivery": "project-source",
+      "officialSourceUrl": "https://github.com/lse14/anima-idg-standard-annotation-processing",
+      "licenseEvidenceUrl": "https://github.com/lse14/anima-idg-standard-annotation-processing",
+      "evidenceRetrievedAtUtc": "2026-08-13T02:31:08Z",
+      "evidenceSha256": "51ddd20fd5752f961a246ed2ad970b13b7e593d6144b00a120d229efe7de95f5",
+      "reviewStatus": "evidence-collected",
+      "redistributionStatus": "not-mirrored"
+    },
+    {
+      "id": "pytorch-wheels",
+      "delivery": "direct-upstream-only",
+      "officialSourceUrl": "https://github.com/pytorch/pytorch",
+      "licenseEvidenceUrl": "https://raw.githubusercontent.com/pytorch/pytorch/main/LICENSE",
+      "evidenceRetrievedAtUtc": "2026-08-13T02:31:08Z",
+      "evidenceSha256": "bd018feef8825e88181c84eb7e3aa4eafb8f08a20d9fd6ef948569610c4a3e43",
+      "reviewStatus": "evidence-collected",
+      "redistributionStatus": "not-mirrored"
+    },
+    {
+      "id": "paddle-runtime-wheels",
+      "delivery": "direct-upstream-only",
+      "officialSourceUrl": "https://github.com/PaddlePaddle/Paddle",
+      "licenseEvidenceUrl": "https://raw.githubusercontent.com/PaddlePaddle/Paddle/develop/LICENSE",
+      "evidenceRetrievedAtUtc": "2026-08-13T02:31:08Z",
+      "evidenceSha256": "ff6311c56c1b22c9209c96cc8afc16da91c24ee55a15e14ebc46fe1960dbd856",
+      "reviewStatus": "evidence-collected",
+      "redistributionStatus": "not-mirrored"
+    },
+    {
+      "id": "e621-derived-indexes",
+      "delivery": "source-redistributed",
+      "officialSourceUrl": "https://e621.net/terms_of_use",
+      "licenseEvidenceUrl": "https://e621.net/terms_of_use",
+      "evidenceRetrievedAtUtc": "2026-08-13T02:31:08Z",
+      "evidenceSha256": "06e60f50afc77cd894b30df020cedf4599867540292904cd30e9c66f628e0096",
+      "reviewStatus": "evidence-collected",
+      "redistributionStatus": "approved"
+    },
+    {
+      "id": "e621-tagger",
+      "delivery": "direct-upstream-only",
+      "officialSourceUrl": "https://huggingface.co/nzs234/eva02_large_E621_FULL_V1",
+      "licenseEvidenceUrl": "https://huggingface.co/api/models/nzs234/eva02_large_E621_FULL_V1",
+      "evidenceRetrievedAtUtc": "2026-08-13T02:31:08Z",
+      "evidenceSha256": "4db93440df24768352fa794449c74d7900410d8042ddb3772149a2c8e2586fd0",
+      "reviewStatus": "evidence-collected",
+      "redistributionStatus": "not-mirrored"
+    },
+    {
+      "id": "qwen3-0-6b",
+      "delivery": "direct-upstream-only",
+      "officialSourceUrl": "https://huggingface.co/Qwen/Qwen3-0.6B",
+      "licenseEvidenceUrl": "https://huggingface.co/api/models/Qwen/Qwen3-0.6B",
+      "evidenceRetrievedAtUtc": "2026-08-13T02:31:08Z",
+      "evidenceSha256": "5d0efbd9fb31da63fbdaf7bdfef8f1b1232dffd9044f207a1ab56eb719c40904",
+      "reviewStatus": "evidence-collected",
+      "redistributionStatus": "not-mirrored"
+    },
+    {
+      "id": "lse14-quality-stack",
+      "delivery": "direct-upstream-only",
+      "officialSourceUrl": "https://huggingface.co/lse14/lse14-scorer",
+      "licenseEvidenceUrl": "https://huggingface.co/api/models/lse14/lse14-scorer",
+      "evidenceRetrievedAtUtc": "2026-08-13T02:31:08Z",
+      "evidenceSha256": "74486b9b273bd6e595a3d240db771d5a56420cf71a7b28762ac8fb4f71b16660",
+      "reviewStatus": "evidence-collected",
+      "redistributionStatus": "not-mirrored"
+    },
+    {
+      "id": "paddleocr-manual-model-archives",
+      "delivery": "local-only",
+      "officialSourceUrl": "https://www.paddleocr.ai/latest/en/version3.x/model_list.html",
+      "licenseEvidenceUrl": "https://www.paddleocr.ai/latest/en/version3.x/model_list.html",
+      "evidenceRetrievedAtUtc": "2026-08-13T02:31:08Z",
+      "evidenceSha256": "39b26d9c680f4075b4715d48aa246635f413ac604aa5af9fe8386feb3d79b26c",
+      "reviewStatus": "evidence-collected",
+      "redistributionStatus": "not-mirrored"
+    }
+  ],
+  "decisions": [
+    {
+      "id": "e621-indexes-project-owner-distribution-2026-08-13",
+      "licenseReference": "e621-derived-indexes",
+      "source": "user-confirmed-project-owner",
+      "decidedAtUtc": "2026-08-13T02:31:08Z",
+      "termsUrl": "https://e621.net/terms_of_use",
+      "termsSha256": "06e60f50afc77cd894b30df020cedf4599867540292904cd30e9c66f628e0096",
+      "approvedArtifacts": [
+        {
+          "sourceRelativePath": "resource-library/classification-indexes/e621-classify-20260724-v1/resource.json",
+          "sizeBytes": 1866,
+          "sha256": "ddc526323922c597d6166707806d73a622e905ba0c3560d450bcf561372baa5c"
+        },
+        {
+          "sourceRelativePath": "resource-library/classification-indexes/e621-classify-20260724-v1/e621_tag_dictionary.json",
+          "sizeBytes": 37569404,
+          "sha256": "87c42e0021ea637bc93195c6d37ac4f8b967dd989a8bd5de4b7ebb7546264e59"
+        },
+        {
+          "sourceRelativePath": "resource-library/classification-indexes/e621-classify-20260724-v1/e621_count_wiki.sqlite3",
+          "sizeBytes": 73728,
+          "sha256": "6aa0f944f07de490413aa49bf59d6ead555b6eeaad2e00022dedd6109d0abff9"
+        },
+        {
+          "sourceRelativePath": "resource-library/replacement-indexes/e621-replace-20260726-v2/resource.json",
+          "sizeBytes": 1133,
+          "sha256": "bb0f968cb2001b6a7257b052b01a20196473407223149c77acb1a92db169e24a"
+        },
+        {
+          "sourceRelativePath": "resource-library/replacement-indexes/e621-replace-20260726-v2/e621_tag_replacement_index.csv",
+          "sizeBytes": 3902020,
+          "sha256": "24ad8388580a6c3628dec44bd813897c278e4f1b04fccd810f22acaf97c1cbe7"
+        },
+        {
+          "sourceRelativePath": "resource-library/replacement-indexes/e621-replace-20260726-v2/e621_tag_replacement_index_manual_zh.docx",
+          "sizeBytes": 50481,
+          "sha256": "b0ed916512c9f4bf2329fa311cfe8b53ac738249042d1850b80293c6d3fc9e0f"
+        }
+      ]
+    }
+  ]
+}

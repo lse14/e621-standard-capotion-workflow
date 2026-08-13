@@ -283,6 +283,62 @@ SDK，即可得到可离线运行的 E621 打标、质量评分、Qwen3 tokenize
 
 ## R13.2 进行记录
 
+- [x] 2026-08-13：补齐 source-bootstrap OCR/验收回归。下载指南测试仅禁止实际命令
+  `Install-WebUI.bat -OcrMode`，保留“参数不存在”的文字说明；OCR GPU probe 仅在显式
+  `False` 时丢弃，模型缺失导致 `None` 时仍发布 CUDA runtime 并记录模型功能未验证；1 或
+  2 个手动归档不会加载导入器，基础安装保留成功提示，三份齐全但导入失败仍 fail closed；完整
+  OCR runtime 重建从 `packaging\wheelhouse\ocr-paddle` 读取缓存。
+- [x] 2026-08-13：验收运行器仅在 `Install-WebUI.bat`、安装状态校验和
+  `Stop-WebUI.bat` 均成功后写入 `passed`。Stop 缺失或非零将结果设为 `failed` 并写入
+  JSON，避免停止失败被伪装成干净机验收通过。
+- [x] 2026-08-13：使用 `E:` 项目内嵌 Core Python 对 `D:` 源码运行 source-bootstrap
+  单测 88 项、desktop-control 单测 6 项，均通过；OCR wrapper 的路径/文档契约通过，
+  inventory `--validate-only` 输出 `validated source bootstrap manifest for
+  source-bootstrap-e621-v1`。完整 OCR script 套件为 14 项通过、2 项因 `D:` 源码树未安装
+  embedded Core runtime 而显式跳过；这不构成 OCR runtime、真实模型或干净机验证。
+- [x] 2026-08-13：`bootstrap_install.ps1` 的失败清理只删除 staging、展开的 bootstrap
+  和 transactions；不再删除已验证的 CPython 缓存或可续传 partial。重试时完整缓存仍先执行
+  大小/SHA-256 验证，验证失败的文件仍由下载器删除。新增动态回归以 Start 失败后的失败清理
+  验证完整/partial 缓存保留、临时目录删除。
+- [x] 2026-08-13：真实执行 `Install-WebUI.bat` 发现 `%~dp0` 的尾部反斜杠使 Windows
+  PowerShell 收到含非法引号的 `ProjectRoot`；入口改为同仓库已有的 `%~dp0.` 形式。动态回归
+  确认 BAT 现可到达预期的 manifest 门禁且不再输出 `Illegal characters in path`；
+  `test_source_bootstrap_powershell.py` 22 项通过。
+- [x] 2026-08-13：Task 14 最小本地复核完成。项目内嵌 CPython 定向运行
+  `test_source_bootstrap_powershell.py` 16 项通过；
+  `build_install_manifest.py --inventory source-bootstrap.inventory.json --validate-only` 成功；
+  `git diff --check` 退出 0（仅有既有 CRLF 归一化警告）。未运行全量回归。
+- [!] 2026-08-13：`Test-BootstrapRuntimeAsset.ps1` 针对当前 HEAD
+  `1cba8eb0617a2bf87b832461c12b58843ad8ffaf` 退出 1：candidate provenance source commit
+  不匹配。候选 ZIP 仍为本地、未发布资产，不能用于当前 commit 的生产身份。
+- [!] 2026-08-13：默认 `Validate-SourceBootstrapRelease.ps1 -ProjectRoot .` 退出 1：
+  `install-manifest.json is missing`。这是无公开 CPython Release identity / production manifest
+  的 fail-closed 门禁；不表示安装成功或公开发布可用。真实 CPU/NVIDIA 干净机仍未运行。
+
+- [x] 2026-08-13：新增 `Invoke-SourceBootstrapAcceptance.ps1`、
+  `docs/SOURCE_BOOTSTRAP_ACCEPTANCE.md` 和 README 入口。运行器只在项目内
+  `.runtime-build\acceptance` 写入 JSON；它区分 `passed`、`failed`、`not-clean`，检查
+  Python/py/Node/npm/nvcc/cl/Windows SDK，并在完整模式的 finally 调用 `Stop-WebUI.bat`。
+  无 `.git` 的源码 ZIP 保持 `sourceCommit: null`，不影响干净机预检结果。
+- [x] 2026-08-13：项目内嵌 CPython 定向运行 `test_source_bootstrap_powershell.py` 16 项通过。
+  当前开发机实际 `-PreflightOnly` 退出 1，生成
+  `.runtime-build\acceptance\source-bootstrap-cpu-20260813T045815Z.json`，状态为
+  `not-clean`，检测到系统 Python、py、Node、npm、nvcc、cl 和 Windows SDK；installer 与
+  Stop-WebUI 均未调用。这不是 CPU/NVIDIA 干净机验收。
+
+- [x] 2026-08-13：新增机器可读 `license-ledger.json`，发布校验器现在要求每个生产
+  manifest `licenseReference` 有严格字段、HTTPS 证据 URL、UTC 时间、SHA-256 和明确
+  delivery/redistribution 状态的账本条目。direct-upstream-only、local-only 和项目源码条目
+  必须保持 `not-mirrored`；source-redistributed 只有 `approved` 且具有精确绑定清单
+  source-tree 文件的负责人决定时才可放行。
+- [x] 2026-08-13：项目负责人确认允许随源码/GitHub 分发当前两套 E621 派生索引；账本记录
+  `user-confirmed-project-owner` 决定、E621 Terms URL/响应 SHA-256 和六个精确文件的
+  大小/SHA-256。该记录是项目分发决定，不主张 E621 上游授予法律许可，也不替代 Terms 或
+  适用法律核对。
+- [x] 2026-08-13：使用项目内嵌 CPython 定向运行
+  `test_source_bootstrap_powershell.py` 14 项通过；涵盖缺失账本、错误 local-only 镜像、
+  pending E621 状态及缺失/不精确负责人决定的拒绝。未运行全量回归。
+
 - [x] 2026-08-12：新增维护端 `Test-BootstrapRuntimeAsset.ps1`，独立核对基础 ZIP 的
   provenance 字段、文件名、大小、SHA-256、builder 脚本 SHA-256、安全 ZIP 条目和
   解压后的 `python.exe -B -I` 标准库探测。单测实际生成 ZIP、验证成功并以等长篡改触发

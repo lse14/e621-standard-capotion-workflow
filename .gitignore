@@ -33,6 +33,22 @@ resource-library/replacement-indexes/*
 !resource-library/replacement-indexes/e621-replace-20260726-v2/resource.json
 !resource-library/replacement-indexes/e621-replace-20260726-v2/e621_tag_replacement_index.csv
 !resource-library/replacement-indexes/e621-replace-20260726-v2/e621_tag_replacement_index_manual_zh.docx
+!resource-library/tagging-models/
+resource-library/tagging-models/*
+!resource-library/tagging-models/caption-e621-eva02-large-full-v1/
+resource-library/tagging-models/caption-e621-eva02-large-full-v1/*
+!resource-library/tagging-models/caption-e621-eva02-large-full-v1/resource.json
+!resource-library/tokenizers/
+resource-library/tokenizers/*
+!resource-library/tokenizers/tokenizer-qwen3-0.6b-anima-v1/
+resource-library/tokenizers/tokenizer-qwen3-0.6b-anima-v1/*
+!resource-library/tokenizers/tokenizer-qwen3-0.6b-anima-v1/resource.json
+!resource-library/dropout-models/
+resource-library/dropout-models/*
+!resource-library/dropout-models/lse14-scorer-5k-v1/
+resource-library/dropout-models/lse14-scorer-5k-v1/*
+!resource-library/dropout-models/lse14-scorer-5k-v1/resource.json
+!resource-library/defaults.json
 ocr-model-archives/
 *.db
 *.sqlite3
@@ -51,6 +67,7 @@ models/*
 !data/README.md
 !models/README.md
 !docs/THIRD_PARTY_NOTICES.md
+!docs/SOURCE_BOOTSTRAP_ACCEPTANCE.md
 
 # Local credentials and private configuration.
 .env

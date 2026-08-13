@@ -856,7 +856,7 @@ git commit -m "docs: record source bootstrap license evidence"
 - Modify: `ROADMAP.md`
 - Modify: `MEMORY.md`
 
-- [ ] **Step 1: Add a failing acceptance-contract test.**
+- [x] **Step 1: Add a failing acceptance-contract test.**
 
 The test must parse the PowerShell script and assert that it accepts only `Cpu` or `Nvidia`, writes all evidence below `.runtime-build\\acceptance`, checks absence of Python/Node/CUDA Toolkit/Visual Studio/Windows SDK before installation, invokes only `Install-WebUI.bat`, calls `Stop-WebUI.bat` in `finally`, and refuses to emit `passed` when the clean-host preflight fails.
 
@@ -865,7 +865,7 @@ self.assertIn("Clean-host preflight failed", output)
 self.assertNotIn('"status":"passed"', output)
 ```
 
-- [ ] **Step 2: Run RED.**
+- [x] **Step 2: Run RED.**
 
 ```powershell
 & $env:ANIMA_SOURCE_BOOTSTRAP_TEST_PYTHON -B -I -m unittest discover -s tests\unit -p 'test_source_bootstrap_powershell.py' -v
@@ -873,7 +873,7 @@ self.assertNotIn('"status":"passed"', output)
 
 Expected: the acceptance runner is missing.
 
-- [ ] **Step 3: Implement the runner and acceptance schema.**
+- [x] **Step 3: Implement the runner and acceptance schema.**
 
 The runner must collect Windows version/architecture, user-selected scenario, command discoveries for `python`, `py`, `node`, `npm`, `nvcc`, `cl`, Windows SDK directory checks, NVIDIA availability, source commit, manifest hash, installer exit code, install state variant map, WebUI Start/Stop result, and log paths. It writes one UTF-8 JSON result under `.runtime-build\\acceptance` with status exactly `passed`, `failed`, or `not-clean`; no external telemetry is sent.
 
@@ -881,7 +881,7 @@ The runner must collect Windows version/architecture, user-selected scenario, co
 
 Document exact fresh-machine procedure in `docs/SOURCE_BOOTSTRAP_ACCEPTANCE.md`, allow only that documentation file through `.gitignore`, and link it from README. The procedure includes four physical-machine runs: Windows 10 CPU, Windows 11 CPU interrupted-download, Windows 11 NVIDIA with actual GPU probe, and a Chinese/space source ZIP path.
 
-- [ ] **Step 4: Run GREEN static and non-clean-host evidence checks.**
+- [x] **Step 4: Run GREEN static and non-clean-host evidence checks.**
 
 ```powershell
 & $env:ANIMA_SOURCE_BOOTSTRAP_TEST_PYTHON -B -I -m unittest discover -s tests\unit -p 'test_source_bootstrap_powershell.py' -v

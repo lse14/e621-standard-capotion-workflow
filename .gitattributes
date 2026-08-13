@@ -1,2 +1,7 @@
 resource-library/classification-indexes/e621-classify-20260724-v1/e621_tag_dictionary.json -text -diff
 resource-library/replacement-indexes/e621-replace-20260726-v2/e621_tag_replacement_index.csv -text -diff
+resource-library/classification-indexes/e621-classify-20260724-v1/resource.json -text
+resource-library/replacement-indexes/e621-replace-20260726-v2/resource.json -text
+resource-library/tagging-models/caption-e621-eva02-large-full-v1/resource.json -text
+resource-library/tokenizers/tokenizer-qwen3-0.6b-anima-v1/resource.json -text
+resource-library/dropout-models/lse14-scorer-5k-v1/resource.json -text

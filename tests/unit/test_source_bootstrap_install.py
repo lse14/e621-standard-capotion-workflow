@@ -40,6 +40,22 @@ def _artifact(artifact_id: str, relative_path: str) -> dict[str, object]:
     }
 
 
+def _source_tree_artifact(
+    artifact_id: str,
+    source_relative_path: str,
+    relative_path: str,
+    payload: bytes,
+) -> dict[str, object]:
+    return {
+        "id": artifact_id,
+        "delivery": "source-tree",
+        "sourceRelativePath": source_relative_path,
+        "sizeBytes": len(payload),
+        "sha256": _sha256(payload),
+        "relativePath": relative_path,
+    }
+
+
 def _variant(artifact_id: str, relative_path: str, *, peak_bytes: int = 4096) -> dict[str, object]:
     return {
         "artifacts": [_artifact(artifact_id, relative_path)],
@@ -349,8 +365,8 @@ class SourceBootstrapInstallTests(unittest.TestCase):
                         if command[-1] == "cpu"
                         else '{"kind":"ocr","device":"gpu:0","resultCount":1,"texts":["different"]}\n'
                     )
-                elif "ResourceCatalog" in script:
-                    output = '{"kind":"indexes","resourceCount":2}\n'
+                elif "ResourcePackage.load" in script or "ResourceCatalog" in script:
+                    output = '{"kind":"indexes","resourceCount":1}\n'
                 else:
                     self.fail(f"unexpected probe script: {script}")
                 return subprocess.CompletedProcess(command, 0, output, "")
@@ -361,6 +377,67 @@ class SourceBootstrapInstallTests(unittest.TestCase):
             self.assertFalse(results["ocr-gpu"])
             self.assertTrue(all("HTTP_PROXY" not in environment for environment in observed_environments))
             self.assertTrue(all(environment["HF_HUB_OFFLINE"] == "1" for environment in observed_environments))
+
+    def test_e621_replacement_indexes_are_probed_against_their_own_target(self) -> None:
+        probes = _probes_module()
+        with tempfile.TemporaryDirectory() as temporary_name:
+            root = Path(temporary_name)
+            core = root / "runtimes" / "core"
+            live_library = root / "live" / "resource-library"
+            stage_library = root / "stage" / "resource-library"
+            indexes = live_library / "classification-indexes" / "e621-classify"
+            replacement = stage_library / "replacement-indexes" / "e621-replace"
+            for path in (core, indexes, replacement):
+                path.mkdir(parents=True)
+            (core / "python.exe").write_bytes(b"python")
+            probed_packages: list[str] = []
+
+            def runner(command, **_kwargs):
+                script = command[4]
+                if "ResourcePackage.load" not in script:
+                    self.fail(f"unexpected probe script: {script}")
+                package_root = command[5]
+                probed_packages.append(package_root)
+                if Path(package_root) == replacement:
+                    return subprocess.CompletedProcess(command, 1, "", "replacement package invalid")
+                return subprocess.CompletedProcess(
+                    command, 0, '{"kind":"indexes","resourceCount":1}\n', ""
+                )
+
+            components = (
+                SimpleNamespace(
+                    component=SimpleNamespace(component_id="core"),
+                    variant=SimpleNamespace(name="cpu"),
+                ),
+                SimpleNamespace(
+                    component=SimpleNamespace(component_id="e621-indexes"),
+                    variant=SimpleNamespace(name="shared"),
+                ),
+                SimpleNamespace(
+                    component=SimpleNamespace(component_id="e621-replacement-indexes"),
+                    variant=SimpleNamespace(name="shared"),
+                ),
+            )
+
+            def core_and_index_runner(command, **kwargs):
+                script = command[4]
+                if 'runpy.run_module("anima_core"' in script:
+                    return subprocess.CompletedProcess(command, 0, "anima-core-runtime-ok\n", "")
+                return runner(command, **kwargs)
+
+            results = probes.run_offline_probes(
+                components,
+                component_targets={
+                    "core": core,
+                    "e621-indexes": indexes,
+                    "e621-replacement-indexes": replacement,
+                },
+                runner=core_and_index_runner,
+            )
+
+            self.assertTrue(results["e621-indexes"])
+            self.assertFalse(results["e621-replacement-indexes"])
+            self.assertEqual([str(indexes), str(replacement)], probed_packages)
 
     def test_resource_descriptor_calculates_catalog_fingerprint_without_a_stored_field(self) -> None:
         probes = _probes_module()
@@ -458,6 +535,24 @@ class SourceBootstrapInstallTests(unittest.TestCase):
         self.assertEqual(set(), discarded_gpu)
         self.assertEqual(["e621-tagger", "quality-stack"], failures)
 
+    def test_unverified_ocr_gpu_probe_does_not_discard_the_cuda_runtime(self) -> None:
+        install_module = _install_module()
+        pending = [
+            SimpleNamespace(
+                component=SimpleNamespace(component_id="ocr-gpu"),
+                variant=SimpleNamespace(name="cuda"),
+            )
+        ]
+
+        fallback_ids, discarded_gpu, failures = install_module._classify_probe_failures(
+            pending,
+            {"ocr-gpu": None},
+        )
+
+        self.assertEqual(set(), fallback_ids)
+        self.assertEqual(set(), discarded_gpu)
+        self.assertEqual([], failures)
+
     def test_nvidia_plan_has_cpu_and_gpu_ocr_but_cpu_plan_never_selects_cuda(self) -> None:
         assemble, manifest_module = _modules()
         manifest = manifest_module.load_manifest(fixture_manifest())
@@ -489,10 +584,39 @@ class SourceBootstrapInstallTests(unittest.TestCase):
         with self.assertRaisesRegex(assemble.ManifestError, "mandatory E621 components"):
             assemble.validate_mandatory_e621_components(manifest)
 
-    def test_base_e621_validation_does_not_require_delayed_ocr_models(self) -> None:
+    def test_production_plan_requires_the_replacement_index_package(self) -> None:
         assemble, manifest_module = _modules()
         value = fixture_manifest()
         for component_id in ("e621-indexes", "e621-tagger", "quality-stack", "qwen3-tokenizer"):
+            value["components"].append(
+                {
+                    "componentId": component_id,
+                    "kind": "resource",
+                    "required": True,
+                    "targetRelativePath": f"resource-library/{component_id}",
+                    "variants": {"shared": _variant(f"{component_id}-resource", f"resources/{component_id}.json")},
+                }
+            )
+        value["components"] = [
+            component
+            for component in value["components"]
+            if component["componentId"] != "ocr-models"
+        ]
+        manifest = manifest_module.load_manifest(value)
+
+        with self.assertRaisesRegex(assemble.ManifestError, "e621-replacement-indexes"):
+            assemble.validate_mandatory_e621_components(manifest)
+
+    def test_base_e621_validation_does_not_require_delayed_ocr_models(self) -> None:
+        assemble, manifest_module = _modules()
+        value = fixture_manifest()
+        for component_id in (
+            "e621-indexes",
+            "e621-replacement-indexes",
+            "e621-tagger",
+            "quality-stack",
+            "qwen3-tokenizer",
+        ):
             value["components"].append(
                 {
                     "componentId": component_id,
@@ -814,6 +938,77 @@ class SourceBootstrapInstallTests(unittest.TestCase):
             self.assertEqual(("core", "fixture-resource"), second.skipped_component_ids)
             self.assertEqual([], calls)
 
+    def test_source_tree_resource_is_verified_and_never_fetched(self) -> None:
+        install_module = _install_module()
+        _, manifest_module = _modules()
+        source_payload = b'{"fixture":"source-tree"}\n'
+        manifest_value = fixture_install_manifest()
+        resource = manifest_value["components"][1]
+        resource["variants"]["shared"]["artifacts"] = [
+            _source_tree_artifact(
+                "fixture-source-tree-resource",
+                "resource-library/fixture-resource/resource.json",
+                "resource.json",
+                source_payload,
+            )
+        ]
+        manifest = manifest_module.load_manifest(manifest_value)
+        with tempfile.TemporaryDirectory() as temporary_name:
+            root = Path(temporary_name)
+            base = root / "bootstrap-base"
+            (base / "Lib").mkdir(parents=True)
+            for filename in ("python.exe", "python311.dll", "python311._pth"):
+                (base / filename).write_bytes(filename.encode("ascii"))
+            source = root / "core" / "src" / "anima_core"
+            source.mkdir(parents=True)
+            (source / "__init__.py").write_text("VALUE = 'core'\n", encoding="ascii")
+            (source / "__main__.py").write_text("VALUE = 'main'\n", encoding="ascii")
+            shared_source = root / "shared" / "anima_caption_format" / "anima_caption_format"
+            shared_source.mkdir(parents=True)
+            (shared_source / "__init__.py").write_text("VALUE = 'format'\n", encoding="ascii")
+            source_resource = root / "resource-library" / "fixture-resource"
+            source_resource.mkdir(parents=True)
+            (source_resource / "resource.json").write_bytes(source_payload)
+            unrelated = root / "resource-library" / "unrelated-resource" / "keep.txt"
+            unrelated.parent.mkdir()
+            unrelated.write_text("preserve", encoding="ascii")
+            wheel = root / "core.whl"
+            with zipfile.ZipFile(wheel, "w") as archive:
+                archive.writestr("Lib/site-packages/fixture_pkg/__init__.py", "VALUE = 1\n")
+            fetched: list[str] = []
+
+            def fetch(artifact):
+                fetched.append(artifact.artifact_id)
+                if artifact.artifact_id == "core-cpu-wheel":
+                    return wheel
+                raise AssertionError(f"source-tree artifact was fetched: {artifact.artifact_id}")
+
+            def probe(item, target):
+                return target.is_dir()
+
+            def write_runtime_manifest(item, layout):
+                target = layout.runtime_root / "manifests" / "runtimes" / f"{item.runtime_id}.json"
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(json.dumps({"runtime": {"runtimeId": item.runtime_id}}), encoding="utf-8")
+                return str(target.relative_to(layout.project_root)).replace("/", "\\")
+
+            result = install_module.install_project(
+                project_root=root,
+                source_root=root,
+                manifest=manifest,
+                accelerator="cpu",
+                base_runtime=base,
+                fetch_artifact=fetch,
+                probe_component=probe,
+                write_runtime_manifest=write_runtime_manifest,
+                require_mandatory_e621=False,
+            )
+
+            self.assertEqual(["core-cpu-wheel"], fetched)
+            self.assertEqual(source_payload, (root / "resource-library" / "fixture-resource" / "resource.json").read_bytes())
+            self.assertEqual("preserve", unrelated.read_text(encoding="ascii"))
+            self.assertIn("fixture-resource", result.installed_component_ids)
+
     def test_complete_manual_archives_import_after_base_state_publication(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_name:
             root = Path(temporary_name)
@@ -881,6 +1076,33 @@ class SourceBootstrapInstallTests(unittest.TestCase):
             self.assertTrue(result.state_path.is_file())
             self.assertIn("OCR_MODEL_DOWNLOAD.md", "\n".join(result.messages))
 
+    def test_partial_manual_archives_leave_base_install_complete(self) -> None:
+        for archive_count in (1, 2):
+            with self.subTest(archive_count=archive_count), tempfile.TemporaryDirectory() as temporary_name:
+                root = Path(temporary_name)
+                install_module, manifest, base, fetch, probe, write_runtime_manifest = self._prepare_fixture_install(root)
+                archive_root = root / "ocr-model-archives"
+                archive_root.mkdir()
+                for filename in OCR_MODEL_ARCHIVE_FILENAMES[:archive_count]:
+                    (archive_root / filename).write_bytes(b"partial")
+
+                with mock.patch.object(install_module, "_load_ocr_resource_module") as loader:
+                    result = install_module.install_project(
+                        project_root=root,
+                        source_root=root,
+                        manifest=manifest,
+                        accelerator="cpu",
+                        base_runtime=base,
+                        fetch_artifact=fetch,
+                        probe_component=probe,
+                        write_runtime_manifest=write_runtime_manifest,
+                        require_mandatory_e621=False,
+                    )
+
+                loader.assert_not_called()
+                self.assertTrue(result.state_path.is_file())
+                self.assertIn("OCR_MODEL_DOWNLOAD.md", "\n".join(result.messages))
+
     def test_base_install_without_manual_ocr_inputs_does_not_load_the_importer(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_name:
             root = Path(temporary_name)
@@ -912,13 +1134,14 @@ class SourceBootstrapInstallTests(unittest.TestCase):
             with self.assertRaisesRegex(install_module.AssemblyError, "OCR model import failed"):
                 install_module._import_available_ocr_models(Path("source"), Path("project"))
 
-    def test_failed_ocr_model_import_preserves_published_base_state(self) -> None:
+    def test_failed_complete_ocr_model_import_preserves_published_base_state(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_name:
             root = Path(temporary_name)
             install_module, manifest, base, fetch, probe, write_runtime_manifest = self._prepare_fixture_install(root)
             archive_root = root / "ocr-model-archives"
             archive_root.mkdir()
-            (archive_root / OCR_MODEL_ARCHIVE_FILENAMES[0]).write_bytes(b"incomplete")
+            for filename in OCR_MODEL_ARCHIVE_FILENAMES:
+                (archive_root / filename).write_bytes(b"invalid")
             importer = SimpleNamespace(
                 import_available_local_model_resource=mock.Mock(
                     side_effect=RuntimeError("fixture archive hash mismatch")

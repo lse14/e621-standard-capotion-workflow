@@ -26,13 +26,16 @@ class ManifestError(ValueError):
 @dataclass(frozen=True)
 class Artifact:
     artifact_id: str
-    url: str
+    url: str | None
     allowed_hosts: tuple[str, ...]
     size_bytes: int
     sha256: str
     relative_path: str
     repository: str | None = None
     revision: str | None = None
+    delivery: Literal["remote", "source-tree", "candidate-release"] = "remote"
+    source_relative_path: str | None = None
+    candidate_path: str | None = None
 
 
 @dataclass(frozen=True)
@@ -50,6 +53,7 @@ class Component:
     required: bool
     target_relative_path: str
     variants: dict[str, ComponentVariant]
+    license_reference: str | None = None
 
 
 @dataclass(frozen=True)
@@ -169,37 +173,103 @@ def _validate_huggingface_identity(artifact: dict[str, Any], *, url: str) -> tup
     return repository_text, revision_text
 
 
-def _validate_artifact(value: object, *, top_level_hosts: frozenset[str]) -> Artifact:
-    fields = {"id", "url", "allowedHosts", "sizeBytes", "sha256", "relativePath", "repository", "revision"}
-    if not isinstance(value, dict) or not {"id", "url", "allowedHosts", "sizeBytes", "sha256", "relativePath"}.issubset(value) or set(value) - fields:
+def _validate_artifact(
+    value: object,
+    *,
+    top_level_hosts: frozenset[str],
+    allow_candidate_delivery: bool = False,
+) -> Artifact:
+    fields = {
+        "id", "delivery", "url", "allowedHosts", "sizeBytes", "sha256", "relativePath",
+        "repository", "revision", "sourceRelativePath", "candidatePath",
+    }
+    if not isinstance(value, dict) or not {"id", "sizeBytes", "sha256", "relativePath"}.issubset(value) or set(value) - fields:
         raise ManifestError("artifact fields are invalid")
-    if ("repository" in value) != ("revision" in value):
-        raise ManifestError("artifact repository identity is invalid")
     artifact_id = _text(value["id"], "artifact id", pattern=_ARTIFACT_ID, maximum=128)
-    allowed_hosts = _validate_hosts(value["allowedHosts"], top_level_hosts)
-    url = _validate_https_url(value["url"], allowed_hosts)
     size_bytes = _positive_int(value["sizeBytes"], "artifact size")
     sha256 = _text(value["sha256"], "artifact SHA-256", pattern=_SHA256, maximum=64)
     relative_path = _safe_relative(value["relativePath"], "artifact relative path")
+    delivery = value.get("delivery", "remote")
+    if delivery == "source-tree":
+        if set(value) != {"id", "delivery", "sourceRelativePath", "sizeBytes", "sha256", "relativePath"}:
+            raise ManifestError("source-tree artifact fields are invalid")
+        source_relative_path = _safe_relative(value["sourceRelativePath"], "artifact source relative path")
+        return Artifact(
+            artifact_id,
+            None,
+            (),
+            size_bytes,
+            sha256,
+            relative_path,
+            delivery="source-tree",
+            source_relative_path=source_relative_path,
+        )
+    if delivery == "candidate-release":
+        if not allow_candidate_delivery:
+            raise ManifestError("candidate-release artifacts are only valid for candidate inventory auditing")
+        if set(value) != {"id", "delivery", "candidatePath", "sizeBytes", "sha256", "relativePath"}:
+            raise ManifestError("candidate-release artifact fields are invalid")
+        candidate_path = _safe_relative(value["candidatePath"], "candidate artifact path")
+        return Artifact(
+            artifact_id,
+            None,
+            (),
+            size_bytes,
+            sha256,
+            relative_path,
+            delivery="candidate-release",
+            candidate_path=candidate_path,
+        )
+    if delivery != "remote":
+        raise ManifestError("artifact delivery is invalid")
+    if ("repository" in value) != ("revision" in value):
+        raise ManifestError("artifact repository identity is invalid")
+    if set(value) - {"id", "url", "allowedHosts", "sizeBytes", "sha256", "relativePath", "repository", "revision"}:
+        raise ManifestError("artifact fields are invalid")
+    if "url" not in value or "allowedHosts" not in value:
+        raise ManifestError("artifact fields are invalid")
+    allowed_hosts = _validate_hosts(value["allowedHosts"], top_level_hosts)
+    url = _validate_https_url(value["url"], allowed_hosts)
     repository, revision = _validate_huggingface_identity(value, url=url)
-    return Artifact(artifact_id, url, allowed_hosts, size_bytes, sha256, relative_path, repository, revision)
+    return Artifact(artifact_id, url, allowed_hosts, size_bytes, sha256, relative_path, repository, revision, "remote", None)
 
 
-def _validate_variant(name: object, value: object, *, hosts: frozenset[str]) -> ComponentVariant:
+def _validate_variant(
+    name: object,
+    value: object,
+    *,
+    hosts: frozenset[str],
+    component_kind: str,
+    allow_candidate_delivery: bool,
+) -> ComponentVariant:
     variant = _text(name, "component variant", pattern=_VARIANT, maximum=16)
     if not isinstance(value, dict) or set(value) != {"artifacts", "peakBytes", "probe"}:
         raise ManifestError("component variant fields are invalid")
     artifacts_value = value["artifacts"]
-    if not isinstance(artifacts_value, list) or not artifacts_value:
+    if not isinstance(artifacts_value, list) or (component_kind != "runtime" and not artifacts_value):
         raise ManifestError("component variant artifacts are invalid")
-    artifacts = tuple(_validate_artifact(item, top_level_hosts=hosts) for item in artifacts_value)
-    if variant == "cpu" and any(_CPU_CUDA_PAYLOAD.search(item.artifact_id + "\n" + item.url) for item in artifacts):
+    artifacts = tuple(
+        _validate_artifact(item, top_level_hosts=hosts, allow_candidate_delivery=allow_candidate_delivery)
+        for item in artifacts_value
+    )
+    if component_kind == "runtime" and any(item.delivery != "remote" for item in artifacts):
+        raise ManifestError("source-tree artifacts are only valid for resource components")
+    if component_kind != "runtime" and any(item.delivery == "candidate-release" for item in artifacts):
+        raise ManifestError("candidate-release artifacts are only valid for bootstrap")
+    if variant == "cpu" and any(_CPU_CUDA_PAYLOAD.search(item.artifact_id + "\n" + (item.url or "")) for item in artifacts):
         raise ManifestError("CPU variant contains CUDA payload")
     return ComponentVariant(variant, artifacts, _positive_int(value["peakBytes"], "component peak bytes"), _text(value["probe"], "component probe", pattern=_IDENTIFIER, maximum=128))
 
 
-def _validate_component(value: object, *, hosts: frozenset[str]) -> Component:
-    if not isinstance(value, dict) or set(value) != {"componentId", "kind", "required", "targetRelativePath", "variants"}:
+def _validate_component(
+    value: object,
+    *,
+    hosts: frozenset[str],
+    allow_candidate_delivery: bool,
+) -> Component:
+    fields = {"componentId", "kind", "required", "targetRelativePath", "variants", "licenseReference"}
+    required = fields - {"licenseReference"}
+    if not isinstance(value, dict) or not required.issubset(value) or set(value) - fields:
         raise ManifestError("component fields are invalid")
     component_id = _text(value["componentId"], "component id", pattern=_IDENTIFIER, maximum=128)
     kind = _text(value["kind"], "component kind", pattern=_IDENTIFIER, maximum=128)
@@ -208,17 +278,48 @@ def _validate_component(value: object, *, hosts: frozenset[str]) -> Component:
     variants_value = value["variants"]
     if not isinstance(variants_value, dict) or not variants_value:
         raise ManifestError("component variants are invalid")
-    variants = {str(name): _validate_variant(name, record, hosts=hosts) for name, record in variants_value.items()}
+    variants = {
+        str(name): _validate_variant(
+            name,
+            record,
+            hosts=hosts,
+            component_kind=kind,
+            allow_candidate_delivery=allow_candidate_delivery,
+        )
+        for name, record in variants_value.items()
+    }
     if len(variants) != len(variants_value):
         raise ManifestError("component variants are invalid")
-    return Component(component_id, kind, value["required"], _safe_relative(value["targetRelativePath"], "component target relative path"), variants)
+    license_reference = value.get("licenseReference")
+    if license_reference is not None:
+        license_reference = _text(license_reference, "component license reference", pattern=_IDENTIFIER, maximum=128)
+    return Component(
+        component_id,
+        kind,
+        value["required"],
+        _safe_relative(value["targetRelativePath"], "component target relative path"),
+        variants,
+        license_reference,
+    )
 
 
-def _validate_bootstrap(value: object, *, hosts: frozenset[str]) -> tuple[Artifact, str, int]:
+def _validate_bootstrap(
+    value: object,
+    *,
+    hosts: frozenset[str],
+    allow_candidate_delivery: bool,
+) -> tuple[Artifact, str, int]:
     if not isinstance(value, dict) or set(value) != {"artifact", "entryRelativePath", "peakBytes"}:
         raise ManifestError("bootstrap fields are invalid")
+    artifact = _validate_artifact(
+        value["artifact"],
+        top_level_hosts=hosts,
+        allow_candidate_delivery=allow_candidate_delivery,
+    )
+    if artifact.delivery not in ({"remote", "candidate-release"} if allow_candidate_delivery else {"remote"}):
+        raise ManifestError("bootstrap artifact delivery must be remote")
     return (
-        _validate_artifact(value["artifact"], top_level_hosts=hosts),
+        artifact,
         _safe_relative(value["entryRelativePath"], "bootstrap entry relative path"),
         _positive_int(value["peakBytes"], "bootstrap peak bytes"),
     )
@@ -236,7 +337,7 @@ def _validate_cleanup(value: object) -> tuple[str, ...]:
     return normalized
 
 
-def load_manifest(value: object) -> InstallManifest:
+def load_manifest(value: object, *, allow_candidate_delivery: bool = False) -> InstallManifest:
     expected_fields = {"schemaVersion", "releaseVersion", "sourceCommit", "allowedHosts", "bootstrap", "components", "cleanup"}
     if not isinstance(value, dict) or set(value) != expected_fields:
         raise ManifestError("install manifest fields are invalid")
@@ -250,21 +351,39 @@ def load_manifest(value: object) -> InstallManifest:
     hosts = frozenset(_text(host, "allowed host", pattern=_HOST, maximum=253).lower() for host in raw_hosts)
     if len(hosts) != len(raw_hosts):
         raise ManifestError("allowed hosts are invalid")
-    bootstrap_artifact, bootstrap_entry, bootstrap_peak = _validate_bootstrap(value["bootstrap"], hosts=hosts)
+    bootstrap_artifact, bootstrap_entry, bootstrap_peak = _validate_bootstrap(
+        value["bootstrap"],
+        hosts=hosts,
+        allow_candidate_delivery=allow_candidate_delivery,
+    )
     raw_components = value["components"]
     if not isinstance(raw_components, list) or not raw_components:
         raise ManifestError("components are invalid")
-    components = tuple(_validate_component(component, hosts=hosts) for component in raw_components)
+    components = tuple(
+        _validate_component(
+            component,
+            hosts=hosts,
+            allow_candidate_delivery=allow_candidate_delivery,
+        )
+        for component in raw_components
+    )
     if len({component.component_id for component in components}) != len(components):
         raise ManifestError("component IDs are duplicate")
     if len({component.target_relative_path.casefold() for component in components}) != len(components):
         raise ManifestError("component targets are duplicate")
-    artifact_paths = [bootstrap_artifact.relative_path]
+    artifact_ids = {bootstrap_artifact.artifact_id.casefold()}
     for component in components:
         for variant in component.variants.values():
-            artifact_paths.extend(artifact.relative_path for artifact in variant.artifacts)
-    if len({path.casefold() for path in artifact_paths}) != len(artifact_paths):
-        raise ManifestError("duplicate artifact target")
+            paths: set[str] = set()
+            for artifact in variant.artifacts:
+                artifact_id = artifact.artifact_id.casefold()
+                if artifact_id in artifact_ids:
+                    raise ManifestError("duplicate artifact ID")
+                artifact_ids.add(artifact_id)
+                relative_path = artifact.relative_path.casefold()
+                if relative_path in paths:
+                    raise ManifestError("duplicate artifact target")
+                paths.add(relative_path)
     cleanup_paths = _validate_cleanup(value["cleanup"])
     return InstallManifest(
         1,
@@ -289,7 +408,7 @@ def _reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]
     return result
 
 
-def load_manifest_path(path: str | Path) -> InstallManifest:
+def load_manifest_path(path: str | Path, *, allow_candidate_delivery: bool = False) -> InstallManifest:
     try:
         raw = Path(path).read_bytes()
         value = json.loads(raw.decode("utf-8"), object_pairs_hook=_reject_duplicate_keys, parse_constant=lambda _: (_ for _ in ()).throw(ManifestError("manifest JSON constant is invalid")))
@@ -297,30 +416,49 @@ def load_manifest_path(path: str | Path) -> InstallManifest:
         if isinstance(exc, ManifestError):
             raise
         raise ManifestError("install manifest is unreadable") from exc
-    return load_manifest(value)
+    return load_manifest(value, allow_candidate_delivery=allow_candidate_delivery)
 
 
 def validate_release_artifacts(value: object) -> dict[str, object]:
-    if not isinstance(value, dict) or set(value) != {"schemaVersion", "releaseVersion", "artifacts"} or value["schemaVersion"] != 1:
+    if not isinstance(value, dict) or set(value) != {"schemaVersion", "releaseVersion", "publicationState", "artifacts"} or value["schemaVersion"] != 1:
         raise ManifestError("release artifacts are invalid")
     release_version = _text(value["releaseVersion"], "release artifact release version", maximum=128)
+    publication_state = _text(value["publicationState"], "release artifact publication state", maximum=16)
+    if publication_state not in {"candidate", "published"}:
+        raise ManifestError("release artifact publication state is invalid")
     artifacts = value["artifacts"]
     if not isinstance(artifacts, list) or not artifacts:
         raise ManifestError("release artifact records are invalid")
     identifiers: set[str] = set()
     normalized: list[dict[str, object]] = []
     for record in artifacts:
-        if not isinstance(record, dict) or set(record) != {"id", "publishedUrl", "sizeBytes", "sha256"}:
+        expected = (
+            {"id", "publishedUrl", "sizeBytes", "sha256"}
+            if publication_state == "published"
+            else {"id", "candidatePath", "candidateSizeBytes", "candidateSha256"}
+        )
+        if not isinstance(record, dict) or set(record) != expected:
             raise ManifestError("release artifact record is invalid")
         artifact_id = _text(record["id"], "release artifact id", pattern=_IDENTIFIER, maximum=128)
         if artifact_id in identifiers:
             raise ManifestError("release artifact IDs are duplicate")
         identifiers.add(artifact_id)
-        url = _text(record["publishedUrl"], "release artifact URL", maximum=2048)
-        parsed = urlsplit(url)
-        if parsed.scheme != "https" or not parsed.hostname or parsed.username is not None or parsed.password is not None or parsed.fragment:
-            raise ManifestError("release artifact URL is invalid")
-        size_bytes = _positive_int(record["sizeBytes"], "release artifact size")
-        sha256 = _text(record["sha256"], "release artifact SHA-256", pattern=_SHA256, maximum=64)
-        normalized.append({"id": artifact_id, "publishedUrl": url, "sizeBytes": size_bytes, "sha256": sha256})
-    return {"schemaVersion": 1, "releaseVersion": release_version, "artifacts": normalized}
+        if publication_state == "published":
+            url = _text(record["publishedUrl"], "release artifact URL", maximum=2048)
+            parsed = urlsplit(url)
+            if parsed.scheme != "https" or not parsed.hostname or parsed.username is not None or parsed.password is not None or parsed.fragment:
+                raise ManifestError("release artifact URL is invalid")
+            size_bytes = _positive_int(record["sizeBytes"], "release artifact size")
+            sha256 = _text(record["sha256"], "release artifact SHA-256", pattern=_SHA256, maximum=64)
+            normalized.append({"id": artifact_id, "publishedUrl": url, "sizeBytes": size_bytes, "sha256": sha256})
+        else:
+            candidate_path = _safe_relative(record["candidatePath"], "candidate artifact path")
+            size_bytes = _positive_int(record["candidateSizeBytes"], "candidate artifact size")
+            sha256 = _text(record["candidateSha256"], "candidate artifact SHA-256", pattern=_SHA256, maximum=64)
+            normalized.append({"id": artifact_id, "candidatePath": candidate_path, "candidateSizeBytes": size_bytes, "candidateSha256": sha256})
+    return {
+        "schemaVersion": 1,
+        "releaseVersion": release_version,
+        "publicationState": publication_state,
+        "artifacts": normalized,
+    }

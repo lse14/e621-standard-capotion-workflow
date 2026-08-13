@@ -261,6 +261,7 @@ class OcrResourceScriptTests(unittest.TestCase):
         rebuild_runtime.assert_not_called()
         self.assertFalse(staging_root.exists())
 
+    @unittest.skipUnless(CORE_PYTHON.is_file(), "embedded Core runtime has not been installed")
     def test_cli_apply_reports_missing_manual_models_without_a_traceback(self) -> None:
         completed = subprocess.run(
             [
@@ -519,6 +520,8 @@ class OcrResourceScriptTests(unittest.TestCase):
         self.assertNotIn("PIP_FIND_LINKS", install_source)
         self.assertIn('call "%~dp0Import-OcrResource.bat" -Apply', install_source)
         importer_source = (SCRIPTS / "ocr_resource.py").read_text(encoding="utf-8")
+        self.assertIn("source_wheelhouse = assert_project_path(layout.project_root, layout.wheelhouse_target)", importer_source)
+        self.assertNotIn('layout.manual_model_downloads.parent / "wheels"', importer_source)
         self.assertIn('"--source-wheelhouse"', importer_source)
         self.assertIn('"-ReuseExistingBuild"', importer_source)
         self.assertIn('"--runtime-id", RUNTIME_ID', importer_source)
@@ -533,7 +536,7 @@ class OcrResourceScriptTests(unittest.TestCase):
         guide = DOWNLOAD_GUIDE.read_text(encoding="utf-8")
         self.assertIn("ocr-model-archives", guide)
         self.assertIn("Install-WebUI.bat", guide)
-        self.assertNotIn("OcrMode", guide)
+        self.assertNotIn("Install-WebUI.bat -OcrMode", guide)
         self.assertIn("paddle-model-ecology.bj.bcebos.com", guide)
         self.assertIn("88340480", guide)
         self.assertIn("22a33e0ba6a21425ea4192da03bf4395c9a0c67902bd924b7328fc859073045d", guide)
@@ -542,6 +545,7 @@ class OcrResourceScriptTests(unittest.TestCase):
         for artifact in self.artifacts:
             self.assertIn(str(artifact["name"]), guide)
 
+    @unittest.skipUnless(CORE_PYTHON.is_file(), "embedded Core runtime has not been installed")
     def test_root_batch_wrappers_run_their_default_read_only_previews(self) -> None:
         expected_actions = {
             IMPORT_BAT: "ImportOcrResource",

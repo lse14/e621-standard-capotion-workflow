@@ -309,20 +309,7 @@ function Clear-BootstrapFailureArtifacts {
         if (Test-ReparsePoint $transactionsRoot) { throw "Bootstrap transactions are a reparse point: $transactionsRoot" }
         [System.IO.Directory]::Delete($transactionsRoot, $true)
     }
-    $cacheRoot = Get-ProjectPath (Join-Path $installerRoot 'cache')
-    if (Test-Path -LiteralPath $cacheRoot -PathType Container) {
-        if (Test-ReparsePoint $cacheRoot) { throw "Bootstrap cache is a reparse point: $cacheRoot" }
-        Get-ChildItem -LiteralPath $cacheRoot -Force -Recurse -File |
-            Where-Object { $_.Name -notlike '*.partial' } |
-            ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force }
-        Get-ChildItem -LiteralPath $cacheRoot -Force -Recurse -Directory |
-            Sort-Object FullName -Descending |
-            Where-Object { -not (Get-ChildItem -LiteralPath $_.FullName -Force) } |
-            ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force }
-    }
-    if ($null -ne $script:bootstrapComplete -and (Test-Path -LiteralPath $script:bootstrapComplete -PathType Leaf)) {
-        Remove-Item -LiteralPath $script:bootstrapComplete -Force
-    }
+    # Retain complete and partial downloads for verified reuse or safe resume on retry.
 }
 
 function Clear-BootstrapSuccessArtifacts {

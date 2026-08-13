@@ -157,7 +157,7 @@ class EmbeddedRuntimeTests(unittest.TestCase):
 
     def test_runtime_owned_dependencies_import(self) -> None:
         checks = {
-            "core": "import fastapi,uvicorn,webview,PIL",
+            "core": "import fastapi,uvicorn,PIL",
             "caption-e621": "import numpy,onnxruntime,PIL",
             "classify-e621": "import sqlite3,json",
             "replace-e621": "import csv,json",

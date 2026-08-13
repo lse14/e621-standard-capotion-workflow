@@ -31,6 +31,7 @@ MANDATORY_E621_COMPONENTS = frozenset(
         "token-budget",
         "ocr-cpu",
         "e621-indexes",
+        "e621-replacement-indexes",
         "e621-tagger",
         "qwen3-tokenizer",
         "quality-stack",
@@ -85,15 +86,24 @@ class InstallationPlan:
 
 
 def _artifact_identity(artifact: object) -> dict[str, object]:
-    return {
+    identity: dict[str, object] = {
         "id": artifact.artifact_id,
-        "url": artifact.url,
-        "allowedHosts": list(artifact.allowed_hosts),
+        "delivery": artifact.delivery,
         "sizeBytes": artifact.size_bytes,
         "sha256": artifact.sha256,
         "relativePath": artifact.relative_path,
-        **({"repository": artifact.repository, "revision": artifact.revision} if artifact.repository is not None else {}),
     }
+    if artifact.delivery == "source-tree":
+        identity["sourceRelativePath"] = artifact.source_relative_path
+    elif artifact.delivery == "candidate-release":
+        identity["candidatePath"] = artifact.candidate_path
+    else:
+        identity["url"] = artifact.url
+        identity["allowedHosts"] = list(artifact.allowed_hosts)
+        if artifact.repository is not None:
+            identity["repository"] = artifact.repository
+            identity["revision"] = artifact.revision
+    return identity
 
 
 def component_fingerprint(item: PlannedComponent) -> str:

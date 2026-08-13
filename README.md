@@ -123,6 +123,8 @@ resource-library/（已提交的 E621 分类/Count 与替换索引除外）
 - 数据集布局：见 [data/README.md](data/README.md)。
 - 第三方代码与上游资源说明：见
   [docs/THIRD_PARTY_NOTICES.md](docs/THIRD_PARTY_NOTICES.md)。
+- 真实 CPU/NVIDIA 干净机验收：见
+  [docs/SOURCE_BOOTSTRAP_ACCEPTANCE.md](docs/SOURCE_BOOTSTRAP_ACCEPTANCE.md)。
 
 一键安装只从冻结清单中的上游 HTTPS URL 下载并校验自动安装的模型，不把模型权重提交
 到 Git。OCR model weights 是例外：它们只按 `OCR_MODEL_DOWNLOAD.md` 由用户本地下载，

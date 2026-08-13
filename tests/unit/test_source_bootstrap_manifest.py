@@ -144,7 +144,10 @@ class SourceBootstrapManifestTests(unittest.TestCase):
             module.load_manifest(unsafe)
 
         duplicate = minimal_manifest()
-        duplicate["components"][1]["variants"]["cpu"]["artifacts"][0]["relativePath"] = "WHEELS\\CORE.WHL"
+        duplicate_artifact = copy.deepcopy(duplicate["components"][0]["variants"]["cpu"]["artifacts"][0])
+        duplicate_artifact["id"] = "core-wheel-copy"
+        duplicate_artifact["relativePath"] = "WHEELS\\CORE.WHL"
+        duplicate["components"][0]["variants"]["cpu"]["artifacts"].append(duplicate_artifact)
         with self.assertRaisesRegex(module.ManifestError, "duplicate artifact target"):
             module.load_manifest(duplicate)
 
@@ -162,11 +165,115 @@ class SourceBootstrapManifestTests(unittest.TestCase):
         with self.assertRaisesRegex(module.ManifestError, "CPU variant"):
             module.load_manifest(value)
 
+    def test_source_tree_artifact_is_resource_only_and_has_no_network_identity(self) -> None:
+        module = self._module()
+        value = minimal_manifest()
+        resource = {
+            "componentId": "e621-indexes",
+            "kind": "resource",
+            "required": True,
+            "targetRelativePath": "resource-library/e621-indexes",
+            "variants": {
+                "shared": {
+                    "artifacts": [{
+                        "id": "e621-index-resource-json",
+                        "delivery": "source-tree",
+                        "sourceRelativePath": "resource-library/classification-indexes/e621-classify-20260724-v1/resource.json",
+                        "sizeBytes": 1,
+                        "sha256": _sha256(b"x"),
+                        "relativePath": "classification-indexes/e621-classify-20260724-v1/resource.json",
+                    }],
+                    "peakBytes": 1,
+                    "probe": "indexes",
+                }
+            },
+        }
+        value["components"].append(resource)
+        manifest = module.load_manifest(value)
+        artifact = manifest.components[-1].variants["shared"].artifacts[0]
+        self.assertEqual("source-tree", artifact.delivery)
+        self.assertIsNone(artifact.url)
+        self.assertEqual(
+            "resource-library\\classification-indexes\\e621-classify-20260724-v1\\resource.json",
+            artifact.source_relative_path,
+        )
+
+        invalid_runtime = copy.deepcopy(value)
+        invalid_runtime["components"][0]["variants"]["cpu"]["artifacts"] = [resource["variants"]["shared"]["artifacts"][0]]
+        with self.assertRaisesRegex(module.ManifestError, "source-tree"):
+            module.load_manifest(invalid_runtime)
+
+    def test_source_tree_resource_artifact_paths_are_component_local(self) -> None:
+        module = self._module()
+        value = minimal_manifest()
+        for component_id, target, source in (
+            (
+                "e621-indexes",
+                "resource-library/classification-indexes/e621-classify-20260724-v1",
+                "resource-library/classification-indexes/e621-classify-20260724-v1/resource.json",
+            ),
+            (
+                "e621-replacement-indexes",
+                "resource-library/replacement-indexes/e621-replace-20260726-v2",
+                "resource-library/replacement-indexes/e621-replace-20260726-v2/resource.json",
+            ),
+        ):
+            value["components"].append(
+                {
+                    "componentId": component_id,
+                    "kind": "resource",
+                    "required": True,
+                    "targetRelativePath": target,
+                    "variants": {
+                        "shared": {
+                            "artifacts": [{
+                                "id": component_id + "-manifest",
+                                "delivery": "source-tree",
+                                "sourceRelativePath": source,
+                                "sizeBytes": 1,
+                                "sha256": _sha256(b"x"),
+                                "relativePath": "resource.json",
+                            }],
+                            "peakBytes": 1,
+                            "probe": "indexes",
+                        }
+                    },
+                }
+            )
+
+        manifest = module.load_manifest(value)
+
+        self.assertEqual(
+            ["resource.json"],
+            [artifact.relative_path for artifact in manifest.components[-1].variants["shared"].artifacts],
+        )
+
+    def test_candidate_release_artifact_is_inventory_only(self) -> None:
+        module = self._module()
+        value = minimal_manifest()
+        value["bootstrap"]["artifact"] = {
+            "id": "cpython311-base",
+            "delivery": "candidate-release",
+            "candidatePath": ".release-candidate/bootstrap/cpython311-base.zip",
+            "sizeBytes": 1,
+            "sha256": _sha256(b"x"),
+            "relativePath": "bootstrap/cpython311-base.zip",
+        }
+
+        with self.assertRaisesRegex(module.ManifestError, "candidate-release"):
+            module.load_manifest(value)
+
+        manifest = module.load_manifest(value, allow_candidate_delivery=True)
+        artifact = manifest.bootstrap_artifact
+        self.assertEqual("candidate-release", artifact.delivery)
+        self.assertEqual(".release-candidate\\bootstrap\\cpython311-base.zip", artifact.candidate_path)
+
     def test_release_artifact_record_requires_public_identity(self) -> None:
         module = self._module()
         record = {
             "schemaVersion": 1,
             "releaseVersion": "source-bootstrap-v1",
+            "publicationState": "published",
             "artifacts": [{"id": "cpython311-base", "publishedUrl": "", "sizeBytes": 0, "sha256": ""}],
         }
 
@@ -182,6 +289,19 @@ class SourceBootstrapManifestTests(unittest.TestCase):
             }
         )
         self.assertEqual("source-bootstrap-v1", module.validate_release_artifacts(complete)["releaseVersion"])
+
+        candidate = {
+            "schemaVersion": 1,
+            "releaseVersion": "source-bootstrap-v1",
+            "publicationState": "candidate",
+            "artifacts": [{
+                "id": "cpython311-base",
+                "candidatePath": ".release-candidate/bootstrap/cpython.zip",
+                "candidateSizeBytes": 123,
+                "candidateSha256": _sha256(b"release-artifact"),
+            }],
+        }
+        self.assertEqual("candidate", module.validate_release_artifacts(candidate)["publicationState"])
 
 
 if __name__ == "__main__":

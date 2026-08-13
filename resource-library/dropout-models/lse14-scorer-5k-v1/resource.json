@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "kind": "dropout-model",
+  "resourceId": "lse14-scorer-5k-v1",
+  "resourceVersion": "lse14/lse14-scorer@655377cb813d35291a2010031f724e778b7d80dd",
+  "profile": "e621",
+  "displayName": {
+    "zh-CN": "LSE14 质量评分模型",
+    "en": "LSE14 Quality Scoring Model"
+  },
+  "description": {
+    "zh-CN": "为图片计算质量分数，供 Dropout 策略决定是否保留质量标签。",
+    "en": "Scores image quality for the Dropout policy."
+  },
+  "runtimeFormat": "lse14-scorer-5k-v1",
+  "entrypoints": {
+    "clip": "clip/ViT-L-14.pt",
+    "fusion": "fusion/5kdataset.safetensors",
+    "jtp3": "jtp3/jtp-3-hydra.safetensors",
+    "waifu": "waifu/model.safetensors"
+  },
+  "files": {
+    "clip/ViT-L-14.pt": {
+      "sizeBytes": 932768134,
+      "sha256": "b8cca3fd41ae0c99ba7e8951adf17d267cdb84cd88be6f7c2e0eca1737a03836"
+    },
+    "fusion/5kdataset.safetensors": {
+      "sizeBytes": 26285476,
+      "sha256": "f8020306baae1de94b085647121ed368e07c9cf36e1d4eb92e4f3372f3624faa"
+    },
+    "jtp3/jtp-3-hydra.safetensors": {
+      "sizeBytes": 1002587976,
+      "sha256": "b2bb072dbc534f50a0fe4e74f77b44427a77b99941711536f49c0502b496f04e"
+    },
+    "waifu/model.safetensors": {
+      "sizeBytes": 11219340,
+      "sha256": "7def1b66314e318d9b045ff225fd51bb83bfbca855b12b2e213a5483efe37efd"
+    }
+  },
+  "metadata": {},
+  "documentation": []
+}

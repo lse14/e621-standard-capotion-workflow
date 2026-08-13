@@ -29,7 +29,6 @@ Anima 源码依赖第三方开源软件，并可连接或加载第三方模型�
 | --- | --- |
 | FastAPI | <https://github.com/fastapi/fastapi/blob/master/LICENSE> |
 | Uvicorn | <https://github.com/encode/uvicorn/blob/master/LICENSE.md> |
-| pywebview | <https://github.com/r0x0r/pywebview/blob/master/LICENSE.md> |
 | Pillow | <https://github.com/python-pillow/Pillow/blob/main/LICENSE> |
 | NumPy | <https://github.com/numpy/numpy/blob/main/LICENSE.txt> |
 | ONNX Runtime | <https://github.com/microsoft/onnxruntime/blob/main/LICENSE> |
@@ -74,31 +73,37 @@ Anima 源码依赖第三方开源软件，并可连接或加载第三方模型�
 - <https://e621.net/terms_of_use>
 
 2026-08-12 核对时，E621 Terms of Use 第 4 节将网站内容置于其权利人保护下，
-并限制复制、分发、修改和再发布。本声明只记录来源和限制，不授予 E621 内容的
-独立再分发许可；任何下游分发者须自行核对上述条款及适用法律。
+并限制复制、分发、修改和再发布。2026-08-13，项目负责人通过
+`user-confirmed-project-owner` 决定允许项目随源码/GitHub 分发当前
+`e621-classify-20260724-v1` 和 `e621-replace-20260726-v2` 的六个账本绑定文件；
+该决定、Terms URL、Terms 响应 SHA-256 与全部文件大小/SHA-256 记录在
+`packaging/installer/license-ledger.json`。这是项目分发决定，不是 E621 上游
+授予的法律许可，也不替代对上述条款或适用法律的独立核对。
 
 替换 CSV 的随附说明书记录其生成输入为 E621 tags、aliases、implications 和 Wiki
 数据导出，官方导出 URL 模板为
 `https://static1.e621.net/data/db_export/{tags,tag_aliases,tag_implications,wiki_pages}.csv.gz`；
-Danbooru 索引仅作为本地辅助碰撞检测证据，未作为该 CSV 的上游再分发内容。本记录不构成
-对替换 CSV 或说明书的独立再分发许可；在公开 Release、镜像或下游再分发前，仍须按上述
-E621 Terms 和适用法律完成核对。
+Danbooru 索引仅作为本地辅助碰撞检测证据，未作为该 CSV 的上游再分发内容。上述项目
+负责人决定只覆盖账本列出的当前替换 CSV、其 `resource.json` 和说明书字节身份；它不构成
+对替换 CSV 或说明书的 E621 上游独立再分发许可，任何下游分发仍须按上述 E621 Terms 和
+适用法律完成核对。
 
 ## 安装清单模型与 tokenizer
 
 这些资源只从清单固定的上游身份下载，当前源码不重新分发权重或 tokenizer 文件。
-下表记录实现使用的不可变身份和核对入口；“待核对”会使本地发布门禁失败，不能把
-该状态当作许可证批准。
+下表记录实现使用的不可变身份和核对入口；2026-08-13 的 Hugging Face API 响应分类和
+响应 SHA-256 仅记录在 `packaging/installer/license-ledger.json` 作为取证事实，不能把
+它们当作完整法律审批或对模型权重的镜像许可。
 
 | 资源 | 固定上游身份 | 来源/许可证入口 | 状态 |
 | --- | --- | --- | --- |
-| E621 EVA02 Tagger | `nzs234/eva02_large_E621_FULL_V1@04a88fab40711ea5fdad1a8d051d25bdcb77a4e3` | <https://huggingface.co/nzs234/eva02_large_E621_FULL_V1> | 待核对 |
-| Qwen3 0.6B tokenizer | `Qwen/Qwen3-0.6B@c1899de289a04d12100db370d81485cdf75e47ca` | <https://huggingface.co/Qwen/Qwen3-0.6B> | 待核对 |
-| LSE14 fusion head | `lse14/lse14-scorer@655377cb813d35291a2010031f724e778b7d80dd` | <https://huggingface.co/lse14/lse14-scorer> | 待核对 |
-| JTP-3 | `RedRocket/Hydra@d82e15954de3d99b94217fe015d5005d30e24332` | <https://huggingface.co/RedRocket/Hydra> | 待核对 |
-| Waifu scorer | `Eugeoter/waifu-scorer-v3@c2a747fd61d310a90e9cbbf8fc590c522f234424` | <https://huggingface.co/Eugeoter/waifu-scorer-v3> | 待核对 |
-| CLIP `ViT-L-14.pt` | OpenAI CDN SHA-256 `b8cca3fd41ae0c99ba7e8951adf17d267cdb84cd88be6f7c2e0eca1737a03836` | <https://openaipublic.azureedge.net/clip/models/b8cca3fd41ae0c99ba7e8951adf17d267cdb84cd88be6f7c2e0eca1737a03836/ViT-L-14.pt> | 待核对 |
-| PaddleOCR PP-OCRv5 Server | 固定模型归档由发布清单记录 | <https://www.paddleocr.ai/latest/en/version3.x/model_list.html> | 待核对 |
+| E621 EVA02 Tagger | `nzs234/eva02_large_E621_FULL_V1@04a88fab40711ea5fdad1a8d051d25bdcb77a4e3` | <https://huggingface.co/nzs234/eva02_large_E621_FULL_V1> | API evidence collected; direct upstream only |
+| Qwen3 0.6B tokenizer | `Qwen/Qwen3-0.6B@c1899de289a04d12100db370d81485cdf75e47ca` | <https://huggingface.co/Qwen/Qwen3-0.6B> | API evidence collected; direct upstream only |
+| LSE14 fusion head | `lse14/lse14-scorer@655377cb813d35291a2010031f724e778b7d80dd` | <https://huggingface.co/lse14/lse14-scorer> | API evidence collected; direct upstream only |
+| JTP-3 | `RedRocket/Hydra@d82e15954de3d99b94217fe015d5005d30e24332` | <https://huggingface.co/RedRocket/Hydra> | API evidence collected; direct upstream only |
+| Waifu scorer | `Eugeoter/waifu-scorer-v3@c2a747fd61d310a90e9cbbf8fc590c522f234424` | <https://huggingface.co/Eugeoter/waifu-scorer-v3> | API evidence collected; direct upstream only |
+| CLIP `ViT-L-14.pt` | OpenAI CDN SHA-256 `b8cca3fd41ae0c99ba7e8951adf17d267cdb84cd88be6f7c2e0eca1737a03836` | <https://openaipublic.azureedge.net/clip/models/b8cca3fd41ae0c99ba7e8951adf17d267cdb84cd88be6f7c2e0eca1737a03836/ViT-L-14.pt> | Direct upstream only; evidence remains incomplete |
+| PaddleOCR PP-OCRv5 Server | 固定模型归档由发布清单记录 | <https://www.paddleocr.ai/latest/en/version3.x/model_list.html> | User local-only archives; not mirrored |
 
 ## PaddleOCR 手动模型归档
 
