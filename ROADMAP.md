@@ -58,8 +58,12 @@ SDK，即可得到可离线运行的 E621 打标、质量评分、Qwen3 tokenize
   以及 Windows PowerShell 5.1/PowerShell 7 的本地发布门禁均通过。PowerShell 7 的
   JSON UTC 时间戳解析差异已有回归测试和兼容修复。Release URL 使用 GitHub 迁移后的
   `lse14/e621-standard-capotion-workflow` 规范仓库。
-- [-] R15: 尚未实际创建 GitHub Release、上传 ZIP 或重新下载公开资产；完成这些外部步骤后
-  才能标记发布完成。
+- [x] R15: GitHub Release `source-bootstrap-e621-v1` 已在规范仓库
+  `lse14/e621-standard-capotion-workflow` 发布，目标提交
+  `587065d942983bc330330d0ac4983e2fbf5ce5df`；公开 ZIP URL 为
+  `https://github.com/lse14/e621-standard-capotion-workflow/releases/download/source-bootstrap-e621-v1/cpython-3.11.15-win-amd64.zip`。
+  GitHub asset 元数据与公开重新下载均验证 `33,887,443` bytes 和 SHA-256
+  `a7bef1285f1a0f4007de9ede5752f105dcf2b137d54670074d16503554fa0169`。
 - [!] R14 仍未完成：当前开发主机预检为 `not-clean`，不能替代 CPU/NVIDIA 干净机验收。
 
 ## 验收标准

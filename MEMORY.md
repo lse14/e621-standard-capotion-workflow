@@ -56,6 +56,12 @@ CLIP 文件使用 OpenAI 官方 CDN：
 - 上述不是公开 Release 或干净机成功证据。公开上传后必须用
   `Validate-SourceBootstrapRelease.ps1 -VerifyPublishedBootstrap` 重新下载并核对；CPU 和
   NVIDIA 仍必须在未安装开发工具的独立主机上执行验收脚本。
+- 2026-08-13：已在 `lse14/e621-standard-capotion-workflow` 创建公开 Release
+  `source-bootstrap-e621-v1`，目标提交为
+  `587065d942983bc330330d0ac4983e2fbf5ce5df`。上传资产 URL 为
+  `https://github.com/lse14/e621-standard-capotion-workflow/releases/download/source-bootstrap-e621-v1/cpython-3.11.15-win-amd64.zip`；
+  GitHub 返回 `33,887,443` bytes、`sha256:a7bef1285f1a0f4007de9ede5752f105dcf2b137d54670074d16503554fa0169`，
+  项目 `-VerifyPublishedBootstrap` 已重新下载并字节验证。R14 CPU/NVIDIA 干净机验收仍未执行。
 
 - `Install-WebUI.bat` 当前只把 `Install` 动作转给 `desktop_control.ps1`。
 - `desktop_control.ps1` 当前要求 Core runtime 和 `resource-library` 已存在。
