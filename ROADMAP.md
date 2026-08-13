@@ -70,6 +70,14 @@ SDK，即可得到可离线运行的 E621 打标、质量评分、Qwen3 tokenize
   PowerShell 将 `-and` 错绑为 `Test-Path` 参数的生产失败；四处布尔表达式均补齐子表达式
   括号，并增加回归扫描。修复后 source-bootstrap 91 项、公开资产字节门禁和 manifest
   绑定复核通过；需要发布修复后继续真实 NVIDIA 安装。
+- [x] 2026-08-13：在 `F:\AnimaSourceBootstrapNvidiaValidation-20260813-02` 从公开
+  `main@bcbdc90c2fa1d0e9d4f05c6ce4dffe886f383426` 新 clone 后真实执行入口，确认
+  NVIDIA 路线、37,198,942,841 bytes 空间门禁、公开 CPython 下载和解压均通过；随后
+  `python -I install.py` 因隔离模式不包含脚本目录而以 `ModuleNotFoundError: assemble`
+  退出 1。新增真实隔离入口回归先复现红灯，再由 `install.py` 显式加入自身受信任目录后
+  通过；source-bootstrap 92 项、Python 编译、PowerShell AST、inventory 审计、公开资产
+  字节重下和发布门禁均退出 0。尚需发布修复并从全新 clone 继续完整 NVIDIA 安装，R14
+  不因此完成。
 
 ## 验收标准
 

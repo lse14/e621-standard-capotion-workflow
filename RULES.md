@@ -52,7 +52,8 @@
 2. 安装可重复执行；已存在组件必须重新核对清单指纹后跳过。
 3. GPU 预检通过但实际离线推理失败时，Caption/Policy 自动改走 CPU；OCR 使用已安装 CPU 回退。
 4. 自动下载失败时输出官方直链、目标文件名、大小和 SHA-256。
-5. 安装成功后删除 wheel、完整缓存和 staging；失败时只保留可续传 `.partial` 与日志。
+5. 安装成功后删除 wheel、完整缓存和 staging；失败时保留可续传 `.partial`、已验证的
+   CPython 完整缓存与日志，重试前仍须重新核对完整缓存的大小和 SHA-256。
 6. 基础安装状态只能在全部基础必装组件探测通过后写入；OCR-enabled job 还必须有
    通过 `OCR_MODEL_DOWNLOAD.md` 归档导入的 OCR 资源。
 

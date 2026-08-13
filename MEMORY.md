@@ -68,6 +68,14 @@ CLIP 文件使用 OpenAI 官方 CDN：
   一处解压失败清理均改为 `(Test-Path ...) -and ...`；回归测试扫描该非法形态。修复后
   source-bootstrap 91/91、公开 Release 重新下载门禁及 manifest SHA 绑定通过。该开发机
   预检仍为 `not-clean`，本次发现/修复不能记作 R14 干净机通过。
+- 2026-08-13：公开 `main@bcbdc90c2fa1d0e9d4f05c6ce4dffe886f383426` 的全新
+  NVIDIA clone 已通过路线、空间、CPython 公开下载和安全解压，随后在标准库安装器导入阶段
+  确定性失败。直接捕获完整 stderr 证明 `python -I packaging\installer\install.py` 不会把
+  脚本目录放入 `sys.path`，因此 `from assemble import ...` 报
+  `ModuleNotFoundError`。回归测试先在同一 `-I` 调用下复现失败；`install.py` 仅将其自身解析
+  后的受信任目录插入模块路径，测试及实际 `--help` 调用随后退出 0。提交前新鲜验证为
+  source-bootstrap 92/92、Python 编译、PowerShell AST、inventory 审计、公开 Release 字节
+  重下和发布门禁均成功。真实组件下载、离线 probe、WebUI 启动和 R14 干净机验收仍未完成。
 
 - `Install-WebUI.bat` 当前只把 `Install` 动作转给 `desktop_control.ps1`。
 - `desktop_control.ps1` 当前要求 Core runtime 和 `resource-library` 已存在。

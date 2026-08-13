@@ -141,6 +141,21 @@ def _install_module():
         sys.path.pop(0)
 
 
+class IsolatedInstallerEntryTests(unittest.TestCase):
+    def test_installer_help_loads_local_modules_in_isolated_mode(self) -> None:
+        completed = subprocess.run(
+            [sys.executable, "-I", str(INSTALLER_ROOT / "install.py"), "--help"],
+            cwd=ROOT,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(0, completed.returncode, completed.stdout + completed.stderr)
+        self.assertIn("--bootstrap-runtime", completed.stdout)
+
+
 def _probes_module():
     sys.path.insert(0, str(INSTALLER_ROOT))
     try:

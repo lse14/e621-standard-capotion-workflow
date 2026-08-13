@@ -13,6 +13,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Mapping
 
+_INSTALLER_ROOT = Path(__file__).resolve().parent
+if str(_INSTALLER_ROOT) not in sys.path:
+    sys.path.insert(0, str(_INSTALLER_ROOT))
+
 from assemble import (
     AssemblyError,
     InstallationPlan,
