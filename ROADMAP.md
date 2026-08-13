@@ -64,6 +64,11 @@ SDK，即可得到可离线运行的 E621 打标、质量评分、Qwen3 tokenize
   `https://github.com/lse14/e621-standard-capotion-workflow/releases/download/source-bootstrap-e621-v1/cpython-3.11.15-win-amd64.zip`。
   GitHub asset 元数据与公开重新下载均验证 `33,887,443` bytes 和 SHA-256
   `a7bef1285f1a0f4007de9ede5752f105dcf2b137d54670074d16503554fa0169`。
+- [x] 2026-08-13 最终修复基线 `01516f4795156dece6728957a2397d57df6db683`
+  重新生成并离线验证不可变资产 `cpython-3.11.15-win-amd64-01516f4.zip`；GitHub
+  Release 上传响应和公开 URL 重新下载均为 `34,719,985` bytes、SHA-256
+  `b343e49a85d2240c23ae0e75b27e06529c6c859bce350bb5fa77d25cd01540e9`。生产 manifest
+  已重建并绑定 SHA-256 `cf19935c75bdc63c6fa3c843222d7f8baad27b551a280dbe38f7a74d9dc0c426`。
 - [!] R14 仍未完成：当前开发主机预检为 `not-clean`，不能替代 CPU/NVIDIA 干净机验收。
 - [x] 2026-08-13：在 `F:\AnimaSourceBootstrapNvidiaValidation-20260813-01` 的默认
   `main` 新 clone 上实际执行 `Install-WebUI.bat`，复现首次下载尚无 `.partial` 时

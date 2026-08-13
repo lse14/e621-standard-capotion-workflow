@@ -42,6 +42,12 @@ CLIP 文件使用 OpenAI 官方 CDN：
 
 ## 当前证据
 
+- 2026-08-13：最终修复基线 `01516f4795156dece6728957a2397d57df6db683` 已生成不可变
+  CPython 资产 `cpython-3.11.15-win-amd64-01516f4.zip`。GitHub Release 上传与公开 URL
+  重下均核对为 `34,719,985` bytes、SHA-256
+  `b343e49a85d2240c23ae0e75b27e06529c6c859bce350bb5fa77d25cd01540e9`；生产 manifest
+  SHA-256 为 `cf19935c75bdc63c6fa3c843222d7f8baad27b551a280dbe38f7a74d9dc0c426`。
+
 - 2026-08-13：生产发布元数据已在 `codex/source-bootstrap-installer` 工作树生成；CPython
   3.11.15 ZIP 的本地已核对身份为 `33,887,443` bytes、SHA-256
   `a7bef1285f1a0f4007de9ede5752f105dcf2b137d54670074d16503554fa0169`，provenance
