@@ -70,6 +70,9 @@ SDK，即可得到可离线运行的 E621 打标、质量评分、Qwen3 tokenize
   `b343e49a85d2240c23ae0e75b27e06529c6c859bce350bb5fa77d25cd01540e9`。生产 manifest
   已重建并绑定 SHA-256 `cf19935c75bdc63c6fa3c843222d7f8baad27b551a280dbe38f7a74d9dc0c426`。
 - [!] R14 仍未完成：当前开发主机预检为 `not-clean`，不能替代 CPU/NVIDIA 干净机验收。
+- [x] 2026-08-13：修复 `Start-WebUI.bat` 双击失败时窗口立即关闭的问题。现在非零退出码
+  会显示错误码、`.runtime-build\\launcher` 日志目录并等待确认；成功路径仍自动返回。
+  新增回归测试覆盖该可见错误契约。
 - [x] 2026-08-13：在 `F:\AnimaSourceBootstrapNvidiaValidation-20260813-01` 的默认
   `main` 新 clone 上实际执行 `Install-WebUI.bat`，复现首次下载尚无 `.partial` 时
   PowerShell 将 `-and` 错绑为 `Test-Path` 参数的生产失败；四处布尔表达式均补齐子表达式

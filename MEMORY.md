@@ -42,6 +42,11 @@ CLIP 文件使用 OpenAI 官方 CDN：
 
 ## 当前证据
 
+- 2026-08-13：用户报告安装后点击启动“闪退”。代码核对确认 `Start-WebUI.bat` 原先直接
+  `exit /b %ERRORLEVEL%`，所以 PowerShell 前置错误会让双击窗口立即消失。已改为捕获退出码，
+  失败时显示 launcher 日志目录并 `pause`；成功路径不变。该补丁只改善错误可见性，具体后端
+  根因仍需对方提供窗口错误或 `.runtime-build\\launcher\\webui-*.stderr.log`。
+
 - 2026-08-13：最终修复基线 `01516f4795156dece6728957a2397d57df6db683` 已生成不可变
   CPython 资产 `cpython-3.11.15-win-amd64-01516f4.zip`。GitHub Release 上传与公开 URL
   重下均核对为 `34,719,985` bytes、SHA-256

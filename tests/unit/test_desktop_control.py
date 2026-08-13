@@ -20,6 +20,14 @@ class DesktopControlTests(unittest.TestCase):
         self.assertIn("bootstrap_install.ps1", install)
         self.assertNotIn("desktop_control.ps1", install)
 
+    def test_start_batch_keeps_a_double_click_failure_visible_with_log_guidance(self) -> None:
+        contents = (ROOT / "Start-WebUI.bat").read_text(encoding="ascii")
+        self.assertIn("set \"exitCode=%ERRORLEVEL%\"", contents)
+        self.assertIn("if not \"%exitCode%\"==\"0\"", contents)
+        self.assertIn(".runtime-build\\launcher", contents)
+        self.assertIn("pause", contents.lower())
+        self.assertIn("exit /b %exitCode%", contents)
+
     def test_launcher_uses_only_the_embedded_core_and_safe_stop_protocol(self) -> None:
         script = (ROOT / "packaging" / "scripts" / "desktop_control.ps1").read_text(encoding="utf-8")
         self.assertIn("runtimes\\core\\python.exe", script)
