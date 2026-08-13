@@ -113,8 +113,8 @@
       "approvedArtifacts": [
         {
           "sourceRelativePath": "resource-library/classification-indexes/e621-classify-20260724-v1/resource.json",
-          "sizeBytes": 1866,
-          "sha256": "ddc526323922c597d6166707806d73a622e905ba0c3560d450bcf561372baa5c"
+          "sizeBytes": 1805,
+          "sha256": "5e6c82a915b053ec949c93eadd8bd67afb83cdab480056a1287d8356e362a4e6"
         },
         {
           "sourceRelativePath": "resource-library/classification-indexes/e621-classify-20260724-v1/e621_tag_dictionary.json",
@@ -128,8 +128,8 @@
         },
         {
           "sourceRelativePath": "resource-library/replacement-indexes/e621-replace-20260726-v2/resource.json",
-          "sizeBytes": 1133,
-          "sha256": "bb0f968cb2001b6a7257b052b01a20196473407223149c77acb1a92db169e24a"
+          "sizeBytes": 1091,
+          "sha256": "7f65c23e2793e1dca7c04d7532ebe4c5680e82327e747f23d7d97608a48fc31f"
         },
         {
           "sourceRelativePath": "resource-library/replacement-indexes/e621-replace-20260726-v2/e621_tag_replacement_index.csv",

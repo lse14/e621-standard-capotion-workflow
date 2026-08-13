@@ -51,6 +51,14 @@ CLIP 文件使用 OpenAI 官方 CDN：
   和 `policy-cuda.lock` 原值有一字符错误；`policy.lock` 原本已正确。修正后 production
   manifest SHA-256 为 `5d428429aa9a39f5ea58890fc18cebb286d1052f89120f527d071ae22ed0c72a`。
 
+- 2026-08-14：同一测试 clone 在 94 个下载缓存完成后以
+  `source-tree artifact identity does not match: e621-classification-source-resource-json` 退出。
+  根因是维护工作树两份 `resource.json` 为 CRLF，但 Git blob / 新 clone 为 LF；旧 inventory
+  分别错误绑定 1,866/1,133 bytes，而发布 blob 为 1,805/1,091 bytes。两条属性现固定
+  `text eol=lf`，inventory 改为 Git blob 身份，并新增所有 source-tree 条目对 HEAD blob 的
+  回归校验。新 production manifest SHA-256 为
+  `f489d8782fbe71ff2bc44ede8bc5be3503aaf5151a297b8c0d4e7636c8bdf6bf`。
+
 - 2026-08-14：外部日志 `source-bootstrap-20260813T151803Z.log` 记录 NVIDIA 路线已下载
   bootstrap，但标准库安装器以 `duplicate wheel path: Lib\\site-packages\\anima_caption_format\\flat_txt.py`
   退出。公开资产审计确认 ZIP 含 982 个 site-packages 条目，包括 `anima_core` 与

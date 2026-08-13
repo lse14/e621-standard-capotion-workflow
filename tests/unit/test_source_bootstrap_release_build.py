@@ -143,6 +143,25 @@ class SourceBootstrapReleaseBuildTests(unittest.TestCase):
                 self.assertEqual(contract["files"], {artifact["relativePath"] for artifact in artifacts})
                 self.assertTrue(all(artifact["delivery"] == "source-tree" for artifact in artifacts))
 
+    def test_production_source_tree_identities_match_the_tracked_git_blobs(self) -> None:
+        value = json.loads(INVENTORY.read_text(encoding="utf-8"))
+        artifacts = [
+            artifact
+            for component in value["manifest"]["components"]
+            for variant in component["variants"].values()
+            for artifact in variant.get("artifacts", [])
+            if artifact.get("delivery") == "source-tree"
+        ]
+
+        for artifact in artifacts:
+            with self.subTest(artifact=artifact["id"]):
+                payload = subprocess.check_output(
+                    ["git", "show", f"HEAD:{artifact['sourceRelativePath']}"],
+                    cwd=ROOT,
+                )
+                self.assertEqual(artifact["sizeBytes"], len(payload))
+                self.assertEqual(artifact["sha256"], hashlib.sha256(payload).hexdigest())
+
     def test_source_bootstrap_defaults_are_e621_only_and_tracked_for_the_installer(self) -> None:
         defaults = ROOT / "resource-library" / "defaults.json"
         self.assertTrue(defaults.is_file(), "source-bootstrap defaults must exist")

@@ -91,6 +91,13 @@ SDK，即可得到可离线运行的 E621 打标、质量评分、Qwen3 tokenize
   与 `policy-cuda.lock` 的单字符错误，重建 production manifest 并绑定 SHA-256
   `5d428429aa9a39f5ea58890fc18cebb286d1052f89120f527d071ae22ed0c72a`。过期的 fixture
   断言也已改为要求现有公开生产资产通过发布门禁。
+- [x] 2026-08-14：`E:\Desktop\tagger测试` 继续安装至全部 94 个 wheel 缓存和 runtime
+  组装后，发布门禁拒绝 `e621-classification-source-resource-json`。核对发现两份受保护
+  `resource.json` 的 production identity 来自维护工作树 CRLF 字节，而 Git HEAD / 新 clone
+  是 LF 字节。现将两条 `.gitattributes` 规则固定为 `text eol=lf`，inventory 改为 Git blob
+  的实际大小/SHA-256，并增加逐项使用 `git show HEAD:<path>` 校验全部 source-tree artifact
+  的回归测试；重建 manifest 后绑定 SHA-256
+  `f489d8782fbe71ff2bc44ede8bc5be3503aaf5151a297b8c0d4e7636c8bdf6bf`。
 - [x] 2026-08-13：在 `F:\AnimaSourceBootstrapNvidiaValidation-20260813-01` 的默认
   `main` 新 clone 上实际执行 `Install-WebUI.bat`，复现首次下载尚无 `.partial` 时
   PowerShell 将 `-and` 错绑为 `Test-Path` 参数的生产失败；四处布尔表达式均补齐子表达式
