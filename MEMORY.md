@@ -48,6 +48,10 @@ CLIP 文件使用 OpenAI 官方 CDN：
   `anima_caption_format`；资产冲突文件为 2,939 bytes，而当前源码为 3,007 bytes。根因是
   错把完整开发 core runtime 当作 CPython 基础输入，不是 WebUI 启动错误。基础资产 builder
   现要求 `Lib\\site-packages` 存在、普通且为空，污染输入必须在写 ZIP 前失败。
+  门禁提交 `9230c7703c465d0c6dcffe9420764cccf294bc16` 的干净资产已发布；公开 URL 重下身份为
+  `20,565,968` bytes、SHA-256 `3ab496658760f8bbf90b6593231ba1f4de90d4bb732e7ce19f25683382e1424a`，
+  ZIP 内 site-packages 条目为 0，production manifest SHA-256 为
+  `47fc7c8ac3a8bae1351a57c26ae046152b96e87f3679703848c66ec00354bb07`。
 
 - 2026-08-13：用户报告安装后点击启动“闪退”。代码核对确认 `Start-WebUI.bat` 原先直接
   `exit /b %ERRORLEVEL%`，所以 PowerShell 前置错误会让双击窗口立即消失。已改为捕获退出码，

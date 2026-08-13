@@ -3,7 +3,7 @@
   "manifest": {
     "schemaVersion": 1,
     "releaseVersion": "source-bootstrap-e621-v1",
-    "sourceCommit": "01516f4795156dece6728957a2397d57df6db683",
+    "sourceCommit": "9230c7703c465d0c6dcffe9420764cccf294bc16",
     "allowedHosts": [
       "files.pythonhosted.org",
       "huggingface.co",
@@ -17,13 +17,13 @@
     "bootstrap": {
       "artifact": {
         "id": "cpython311-base",
-        "url": "https://github.com/lse14/e621-standard-capotion-workflow/releases/download/source-bootstrap-e621-v1/cpython-3.11.15-win-amd64-01516f4.zip",
+        "url": "https://github.com/lse14/e621-standard-capotion-workflow/releases/download/source-bootstrap-e621-v1/cpython-3.11.15-win-amd64-9230c77.zip",
         "allowedHosts": [
           "github.com",
           "release-assets.githubusercontent.com"
         ],
-        "sizeBytes": 34719985,
-        "sha256": "b343e49a85d2240c23ae0e75b27e06529c6c859bce350bb5fa77d25cd01540e9",
+        "sizeBytes": 20565968,
+        "sha256": "3ab496658760f8bbf90b6593231ba1f4de90d4bb732e7ce19f25683382e1424a",
         "relativePath": "bootstrap/cpython-3.11.15-win-amd64.zip"
       },
       "entryRelativePath": "python.exe",
@@ -3030,9 +3030,9 @@
     "artifacts": [
       {
         "id": "cpython311-base",
-        "publishedUrl": "https://github.com/lse14/e621-standard-capotion-workflow/releases/download/source-bootstrap-e621-v1/cpython-3.11.15-win-amd64-01516f4.zip",
-        "sizeBytes": 34719985,
-        "sha256": "b343e49a85d2240c23ae0e75b27e06529c6c859bce350bb5fa77d25cd01540e9"
+        "publishedUrl": "https://github.com/lse14/e621-standard-capotion-workflow/releases/download/source-bootstrap-e621-v1/cpython-3.11.15-win-amd64-9230c77.zip",
+        "sizeBytes": 20565968,
+        "sha256": "3ab496658760f8bbf90b6593231ba1f4de90d4bb732e7ce19f25683382e1424a"
       }
     ]
   },

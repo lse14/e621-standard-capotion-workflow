@@ -167,11 +167,11 @@ class SourceBootstrapReleaseBuildTests(unittest.TestCase):
         record = records[0]
         self.assertEqual("cpython311-base", record["id"])
         self.assertEqual(
-            "https://github.com/lse14/e621-standard-capotion-workflow/releases/download/source-bootstrap-e621-v1/cpython-3.11.15-win-amd64-01516f4.zip",
+            "https://github.com/lse14/e621-standard-capotion-workflow/releases/download/source-bootstrap-e621-v1/cpython-3.11.15-win-amd64-9230c77.zip",
             record["publishedUrl"],
         )
-        self.assertEqual(34719985, record["sizeBytes"])
-        self.assertEqual("b343e49a85d2240c23ae0e75b27e06529c6c859bce350bb5fa77d25cd01540e9", record["sha256"])
+        self.assertEqual(20565968, record["sizeBytes"])
+        self.assertEqual("3ab496658760f8bbf90b6593231ba1f4de90d4bb732e7ce19f25683382e1424a", record["sha256"])
 
     def test_cpu_variants_have_no_cuda_distribution(self) -> None:
         required = {

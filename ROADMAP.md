@@ -73,10 +73,14 @@ SDK，即可得到可离线运行的 E621 打标、质量评分、Qwen3 tokenize
 - [x] 2026-08-13：修复 `Start-WebUI.bat` 双击失败时窗口立即关闭的问题。现在非零退出码
   会显示错误码、`.runtime-build\\launcher` 日志目录并等待确认；成功路径仍自动返回。
   新增回归测试覆盖该可见错误契约。
-- [-] 2026-08-14：外部 NVIDIA 安装日志确定生产安装在 runtime 组装阶段失败：已发布 CPython
+- [x] 2026-08-14：外部 NVIDIA 安装日志确定生产安装在 runtime 组装阶段失败：已发布 CPython
   基础 ZIP 错误包含开发 `core` runtime 的 982 个 `Lib/site-packages` 条目，随后复制当前
   `anima_caption_format` 源码时触发 `duplicate wheel path`。先加入基础资产 site-packages
-  必须为空的失败关闭门禁，再重建、发布和绑定干净资产。
+  必须为空的失败关闭门禁。以 `9230c7703c465d0c6dcffe9420764cccf294bc16` 重建并发布
+  干净资产 `cpython-3.11.15-win-amd64-9230c77.zip`，独立 verifier 与公开重下均核对
+  `20,565,968` bytes、SHA-256 `3ab496658760f8bbf90b6593231ba1f4de90d4bb732e7ce19f25683382e1424a`，
+  ZIP 的 site-packages 条目为 0；production manifest 绑定 SHA-256
+  `47fc7c8ac3a8bae1351a57c26ae046152b96e87f3679703848c66ec00354bb07`。
 - [x] 2026-08-13：在 `F:\AnimaSourceBootstrapNvidiaValidation-20260813-01` 的默认
   `main` 新 clone 上实际执行 `Install-WebUI.bat`，复现首次下载尚无 `.partial` 时
   PowerShell 将 `-and` 错绑为 `Test-Path` 参数的生产失败；四处布尔表达式均补齐子表达式

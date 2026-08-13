@@ -6,7 +6,7 @@ param(
 $ErrorActionPreference = 'Stop'
 
 # The release build replaces this only after publishing the exact matching inventory.
-$ExpectedInstallManifestSha256 = 'cf19935c75bdc63c6fa3c843222d7f8baad27b551a280dbe38f7a74d9dc0c426'
+$ExpectedInstallManifestSha256 = '47fc7c8ac3a8bae1351a57c26ae046152b96e87f3679703848c66ec00354bb07'
 $script:projectRoot = [System.IO.Path]::GetFullPath($ProjectRoot)
 $script:runtimeBuildRoot = Join-Path $script:projectRoot '.runtime-build'
 $script:logPath = $null
