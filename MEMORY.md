@@ -47,7 +47,8 @@ CLIP 文件使用 OpenAI 官方 CDN：
   `a7bef1285f1a0f4007de9ede5752f105dcf2b137d54670074d16503554fa0169`，provenance
   绑定实现提交 `790502c806f813cca2609281fdf6a687886f90d8`。安装器绑定的
   `install-manifest.json` SHA-256 为
-  `1a0a968a83813ce5b54906f2f18b88473d10ebb4ef598693087ee86649ea3eb0`。
+  `2a3d55f74557cb90c06f42790f0b054d21e04ba062612e897d321f84841774f6`；公开 Release
+  URL 使用 GitHub 迁移后的 `lse14/e621-standard-capotion-workflow` 规范仓库。
 - 发布前本地证据：source-bootstrap 单元测试 89/89、inventory 审计、候选资产独立
   verifier、Windows PowerShell 5.1 与 PowerShell 7 发布门禁均通过。PowerShell 7 会把
   ISO UTC JSON 值反序列化为 `DateTime`，validator 现使用 `ConvertFrom-Json -DateKind String`

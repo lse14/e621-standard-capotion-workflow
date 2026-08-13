@@ -17,7 +17,7 @@
     "bootstrap": {
       "artifact": {
         "id": "cpython311-base",
-        "url": "https://github.com/lse14/anima-idg-standard-annotation-processing/releases/download/source-bootstrap-e621-v1/cpython-3.11.15-win-amd64.zip",
+        "url": "https://github.com/lse14/e621-standard-capotion-workflow/releases/download/source-bootstrap-e621-v1/cpython-3.11.15-win-amd64.zip",
         "allowedHosts": [
           "github.com",
           "release-assets.githubusercontent.com"
@@ -3030,7 +3030,7 @@
     "artifacts": [
       {
         "id": "cpython311-base",
-        "publishedUrl": "https://github.com/lse14/anima-idg-standard-annotation-processing/releases/download/source-bootstrap-e621-v1/cpython-3.11.15-win-amd64.zip",
+        "publishedUrl": "https://github.com/lse14/e621-standard-capotion-workflow/releases/download/source-bootstrap-e621-v1/cpython-3.11.15-win-amd64.zip",
         "sizeBytes": 33887443,
         "sha256": "a7bef1285f1a0f4007de9ede5752f105dcf2b137d54670074d16503554fa0169"
       }

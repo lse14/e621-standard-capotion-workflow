@@ -51,12 +51,13 @@ SDK，即可得到可离线运行的 E621 打标、质量评分、Qwen3 tokenize
   `a7bef1285f1a0f4007de9ede5752f105dcf2b137d54670074d16503554fa0169`，独立离线
   verifier 通过。
 - [x] 生成生产 `install-manifest.json`、`release-artifacts.json`，并把 manifest 的
-  SHA-256 `1a0a968a83813ce5b54906f2f18b88473d10ebb4ef598693087ee86649ea3eb0` 绑定到
+  SHA-256 `2a3d55f74557cb90c06f42790f0b054d21e04ba062612e897d321f84841774f6` 绑定到
   `bootstrap_install.ps1`；`.gitattributes` 强制两个被绑定 JSON 为 LF，避免 clone
   的换行转换破坏身份校验。
 - [x] `test_source_bootstrap_*.py` 89 项、inventory `--validate-only`、资产 verifier，
   以及 Windows PowerShell 5.1/PowerShell 7 的本地发布门禁均通过。PowerShell 7 的
-  JSON UTC 时间戳解析差异已有回归测试和兼容修复。
+  JSON UTC 时间戳解析差异已有回归测试和兼容修复。Release URL 使用 GitHub 迁移后的
+  `lse14/e621-standard-capotion-workflow` 规范仓库。
 - [-] R15: 尚未实际创建 GitHub Release、上传 ZIP 或重新下载公开资产；完成这些外部步骤后
   才能标记发布完成。
 - [!] R14 仍未完成：当前开发主机预检为 `not-clean`，不能替代 CPU/NVIDIA 干净机验收。

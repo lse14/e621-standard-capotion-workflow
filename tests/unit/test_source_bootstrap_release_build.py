@@ -167,7 +167,7 @@ class SourceBootstrapReleaseBuildTests(unittest.TestCase):
         record = records[0]
         self.assertEqual("cpython311-base", record["id"])
         self.assertEqual(
-            "https://github.com/lse14/anima-idg-standard-annotation-processing/releases/download/source-bootstrap-e621-v1/cpython-3.11.15-win-amd64.zip",
+            "https://github.com/lse14/e621-standard-capotion-workflow/releases/download/source-bootstrap-e621-v1/cpython-3.11.15-win-amd64.zip",
             record["publishedUrl"],
         )
         self.assertEqual(33887443, record["sizeBytes"])
