@@ -41,7 +41,7 @@ else:
 
         self.assertEqual({"fixture": "offline", "networkBlocked": True}, evidence)
 
-    def test_release_gate_fails_closed_without_production_assets(self) -> None:
+    def test_release_gate_accepts_the_frozen_production_assets(self) -> None:
         self.assertTrue(RELEASE_VALIDATOR.is_file(), "source-bootstrap release validator must exist")
 
         completed = subprocess.run(
@@ -56,8 +56,8 @@ else:
             check=False,
         )
 
-        self.assertNotEqual(0, completed.returncode)
-        self.assertIn("install-manifest.json", completed.stdout + completed.stderr)
+        self.assertEqual(0, completed.returncode, completed.stdout + completed.stderr)
+        self.assertIn("Source-bootstrap release gate passed for source-bootstrap-e621-v1", completed.stdout)
 
 
 if __name__ == "__main__":

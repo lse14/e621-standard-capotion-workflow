@@ -35,6 +35,14 @@ class FakeResponse:
         return self._payload.read(size)
 
 
+class ErrorAfterPayloadResponse(FakeResponse):
+    def read(self, size: int = -1) -> bytes:
+        payload = super().read(size)
+        if payload:
+            return payload
+        raise OSError("connection closed after the complete payload")
+
+
 class ScriptedTransport:
     def __init__(self, responses: list[FakeResponse | BaseException]) -> None:
         self._responses = list(responses)
@@ -101,6 +109,7 @@ class SourceBootstrapDownloadTests(unittest.TestCase):
 
             self.assertEqual(payload, verified.read_bytes())
             self.assertEqual("bytes=9-", transport.requests[0][1]["Range"])
+            self.assertEqual("Anima-Source-Bootstrap/1.0", transport.requests[0][1]["User-Agent"])
             self.assertFalse(partial.exists())
 
     def test_download_restarts_when_server_ignores_range(self) -> None:
@@ -120,6 +129,41 @@ class SourceBootstrapDownloadTests(unittest.TestCase):
             self.assertEqual(payload, verified.read_bytes())
             self.assertEqual("bytes=4-", transport.requests[0][1]["Range"])
             self.assertNotIn("Range", transport.requests[1][1])
+
+    def test_progressive_responses_do_not_exhaust_the_no_progress_retry_budget(self) -> None:
+        module = self._module()
+        payload = b"progress across four connections"
+        artifact = artifact_for(payload)
+        boundaries = (0, 8, 16, 24, len(payload))
+        responses = []
+        for index, (start, end) in enumerate(zip(boundaries, boundaries[1:])):
+            status = 200 if index == 0 else 206
+            headers = {} if index == 0 else {"Content-Range": f"bytes {start}-{len(payload) - 1}/{len(payload)}"}
+            responses.append(FakeResponse(status, headers, payload[start:end], url=artifact.url))
+        with tempfile.TemporaryDirectory() as temporary_name:
+            verified = module.download_verified(
+                artifact,
+                Path(temporary_name),
+                transport=ScriptedTransport(responses),
+                attempts=1,
+            )
+
+            self.assertEqual(payload, verified.read_bytes())
+
+    def test_complete_verified_partial_survives_an_error_while_reading_eof(self) -> None:
+        module = self._module()
+        payload = b"complete before eof error"
+        artifact = artifact_for(payload)
+        response = ErrorAfterPayloadResponse(200, {}, payload, url=artifact.url)
+        with tempfile.TemporaryDirectory() as temporary_name:
+            verified = module.download_verified(
+                artifact,
+                Path(temporary_name),
+                transport=ScriptedTransport([response]),
+                attempts=1,
+            )
+
+            self.assertEqual(payload, verified.read_bytes())
 
     def test_download_rejects_redirect_to_unknown_host(self) -> None:
         module = self._module()

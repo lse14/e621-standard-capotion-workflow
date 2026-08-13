@@ -81,6 +81,16 @@ SDK，即可得到可离线运行的 E621 打标、质量评分、Qwen3 tokenize
   `20,565,968` bytes、SHA-256 `3ab496658760f8bbf90b6593231ba1f4de90d4bb732e7ce19f25683382e1424a`，
   ZIP 的 site-packages 条目为 0；production manifest 绑定 SHA-256
   `47fc7c8ac3a8bae1351a57c26ae046152b96e87f3679703848c66ec00354bb07`。
+- [x] 2026-08-14：在用户提供的 `E:\Desktop\tagger测试` 从公开 `main@d550fb3` 实际继续
+  NVIDIA 安装，确认 Python 默认 User-Agent 会被 PyTorch/R2 以 HTTP 403 拒绝，且长下载在
+  已取得数据后仍会消耗重试预算。下载器现固定 `Anima-Source-Bootstrap/1.0`，有进展时重置
+  无进展预算，并在 EOF 读取错误后先发布已完整校验的文件；7 项下载器回归通过。
+- [x] 2026-08-14：同一真实安装核对 `torchvision-0.24.1+cu128` 公开字节为
+  `9,365,769` bytes、SHA-256
+  `6d836745bd3130ef8f3569c9f0d9d70103b5e2e9fa058310bcac5f63bcf2d043`；修正 inventory
+  与 `policy-cuda.lock` 的单字符错误，重建 production manifest 并绑定 SHA-256
+  `5d428429aa9a39f5ea58890fc18cebb286d1052f89120f527d071ae22ed0c72a`。过期的 fixture
+  断言也已改为要求现有公开生产资产通过发布门禁。
 - [x] 2026-08-13：在 `F:\AnimaSourceBootstrapNvidiaValidation-20260813-01` 的默认
   `main` 新 clone 上实际执行 `Install-WebUI.bat`，复现首次下载尚无 `.partial` 时
   PowerShell 将 `-and` 错绑为 `Test-Path` 参数的生产失败；四处布尔表达式均补齐子表达式

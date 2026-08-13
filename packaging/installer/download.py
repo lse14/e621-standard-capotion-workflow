@@ -13,6 +13,7 @@ from urllib.parse import urlsplit
 
 _CONTENT_RANGE = re.compile(r"^bytes (?P<start>\d+)-(?P<end>\d+)/(?P<total>\d+)$")
 _CHUNK_SIZE = 1024 * 1024
+_USER_AGENT = "Anima-Source-Bootstrap/1.0"
 
 
 class ArtifactLike(Protocol):
@@ -124,6 +125,22 @@ def _remove_if_file(path: Path) -> None:
         path.unlink()
 
 
+def _failure_count_after_attempt(partial: Path, offset: int, failures: int) -> int:
+    try:
+        if partial.is_file() and partial.stat().st_size > offset:
+            return 0
+    except OSError:
+        pass
+    return failures + 1
+
+
+def _publish_if_verified(partial: Path, complete: Path, artifact: ArtifactLike) -> Path | None:
+    if not partial.is_file() or not verify_file(partial, artifact):
+        return None
+    os.replace(partial, complete)
+    return complete
+
+
 def _validate_response_url(response: ResponseLike, artifact: ArtifactLike) -> None:
     if not _allowed_https_url(response.url, frozenset(host.lower() for host in artifact.allowed_hosts)):
         raise ManualDownloadRequired(artifact, "Download redirect uses an unapproved allowed host")
@@ -183,7 +200,9 @@ def download_verified(
     failures = 0
     while failures < attempts:
         offset = partial.stat().st_size if partial.exists() else 0
-        headers = {"Range": f"bytes={offset}-"} if offset else {}
+        headers = {"User-Agent": _USER_AGENT}
+        if offset:
+            headers["Range"] = f"bytes={offset}-"
         try:
             response = active_transport.open(artifact.url, headers, artifact.allowed_hosts)
             _validate_response_url(response, artifact)
@@ -203,7 +222,7 @@ def download_verified(
             terminal = _terminal_http_error(artifact, exc)
             if terminal is not None:
                 raise terminal from exc
-            failures += 1
+            failures = _failure_count_after_attempt(partial, offset, failures)
             continue
         except ValueError as exc:
             if partial.exists() and partial.is_file() and partial.stat().st_size >= artifact.size_bytes:
@@ -213,10 +232,13 @@ def download_verified(
                     artifact,
                     f"Download checksum mismatch: received {actual_size} bytes with SHA-256 {actual_sha256}",
                 ) from exc
-            failures += 1
+            failures = _failure_count_after_attempt(partial, offset, failures)
             continue
         except (OSError, urllib.error.URLError):
-            failures += 1
+            verified = _publish_if_verified(partial, complete, artifact)
+            if verified is not None:
+                return verified
+            failures = _failure_count_after_attempt(partial, offset, failures)
             continue
         if verify_file(partial, artifact):
             os.replace(partial, complete)
@@ -224,7 +246,7 @@ def download_verified(
         try:
             actual_size, actual_sha256 = _digest(partial)
         except OSError:
-            failures += 1
+            failures = _failure_count_after_attempt(partial, offset, failures)
             continue
         if actual_size >= artifact.size_bytes:
             _remove_if_file(partial)
@@ -232,5 +254,5 @@ def download_verified(
                 artifact,
                 f"Download checksum mismatch: received {actual_size} bytes with SHA-256 {actual_sha256}",
             )
-        failures += 1
+        failures = _failure_count_after_attempt(partial, offset, failures)
     raise ManualDownloadRequired(artifact, "Download failed after bounded retries; a resumable partial may remain")

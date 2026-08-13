@@ -42,6 +42,15 @@ CLIP 文件使用 OpenAI 官方 CDN：
 
 ## 当前证据
 
+- 2026-08-14：`E:\Desktop\tagger测试` 的公开 `main@d550fb3` NVIDIA 安装已越过旧的
+  `duplicate wheel path`。PyTorch/R2 对 Python 默认 User-Agent 返回 403，而固定
+  `Anima-Source-Bootstrap/1.0` 后可响应；下载器新增固定 UA、仅对无进展失败计数、以及
+  EOF 错误后先校验完整 partial 的行为。实际下载的 `torchvision-0.24.1+cu128` 为
+  `9,365,769` bytes、SHA-256
+  `6d836745bd3130ef8f3569c9f0d9d70103b5e2e9fa058310bcac5f63bcf2d043`，证明 inventory
+  和 `policy-cuda.lock` 原值有一字符错误；`policy.lock` 原本已正确。修正后 production
+  manifest SHA-256 为 `5d428429aa9a39f5ea58890fc18cebb286d1052f89120f527d071ae22ed0c72a`。
+
 - 2026-08-14：外部日志 `source-bootstrap-20260813T151803Z.log` 记录 NVIDIA 路线已下载
   bootstrap，但标准库安装器以 `duplicate wheel path: Lib\\site-packages\\anima_caption_format\\flat_txt.py`
   退出。公开资产审计确认 ZIP 含 982 个 site-packages 条目，包括 `anima_core` 与
