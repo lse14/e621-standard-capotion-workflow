@@ -339,3 +339,8 @@ CLIP 文件使用 OpenAI 官方 CDN：
   尾部反斜杠把非法引号传给 Windows PowerShell。入口改用 `-ProjectRoot "%~dp0."`；动态回归
   与实际 BAT 均确认路径错误消失，当前按设计停在缺少生产 `install-manifest.json` 的发布门禁。
   `test_source_bootstrap_powershell.py` 22 项通过。
+- 2026-08-13：新鲜 NVIDIA clone 的生产安装证明 Python 异常路径不能在自身仍运行时删除
+  bootstrap runtime；Windows 锁定 `libcrypto-3.dll` 并产生 `WinError 5`。`install_project()`
+  失败时现保留 bootstrap/cache，只清理 staging/transactions；子进程退出后由 PowerShell
+  外层完成 bootstrap 清理。新增回归后 source-bootstrap 单测 `96/96`、PowerShell AST、
+  production inventory 校验和 `git diff --check` 通过。该结果尚不是 NVIDIA 安装成功证据。

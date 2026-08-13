@@ -542,7 +542,7 @@ def install_project(
             tuple(messages),
         )
     except Exception:
-        cleanup_failure(layout)
+        cleanup_failure(layout, preserve_bootstrap=True, preserve_cache=True)
         raise
 
 

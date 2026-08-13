@@ -381,6 +381,12 @@ SDK，即可得到可离线运行的 E621 打标、质量评分、Qwen3 tokenize
   `test_source_bootstrap_powershell.py` 14 项通过；涵盖缺失账本、错误 local-only 镜像、
   pending E621 状态及缺失/不精确负责人决定的拒绝。未运行全量回归。
 
+- [x] 2026-08-13：新鲜 NVIDIA clone 的生产安装证明 Python 异常路径不能在自身仍运行时删除
+  bootstrap runtime；Windows 锁定 `libcrypto-3.dll` 并产生 `WinError 5`。`install_project()`
+  失败时现保留 bootstrap/cache，只清理 staging/transactions；子进程退出后由 PowerShell
+  外层完成 bootstrap 清理。新增回归后 source-bootstrap 单测 `96/96`、PowerShell AST、
+  production inventory 校验和 `git diff --check` 通过。
+
 - [x] 2026-08-12：新增维护端 `Test-BootstrapRuntimeAsset.ps1`，独立核对基础 ZIP 的
   provenance 字段、文件名、大小、SHA-256、builder 脚本 SHA-256、安全 ZIP 条目和
   解压后的 `python.exe -B -I` 标准库探测。单测实际生成 ZIP、验证成功并以等长篡改触发

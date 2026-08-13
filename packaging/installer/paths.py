@@ -336,11 +336,19 @@ def publish_directories(layout: ProjectLayout, staged_directories: Mapping[str, 
         raise
 
 
-def cleanup_failure(layout: ProjectLayout) -> None:
+def cleanup_failure(
+    layout: ProjectLayout,
+    *,
+    preserve_bootstrap: bool = False,
+    preserve_cache: bool = False,
+) -> None:
     layout.ensure_directories()
-    _remove_tree(layout.project_root, layout.bootstrap)
+    if not preserve_bootstrap:
+        _remove_tree(layout.project_root, layout.bootstrap)
     _remove_tree(layout.project_root, layout.staging)
     _remove_tree(layout.project_root, layout.transactions)
+    if preserve_cache:
+        return
     for path in sorted(layout.cache.rglob("*"), key=lambda item: len(item.parts), reverse=True):
         if path.is_file() and path.suffix.lower() != ".partial":
             _remove_file(layout.project_root, path)
