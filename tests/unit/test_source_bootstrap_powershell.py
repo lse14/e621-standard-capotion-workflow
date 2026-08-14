@@ -368,7 +368,8 @@ class SourceBootstrapPowerShellTests(unittest.TestCase):
         script = self._bootstrap_text()
 
         self.assertIn("desktop_control.ps1", script)
-        self.assertIn("-Action Start", script)
+        self.assertIn("Invoke-DesktopControlStart", script)
+        self.assertIn("'-Action', 'Start'", script)
         self.assertIn("OCR_MODEL_DOWNLOAD.md", script)
         self.assertNotIn("OcrMode", script)
 
@@ -389,11 +390,15 @@ class SourceBootstrapPowerShellTests(unittest.TestCase):
                 f"$script:logPath='{log_literal}'; "
                 "$script:utf8NoBom=New-Object System.Text.UTF8Encoding($false); "
                 "$script:attempts=0; "
-                "function global:powershell.exe { "
+                "function Invoke-DesktopControlStart { "
+                "param([string]$DesktopControl,[int]$Attempt); "
                 "$script:attempts++; "
-                "if($script:attempts -eq 1){$global:LASTEXITCODE=1; 'transient core verification failure'} "
-                "else{$global:LASTEXITCODE=0; 'webui ready'} }; "
-                "try { Start-InstalledWebUi 'C:\\fixture\\desktop_control.ps1' } finally { Remove-Item function:global:powershell.exe }; "
+                f"$stdout='{log_literal}.attempt-'+$Attempt+'.stdout'; "
+                f"$stderr='{log_literal}.attempt-'+$Attempt+'.stderr'; "
+                "if($script:attempts -eq 1){[IO.File]::WriteAllText($stdout,'transient core verification failure');$exitCode=1} "
+                "else{[IO.File]::WriteAllText($stdout,'webui ready');$exitCode=0}; "
+                "[pscustomobject]@{exitCode=$exitCode;stdoutPath=$stdout;stderrPath=$stderr} }; "
+                "Start-InstalledWebUi 'C:\\fixture\\desktop_control.ps1'; "
                 f"[ordered]@{{attempts=$script:attempts;log=[IO.File]::ReadAllText('{log_literal}')}} | ConvertTo-Json -Compress"
             )
             completed = subprocess.run(
@@ -406,6 +411,60 @@ class SourceBootstrapPowerShellTests(unittest.TestCase):
             self.assertEqual(2, result["attempts"])
             self.assertIn("transient core verification failure", result["log"])
             self.assertIn("retrying", result["log"].lower())
+
+    def test_bootstrap_webui_start_does_not_wait_for_descendant_output_handles(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_name:
+            temporary = Path(temporary_name)
+            desktop_control = temporary / "desktop_control.ps1"
+            descendant_pid = temporary / "descendant.pid"
+            descendant_pid_literal = str(descendant_pid).replace("'", "''")
+            desktop_control.write_text(
+                "$info=New-Object System.Diagnostics.ProcessStartInfo\n"
+                "$info.FileName='powershell.exe'\n"
+                "$info.Arguments='-NoProfile -Command Start-Sleep -Seconds 8'\n"
+                "$info.UseShellExecute=$false\n"
+                "$child=[System.Diagnostics.Process]::Start($info)\n"
+                f"[IO.File]::WriteAllText('{descendant_pid_literal}',[string]$child.Id)\n"
+                "Write-Output 'webui ready'\n",
+                encoding="utf-8",
+            )
+            log_path = temporary / "bootstrap.log"
+            control_literal = str(desktop_control).replace("'", "''")
+            log_literal = str(log_path).replace("'", "''")
+            command = (
+                "$tokens=$null; $errors=$null; "
+                "$ast=[System.Management.Automation.Language.Parser]::ParseFile("
+                "(Resolve-Path 'packaging\\scripts\\bootstrap_install.ps1'),[ref]$tokens,[ref]$errors); "
+                "if($errors.Count){exit 1}; "
+                "$wanted=@('Write-InstallLog','Invoke-DesktopControlStart','Start-InstalledWebUi'); "
+                "$nodes=$ast.FindAll({param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $wanted -contains $node.Name},$true); "
+                "Invoke-Expression (($nodes | ForEach-Object {$_.Extent.Text}) -join \"`n\"); "
+                f"$script:logPath='{log_literal}'; "
+                "$script:utf8NoBom=New-Object System.Text.UTF8Encoding($false); "
+                f"$elapsed=Measure-Command {{ Start-InstalledWebUi '{control_literal}' }}; "
+                "[ordered]@{seconds=$elapsed.TotalSeconds} | ConvertTo-Json -Compress"
+            )
+            try:
+                completed = subprocess.run(
+                    ["powershell.exe", "-NoProfile", "-Command", command], cwd=ROOT,
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False, timeout=20,
+                )
+
+                self.assertEqual(0, completed.returncode, completed.stdout + completed.stderr)
+                result = json.loads(completed.stdout.splitlines()[-1])
+                self.assertLess(result["seconds"], 4.0)
+            finally:
+                if descendant_pid.is_file():
+                    pid = int(descendant_pid.read_text(encoding="utf-8"))
+                    subprocess.run(
+                        [
+                            "powershell.exe", "-NoProfile", "-Command",
+                            f"$process=Get-Process -Id {pid} -ErrorAction SilentlyContinue; "
+                            f"if($process){{Wait-Process -Id {pid} -Timeout 10}}",
+                        ],
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                        check=False, timeout=12,
+                    )
 
     def test_release_validator_requires_ocr_runtime_but_not_manual_ocr_models(self) -> None:
         self.assertTrue(RELEASE_VALIDATOR.is_file(), "source bootstrap release validator must exist")

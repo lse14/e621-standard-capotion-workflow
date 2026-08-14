@@ -54,16 +54,30 @@ function Write-InstallLog([string]$Message) {
     Write-Host $Message
 }
 
+function Invoke-DesktopControlStart([string]$DesktopControl, [int]$Attempt) {
+    $stdoutPath = "$script:logPath.webui-$Attempt.stdout.log"
+    $stderrPath = "$script:logPath.webui-$Attempt.stderr.log"
+    $arguments = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"{0}"' -f $DesktopControl), '-Action', 'Start')
+    $process = Start-Process -FilePath 'powershell.exe' -ArgumentList $arguments -WindowStyle Hidden -PassThru `
+        -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
+    $process.WaitForExit()
+    return [pscustomobject]@{ exitCode = $process.ExitCode; stdoutPath = $stdoutPath; stderrPath = $stderrPath }
+}
+
 function Start-InstalledWebUi([string]$DesktopControl) {
     for ($attempt = 1; $attempt -le 2; $attempt++) {
-        $output = @(& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $DesktopControl -Action Start 2>&1)
-        $exitCode = $LASTEXITCODE
-        foreach ($line in $output) {
-            Write-InstallLog ("WebUI start attempt {0}: {1}" -f $attempt, [string]$line)
+        $result = Invoke-DesktopControlStart $DesktopControl $attempt
+        if ([int]$result.exitCode -eq 0) {
+            Write-InstallLog ("WebUI start attempt {0} succeeded; stdout: {1}; stderr: {2}" -f $attempt, $result.stdoutPath, $result.stderrPath)
+            return
         }
-        if ($exitCode -eq 0) { return }
+        foreach ($path in @($result.stdoutPath, $result.stderrPath)) {
+            foreach ($line in @(Get-Content -LiteralPath $path -ErrorAction SilentlyContinue)) {
+                Write-InstallLog ("WebUI start attempt {0}: {1}" -f $attempt, [string]$line)
+            }
+        }
         if ($attempt -lt 2) {
-            Write-InstallLog ("WebUI start attempt {0} failed with exit code {1}; retrying" -f $attempt, $exitCode)
+            Write-InstallLog ("WebUI start attempt {0} failed with exit code {1}; retrying" -f $attempt, $result.exitCode)
             Start-Sleep -Seconds 2
         }
     }

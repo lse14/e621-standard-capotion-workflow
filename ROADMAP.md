@@ -523,3 +523,11 @@ SDK，即可得到可离线运行的 E621 打标、质量评分、Qwen3 tokenize
 - [x] 2026-08-12：基础资产 builder 与 verifier 的离线探测现在要求精确
   `sys.version_info[:3] == (3, 11, 15)`，不再把同一 minor 版本的其他 CPython 补丁版
   当作可发布基础资产；项目内嵌 CPython 的 release-build 单测 5 项通过。
+- [x] 2026-08-14：修复 bootstrap 自动 Start 的输出句柄阻塞。`desktop_control.ps1` 的
+  stdout/stderr 现在重定向到独立项目日志，bootstrap 只等待直接 PowerShell 子进程；浏览器等
+  后代继承输出句柄时不再阻止 BAT 返回和成功清理。回归实测直接子进程在 4 秒门限内返回，
+  8 秒后代仍独立存活；瞬态失败输出仍会写入主日志并重试一次。
+- [x] 2026-08-14：最终提交前新鲜门禁通过：source-bootstrap `111/111`、desktop-control
+  `7/7`、真实安装根 API `37/37`、预检 `29/29`、fixture `2/2`；production inventory、公开
+  bootstrap 资产逐字节验证、release gate、manifest SHA 绑定、Python 编译、PowerShell AST
+  与 `git diff --check` 均退出 0。OCR 三份官方归档的手动放置边界未改变。

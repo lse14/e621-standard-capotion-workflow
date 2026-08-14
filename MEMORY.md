@@ -462,3 +462,11 @@ CLIP 文件使用 OpenAI 官方 CDN：
   bootstrap Start 现最多尝试两次、间隔 2 秒并记录子 PowerShell 输出，第二次仍失败才退出；
   TDD 回归及 source-bootstrap `110/110`、desktop-control `7/7` 通过。OCR 模型边界不变：用户
   手动放置三份官方归档，安装器不下载、镜像或发布模型权重。
+- 2026-08-14：真实最终 HEAD 验证进一步发现，bootstrap 用 PowerShell 管道捕获 Start 输出时，
+  浏览器后代继承管道句柄会使外层 BAT 在 WebUI 已健康后仍不返回。Start 调用现用独立 stdout/
+  stderr 日志文件，只等待直接 PowerShell 子进程退出；失败时读取日志并保留一次有界重试。
+  后代句柄回归的 helper 用时低于 4 秒，8 秒后代不再延迟 helper 返回。
+- 2026-08-14：该修复提交前新鲜验证为 source-bootstrap `111/111`、desktop-control `7/7`、
+  真实安装根 API `37/37`、预检 `29/29`、fixture `2/2`；production inventory、公开 bootstrap
+  资产逐字节验证、release gate、manifest SHA 绑定、Python 编译、PowerShell AST 和
+  `git diff --check` 均通过。OCR 模型仍只接受用户手动放入三份官方归档。
