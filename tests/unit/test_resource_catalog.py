@@ -346,6 +346,17 @@ class ResourceCatalogTests(unittest.TestCase):
         second = catalog.scan().package("replacement-index", self.ids["replacementIndex"], verify_hashes=False)
         self.assertEqual(fingerprint, second.fingerprint)
 
+    def test_v2_defaults_allow_an_e621_only_distribution(self) -> None:
+        (self.root / "defaults.json").write_text(
+            json.dumps({"schemaVersion": 2, "defaults": {"e621": self.ids}}),
+            encoding="utf-8",
+        )
+
+        snapshot = ResourceCatalog(self.root).scan()
+
+        self.assertEqual({"e621": self.ids}, snapshot.defaults)
+        self.assertEqual({"e621"}, set(snapshot.api_dict()["profiles"]))
+
     def test_scan_is_size_only_but_preflight_hash_verification_rejects_tampering(self) -> None:
         catalog = ResourceCatalog(self.root)
         package = catalog.scan().package("replacement-index", self.ids["replacementIndex"], verify_hashes=False)

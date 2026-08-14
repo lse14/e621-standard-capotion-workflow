@@ -278,10 +278,11 @@ class ResourceCatalog:
             if len(set(result.values())) != len(result):
                 raise ResourceCatalogError("default resource IDs must be unique")
             return 1, {"e621": result}
-        if schema_version != 2 or not isinstance(defaults, dict) or set(defaults) != set(PROFILE_DEFAULT_KEYS):
+        if schema_version != 2 or not isinstance(defaults, dict) or not defaults or not set(defaults).issubset(PROFILE_DEFAULT_KEYS):
             raise ResourceCatalogError("defaults.json mapping is invalid")
         normalized: dict[str, dict[str, str]] = {}
-        for profile, required_keys in PROFILE_DEFAULT_KEYS.items():
+        for profile in sorted(defaults):
+            required_keys = PROFILE_DEFAULT_KEYS[profile]
             profile_defaults = defaults.get(profile)
             if not isinstance(profile_defaults, dict) or set(profile_defaults) != required_keys:
                 raise ResourceCatalogError(f"defaults.{profile} mapping is invalid")

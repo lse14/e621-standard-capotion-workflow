@@ -478,6 +478,14 @@ SDK，即可得到可离线运行的 E621 打标、质量评分、Qwen3 tokenize
   bootstrap，只清除 cache/staging/transactions；子进程退出后仍由外层 PowerShell 完成
   bootstrap 最终清理。source-bootstrap 单测 `109/109`、Python 编译、PowerShell AST、
   production inventory、release gate 和 `git diff --check` 均退出 0。
+- [x] 2026-08-14：修复后真实 BAT 退出 0，install state 记录 NVIDIA 与 15 个组件，WebUI
+  `GET /health` 返回 `status=ok`、首页返回 HTTP 200，`Stop-WebUI.bat` 退出 0；但浏览器加载的
+  `GET /api/resources` 返回 400：`defaults.json mapping is invalid`。生产 defaults 和发布测试
+  明确为 E621-only，catalog schema v2 却强制同时声明 Danbooru。解析器现允许非空的已知
+  profile 子集，仍严格校验每个已声明 profile 的完整字段；真实 5 个已安装资源包加载后返回
+  `e621.available=true`、0 个 invalid resource。以真实安装根运行 API `37/37`、预检 `29/29`，
+  source-bootstrap `109/109` 均通过；D: worktree 缺模型导致项目默认资源用例无法完成，不将其
+  记为通过。需发布到新 clone 后复验资源 API。
 
 - [x] 2026-08-12：新增维护端 `Test-BootstrapRuntimeAsset.ps1`，独立核对基础 ZIP 的
   provenance 字段、文件名、大小、SHA-256、builder 脚本 SHA-256、安全 ZIP 条目和

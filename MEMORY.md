@@ -435,3 +435,12 @@ CLIP 文件使用 OpenAI 官方 CDN：
   保留 bootstrap，只清 cache/staging/transactions；等待子进程退出的 PowerShell 继续负责
   最终 bootstrap 清理。source-bootstrap 单测 `109/109`、Python 编译、PowerShell AST、
   production inventory、release gate 和 `git diff --check` 均退出 0。
+- 2026-08-14：随后真实 BAT 首次退出 0；install state 有 NVIDIA 与 15 个组件，WebUI health
+  为 OK、首页 HTTP 200，Stop 退出 0。但浏览器请求 `/api/resources` 得到 400，错误为
+  `defaults.json mapping is invalid`。根因是 production `defaults.json`/发布测试要求 E621-only，
+  `ResourceCatalog` schema v2 却要求 e621+danbooru 精确全集。解析器现允许非空已知 profile
+  子集并继续严格校验 profile 内字段；用测试 clone 真实 5 个资源包加载返回 E621 available、
+  missingDefaults 为空、invalid 为 0。当前已发布 runtime 是修复前代码，不能把该源码直测伪装
+  为同一 runtime 的 API 复验。以测试 clone 为安装/资源根运行 API `37/37`、预检 `29/29`、
+  source-bootstrap `109/109` 通过；D: worktree 缺模型使项目默认资源用例停在资源缺失，不记为
+  通过。需新 clone/重建 core 后确认 `/api/resources` 200。
