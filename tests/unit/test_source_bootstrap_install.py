@@ -803,6 +803,36 @@ class SourceBootstrapInstallTests(unittest.TestCase):
                 )
             self.assertFalse((layout.staging / "core").exists())
 
+    def test_runtime_assembly_allows_identical_namespace_files(self) -> None:
+        assemble, manifest_module = _modules()
+        manifest = manifest_module.load_manifest(fixture_manifest())
+        item = assemble.installation_plan(manifest, accelerator="cpu").components[0]
+        with tempfile.TemporaryDirectory() as temporary_name:
+            root = Path(temporary_name)
+            layout = assemble.ProjectLayout.create(root)
+            layout.ensure_directories()
+            base = root / "base"
+            (base / "Lib").mkdir(parents=True)
+            for filename in ("python.exe", "python311.dll", "python311._pth"):
+                (base / filename).write_bytes(filename.encode("ascii"))
+            wheels = []
+            for index in range(2):
+                wheel = root / f"namespace-{index}.whl"
+                with zipfile.ZipFile(wheel, "w") as archive:
+                    archive.writestr(f"fixture_{index}.dist-info/METADATA", f"Name: fixture-{index}\nVersion: 1\n")
+                    archive.writestr("nvidia/__init__.py", b"")
+                wheels.append(wheel)
+
+            assemble.assemble_runtime(
+                layout,
+                item,
+                base_runtime=base,
+                wheels=[(wheel, wheel.name) for wheel in wheels],
+                destination=layout.staging / "core",
+            )
+
+            self.assertEqual(b"", (layout.staging / "core" / "nvidia" / "__init__.py").read_bytes())
+
     def test_runtime_assembly_uses_manifest_name_for_hash_named_wheel_cache(self) -> None:
         assemble, manifest_module = _modules()
         manifest = manifest_module.load_manifest(fixture_manifest())

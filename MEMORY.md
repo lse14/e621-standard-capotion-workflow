@@ -407,3 +407,6 @@ CLIP 文件使用 OpenAI 官方 CDN：
 - 2026-08-14：第三次真实 NVIDIA 安装发现 RedRocket Hydra URL 漏写 `models/` 目录。上游
   revision API 返回文件 `models/jtp-3-hydra.safetensors`，大小 `1,002,587,976`、SHA-256
   `b2bb072d...` 与现有身份一致；只修 URL 路径，manifest SHA 更新为 `3827bf76...`。
+- 2026-08-14：第四次真实 NVIDIA 安装在 OCR GPU 组装处发现 7 个 NVIDIA wheels 共享相同
+  的空 `nvidia/__init__.py`。`assemble.py` 现在仅允许 `filecmp(..., shallow=False)` 证明
+  字节相同的重复文件；内容不同仍 fail closed。新增测试与原重复冲突测试均通过。

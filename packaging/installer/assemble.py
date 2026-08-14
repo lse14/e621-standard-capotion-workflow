@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import filecmp
 import hashlib
 import json
 import os
@@ -270,6 +271,9 @@ def _merge_extracted_tree(source: Path, destination: Path, seen: set[str], *, re
             relative = str(Path(relative_prefix) / source_file.relative_to(source)).replace(os.sep, "\\")
             key = relative.casefold()
             target = destination / Path(relative.replace("\\", os.sep))
+            if target.exists() and filecmp.cmp(source_file, target, shallow=False):
+                seen.add(key)
+                continue
             if key in seen or target.exists():
                 raise AssemblyError(f"duplicate wheel path: {relative}")
             seen.add(key)
