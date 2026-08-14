@@ -284,11 +284,11 @@ import json
 import sys
 from pathlib import Path
 from PIL import Image
-from anima_caption_worker.model import CaptionModel
+from anima_caption_worker.model import create_tagger_adapter
 from anima_caption_worker.resource import load_caption_resource
 
 resource = load_caption_resource(Path(sys.argv[1]), sys.argv[2], sys.argv[3], verify_external_data_hash=True)
-model = CaptionModel(resource.entrypoints)
+model = create_tagger_adapter(resource)
 predictions = model.predict(model.preprocess(Image.new("RGB", (64, 64), "white")), model.metadata.default_thresholds)
 tags = sorted({prediction.raw_tag for prediction in predictions})
 if not tags:

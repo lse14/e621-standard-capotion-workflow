@@ -416,3 +416,10 @@ CLIP 文件使用 OpenAI 官方 CDN：
 - 2026-08-14：第六次真实安装的 CUDA fallback 错误地对完整 manifest 建 CPU plan，被 required
   CUDA-only `ocr-gpu` 以“no usable variant”阻断。`_cpu_fallback_items()` 现只规划允许 fallback
   的 Caption/Policy，生产 manifest 回归通过。
+- 2026-08-14：第七次真实安装的 Caption CPU fallback probe 以 `KeyError: 'tags.json'` 失败。
+  probe 错把业务键形式的 `resource.entrypoints` 传给 `CaptionModel`；生产 Caption worker 已有
+  正确入口 `create_tagger_adapter(resource)`。回归先红后绿后改用该适配器，随后在现有完整
+  Caption CPU runtime 和 E621 资源上执行网络阻断离线推理，返回 `CPUExecutionProvider` 和
+  15 个 tags。source-bootstrap 单测 `106/106`、Python 编译、production inventory、release
+  gate、manifest SHA 绑定和 `git diff --check` 均退出 0。该证据只证明 Caption probe 修复，
+  不代表安装入口、WebUI 启动或健康检查通过。

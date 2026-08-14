@@ -459,6 +459,13 @@ SDK，即可得到可离线运行的 E621 打标、质量评分、Qwen3 tokenize
 - [x] 2026-08-14：第六次真实安装进入 Caption/Policy CUDA fallback 后，CPU planner 被整个
   manifest 的 required CUDA-only `ocr-gpu` 阻断。CPU fallback 现只为明确允许 fallback 的
   `caption-e621`、`policy` 构建子计划；生产 manifest 回归确认不再扫描 OCR GPU。
+- [x] 2026-08-14：第七次真实安装的 CPU fallback 在 Caption probe 以 `KeyError: 'tags.json'`
+  失败。根因是 probe 把业务键 `resource.entrypoints` 直接传给要求文件名键的 `CaptionModel`，
+  而生产 worker 已通过 `create_tagger_adapter(resource)` 做格式适配。新增回归先红后绿后，
+  probe 改用同一适配器；已有 Caption CPU runtime 和完整 E621 资源真实离线推理返回
+  `CPUExecutionProvider` 及 15 个 tags。source-bootstrap 单测 `106/106`、Python 编译、
+  production inventory、release gate、manifest SHA 绑定和 `git diff --check` 均退出 0。
+  完整安装、自动启动和健康检查仍待继续验证。
 
 - [x] 2026-08-12：新增维护端 `Test-BootstrapRuntimeAsset.ps1`，独立核对基础 ZIP 的
   provenance 字段、文件名、大小、SHA-256、builder 脚本 SHA-256、安全 ZIP 条目和

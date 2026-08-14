@@ -351,6 +351,35 @@ class SourceBootstrapInstallTests(unittest.TestCase):
                 {"kind": "ocr", "device": "cpu", "resultCount": 1, "texts": []},
             )
 
+    def test_caption_probe_uses_the_resource_adapter(self) -> None:
+        probes = _probes_module()
+        with tempfile.TemporaryDirectory() as temporary_name:
+            root = Path(temporary_name)
+            runtime = root / "runtimes" / "caption-e621"
+            resource = root / "resource-library" / "tagging-models" / "e621"
+            runtime.mkdir(parents=True)
+            resource.mkdir(parents=True)
+            (resource / "resource.json").write_text(
+                json.dumps({"fingerprint": "a" * 64}),
+                encoding="utf-8",
+            )
+            scripts: list[str] = []
+
+            def runner(command, **_kwargs):
+                scripts.append(command[4])
+                return subprocess.CompletedProcess(
+                    command,
+                    0,
+                    '{"kind":"caption","provider":"CPUExecutionProvider","tags":["alpha"]}\n',
+                    "",
+                )
+
+            probes._probe_caption(runtime, resource, "cpu", runner=runner)
+
+            self.assertIn("from anima_caption_worker.model import create_tagger_adapter", scripts[0])
+            self.assertIn("model = create_tagger_adapter(resource)", scripts[0])
+            self.assertNotIn("CaptionModel(resource.entrypoints)", scripts[0])
+
     def test_default_probe_rejects_gpu_ocr_result_outside_cpu_tolerance(self) -> None:
         probes = _probes_module()
         with tempfile.TemporaryDirectory() as temporary_name:
