@@ -444,3 +444,9 @@ CLIP 文件使用 OpenAI 官方 CDN：
   为同一 runtime 的 API 复验。以测试 clone 为安装/资源根运行 API `37/37`、预检 `29/29`、
   source-bootstrap `109/109` 通过；D: worktree 缺模型使项目默认资源用例停在资源缺失，不记为
   通过。需新 clone/重建 core 后确认 `/api/resources` 200。
+- 2026-08-14：测试 clone fast-forward 到 `35a3700` 后，通过一次可检测 core 漂移让官方 BAT
+  自行重建 core/Caption；BAT 退出 0，runtime/source 的 `resource_catalog.py` SHA-256 均为
+  `5b251625...ae35`。实际 health OK、首页 200、资源 API 返回 E621 available、0 missing、
+  8 resources、0 invalid；install state 记录 NVIDIA/15 组件，Stop 退出 0、端口不可达，
+  bootstrap 临时目录已清理。该证据是 NVIDIA 修复/幂等路径，不是最新 HEAD 的全新 CPU/NVIDIA
+  干净机矩阵；OCR 模型仍按已确认边界要求用户放置三份官方归档。

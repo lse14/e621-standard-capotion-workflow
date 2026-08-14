@@ -486,6 +486,12 @@ SDK，即可得到可离线运行的 E621 打标、质量评分、Qwen3 tokenize
   `e621.available=true`、0 个 invalid resource。以真实安装根运行 API `37/37`、预检 `29/29`，
   source-bootstrap `109/109` 均通过；D: worktree 缺模型导致项目默认资源用例无法完成，不将其
   记为通过。需发布到新 clone 后复验资源 API。
+- [x] 2026-08-14：测试 clone fast-forward 到 `35a3700` 后，先对旧 core 制造可检测漂移，
+  再由官方 BAT 自行重建 core/Caption 并更新状态；BAT 退出 0，runtime 中 `resource_catalog.py`
+  与源码 SHA-256 同为 `5b251625...ae35`。实际 `/health` 为 OK、首页 HTTP 200、
+  `/api/resources` 返回 schema 2、E621 available、0 missing、8 resources、0 invalid；
+  install state 为 NVIDIA/15 组件，Stop 退出 0 且端口关闭，bootstrap 临时目录已清理。
+  这是现有 NVIDIA 安装的修复/幂等路径证据，不替代最新 HEAD 的全新 CPU/NVIDIA 干净机矩阵。
 
 - [x] 2026-08-12：新增维护端 `Test-BootstrapRuntimeAsset.ps1`，独立核对基础 ZIP 的
   provenance 字段、文件名、大小、SHA-256、builder 脚本 SHA-256、安全 ZIP 条目和
