@@ -423,3 +423,9 @@ CLIP 文件使用 OpenAI 官方 CDN：
   15 个 tags。source-bootstrap 单测 `106/106`、Python 编译、production inventory、release
   gate、manifest SHA 绑定和 `git diff --check` 均退出 0。该证据只证明 Caption probe 修复，
   不代表安装入口、WebUI 启动或健康检查通过。
+- 2026-08-14：第八次真实 BAT 在发布后以 `published component cannot be verified: core`
+  退出 1。core 的 `3,217` 个文件中有 `60` 个合法 0-byte 文件，Caption 的 `4,170` 个中有
+  `66` 个；`component_record()` 接受并记录这些文件，但 `component_is_current()` 以
+  `sizeBytes < 1` 拒绝同一记录。回归先红后绿后改为只拒绝负数，文件集合、大小和 SHA-256
+  验证不变。source-bootstrap 单测 `107/107`、Python 编译、production inventory、release
+  gate 和 `git diff --check` 均退出 0。失败现场没有 install state 或 WebUI 成功证据，需发布后继续 BAT。

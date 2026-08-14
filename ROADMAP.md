@@ -466,6 +466,12 @@ SDK，即可得到可离线运行的 E621 打标、质量评分、Qwen3 tokenize
   `CPUExecutionProvider` 及 15 个 tags。source-bootstrap 单测 `106/106`、Python 编译、
   production inventory、release gate、manifest SHA 绑定和 `git diff --check` 均退出 0。
   完整安装、自动启动和健康检查仍待继续验证。
+- [x] 2026-08-14：第八次真实 BAT 已越过 Caption probe，但首次发布后在 core 自校验失败。
+  失败现场的 core `3,217` 个文件含 `60` 个合法空文件，Caption `4,170` 个文件含 `66` 个；
+  `component_record()` 会记录空文件，而 `component_is_current()` 错把 `sizeBytes == 0` 当无效。
+  回归用同一未漂移树先红后绿，校验现接受非负大小，仍拒绝负数并继续核对完整文件集合、
+  精确大小和 SHA-256。source-bootstrap 单测 `107/107`、Python 编译、production inventory、
+  release gate 和 `git diff --check` 均退出 0。完整 BAT 需发布此修复后继续验证。
 
 - [x] 2026-08-12：新增维护端 `Test-BootstrapRuntimeAsset.ps1`，独立核对基础 ZIP 的
   provenance 字段、文件名、大小、SHA-256、builder 脚本 SHA-256、安全 ZIP 条目和

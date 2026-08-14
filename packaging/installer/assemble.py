@@ -180,7 +180,7 @@ def component_is_current(layout: ProjectLayout, item: PlannedComponent, record: 
         key = relative.casefold()
         if key in {path.casefold() for path in expected}:
             return False
-        if type(raw["sizeBytes"]) is not int or raw["sizeBytes"] < 1 or not isinstance(raw["sha256"], str) or len(raw["sha256"]) != 64:
+        if type(raw["sizeBytes"]) is not int or raw["sizeBytes"] < 0 or not isinstance(raw["sha256"], str) or len(raw["sha256"]) != 64:
             return False
         expected[relative] = (raw["sizeBytes"], raw["sha256"])
     actual = _tree_files(target)

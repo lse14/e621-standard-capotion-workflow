@@ -835,6 +835,33 @@ class SourceBootstrapInstallTests(unittest.TestCase):
             runtime_manifest.unlink()
             self.assertFalse(assemble.component_is_current(layout, core, record))
 
+    def test_component_record_accepts_unchanged_zero_byte_files(self) -> None:
+        assemble, manifest_module = _modules()
+        manifest = manifest_module.load_manifest(fixture_manifest())
+        core = next(
+            item
+            for item in assemble.installation_plan(manifest, accelerator="cpu").components
+            if item.component.component_id == "core"
+        )
+
+        with tempfile.TemporaryDirectory() as temporary_name:
+            root = Path(temporary_name)
+            layout = assemble.ProjectLayout.create(root)
+            layout.ensure_directories()
+            target = root / ".runtime-build" / "runtimes" / "core"
+            target.mkdir(parents=True)
+            (target / "empty.py").write_bytes(b"")
+            runtime_manifest = root / ".runtime-build" / "manifests" / "runtimes" / "core.json"
+            runtime_manifest.parent.mkdir(parents=True)
+            runtime_manifest.write_text(
+                json.dumps({"runtime": {"runtimeId": "core"}}, sort_keys=True), encoding="utf-8"
+            )
+
+            record = assemble.component_record(layout, core)
+
+            self.assertEqual(0, record["files"][0]["sizeBytes"])
+            self.assertTrue(assemble.component_is_current(layout, core, record))
+
     def test_runtime_assembly_rejects_duplicate_wheel_paths_before_publish(self) -> None:
         assemble, manifest_module = _modules()
         manifest = manifest_module.load_manifest(fixture_manifest())
