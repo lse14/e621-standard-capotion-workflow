@@ -3,12 +3,15 @@ from __future__ import annotations
 
 import json
 import subprocess
+import threading
 from typing import Any
 
 from .worker_protocol import ProtocolEnvelopeV1, ProtocolError
 
 
 MAX_FRAME_BYTES = 1_048_576
+MAX_STDERR_TAIL_BYTES = 65_536
+STDERR_READ_BYTES = 8_192
 
 
 class StdioJsonlTransportError(RuntimeError):
@@ -26,6 +29,45 @@ class StdioJsonlTransport:
         self._process = process
         self._limit = max_frame_bytes
         self._closed = False
+        self._stderr_tail = bytearray()
+        self._stderr_lock = threading.Lock()
+        self._stderr_thread: threading.Thread | None = None
+        stderr = getattr(process, "stderr", None)
+        if stderr is not None:
+            self._stderr_thread = threading.Thread(
+                target=self._drain_stderr,
+                args=(stderr,),
+                daemon=True,
+                name="anima-worker-stderr",
+            )
+            try:
+                self._stderr_thread.start()
+            except Exception as exc:
+                self._stderr_thread = None
+                try:
+                    self.close()
+                except Exception as cleanup_error:
+                    raise StdioJsonlTransportError("worker stderr drainer failed to start and clean up") from cleanup_error
+                raise StdioJsonlTransportError("worker stderr drainer failed to start") from exc
+
+    def _drain_stderr(self, stream: Any) -> None:
+        while True:
+            try:
+                chunk = stream.read(STDERR_READ_BYTES)
+            except (OSError, ValueError):
+                return
+            if not chunk:
+                return
+            with self._stderr_lock:
+                self._stderr_tail.extend(chunk)
+                excess = len(self._stderr_tail) - MAX_STDERR_TAIL_BYTES
+                if excess > 0:
+                    del self._stderr_tail[:excess]
+
+    @property
+    def stderr_tail(self) -> bytes:
+        with self._stderr_lock:
+            return bytes(self._stderr_tail)
 
     def exchange(self, request: ProtocolEnvelopeV1) -> ProtocolEnvelopeV1:
         if self._closed:
@@ -44,7 +86,7 @@ class StdioJsonlTransport:
             self._process.stdin.flush()
             assert self._process.stdout is not None
             frame = self._process.stdout.readline(self._limit + 2)
-        except OSError as exc:
+        except (OSError, ValueError) as exc:
             raise StdioJsonlTransportError("worker stdio exchange failed") from exc
         if not frame:
             raise StdioJsonlTransportError("worker closed stdout without a response")
@@ -63,7 +105,7 @@ class StdioJsonlTransport:
         if self._process.stdin is not None:
             try:
                 self._process.stdin.close()
-            except OSError:
+            except (OSError, ValueError):
                 pass
         try:
             self._process.wait(timeout=5)
@@ -74,12 +116,16 @@ class StdioJsonlTransport:
             except subprocess.TimeoutExpired:
                 self._process.kill()
                 self._process.wait(timeout=5)
+        if self._stderr_thread is not None:
+            self._stderr_thread.join(timeout=5)
         for stream in (getattr(self._process, "stdout", None), getattr(self._process, "stderr", None)):
             if stream is not None:
                 try:
                     stream.close()
-                except OSError:
+                except (OSError, ValueError):
                     pass
+        if self._stderr_thread is not None and self._stderr_thread.is_alive():
+            self._stderr_thread.join(timeout=1)
 
     def __enter__(self) -> "StdioJsonlTransport":
         return self

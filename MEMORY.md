@@ -480,3 +480,28 @@ CLIP 文件使用 OpenAI 官方 CDN：
 - 2026-08-14：CPU/NVIDIA acceptance JSON 均为 `not-clean`，因为本机有 Python/Node/CUDA/
   Visual Studio/Windows SDK 且无隔离 Windows VM；Caption 也未留下 CUDA 成功证据。不能把本次
   全新 clone NVIDIA 实机安装表述为正式 CPU/NVIDIA 干净机矩阵通过。
+- 2026-08-14：原始工作树中的 9 个未提交文件已归档到本地分支
+  `archive/original-local-changes-20260814`，提交 `fec09ec`（`Archive original OCR bootstrap
+  fixes`）；归档分支未推送，公开 `main` 不包含该归档提交。
+- 2026-08-14：本地 `test-results`、`.playwright-cli` 已删除，`.test-tmp` 当前为空；三个验证
+  clone `tagger测试`、`tagger全新验证 NVIDIA 20260814`、`tagger最终验证 NVIDIA 20260814`
+  已永久删除。该清理不构成 CPU/NVIDIA 正式干净机验收证据。
+- 2026-08-14：用户确认约 10 万图是主要容量目标，允许为编排和稳定契约保留合理耦合；本轮
+  不拆分 `StateDatabase`、Pipeline 或 `App.tsx`，只修复五个已复现可靠性故障，并保持现有
+  keyset pagination、SQLite WAL、worker queue limits 和 JSONL contracts。
+- 修改前 10 万样本压力基线 `2/2` 通过，用时 `79.163s`；最大峰值内存 `2,195,229` bytes，
+  最大数据库 `146,776,064` bytes，WAL truncate 后为 `0` bytes。该耗时只作诊断，不作跨机器
+  发布阈值；内存、数据库和 WAL 的既有硬上限继续作为回归门禁。
+- 2026-08-14：五个可复现可靠性故障已修复并有先红后绿回归：Pipeline 首次启动失败注销
+  ghost thread；resume 在持久状态改写前拒绝 settling thread；recovery 启动失败恢复
+  `interrupted/resume_status`；discard 后释放进程内 Windows dataset handle；worker stderr
+  由 daemon drainer 排空，诊断尾部上限为 `65,536` bytes。
+- 修改后受影响套件 `122/122`、Core decomposition `13/13`、worker boundary `6/6`、Windows
+  path-lock matrix `5/5`、前端构建及 Playwright `72/72` 通过。10 万样本门禁 `2/2` 用时
+  `76.819s`，峰值内存 `2,194,301` / `893,662` bytes，数据库 `146,776,064` /
+  `34,029,568` bytes，WAL 均截断为 0；OCR 为 90,000 success / 10,000 no_text。
+- 独立提交前审查补齐两个异常路径：已落盘 `discarded` 的任务可在 confirmed 重试中继续释放
+  live lock；stderr drainer 启动失败会有界回收子进程和三个管道，并映射为 transport 错误。
+- 全量 Core discovery 的 `870` 项仍有 3 项既有冲突（Danbooru defaults 与 E621-only 冻结范围、
+  已清理 OCR wheelhouse）；contract/integration 另受 GPU formal artifacts `4/5` partial 和旧 Core
+  runtime parser 影响。相关文件均未在本轮修改，不能把这些门禁记录为通过，也不为凑绿扩大范围。

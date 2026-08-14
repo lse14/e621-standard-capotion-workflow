@@ -137,6 +137,25 @@ class PipelineTests(unittest.TestCase):
         preparation.confirm_workspace(job_id, confirmed=True, confirmed_rebuild=False)
         return preparation, job_id
 
+    def test_initial_thread_start_failure_unregisters_pipeline(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            preparation, job_id = self._dropout_only_job(root)
+            pipeline = PipelineService(root / "state.db", install_root=ROOT / ".runtime-build")
+            try:
+                with patch("anima_core.pipeline.threading.Thread.start", side_effect=RuntimeError("thread start failed")):
+                    with self.assertRaisesRegex(RuntimeError, "thread start failed"):
+                        pipeline.start(job_id)
+                self.assertFalse(pipeline.is_running(job_id))
+                database = StateDatabase.open(root / "state.db")
+                try:
+                    self.assertEqual("preparing_workspace", database.get_job(job_id)["status"])
+                finally:
+                    database.close()
+            finally:
+                pipeline._threads.pop(job_id, None)
+                preparation.close()
+
     def test_abnormal_worker_exit_restarts_the_module_twice_then_fails_it(self) -> None:
         for crashes, expected in ((2, "paused"), (9, "failed")):
             with self.subTest(crashes=crashes), tempfile.TemporaryDirectory() as temporary:
@@ -327,6 +346,28 @@ class PipelineTests(unittest.TestCase):
                     database.close()
             finally:
                 pipeline.close()
+                preparation.close()
+
+    def test_recovery_start_failure_restores_interrupted_resume_state(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            preparation, job_id, _dataset = self._interrupted_caption_job(root)
+            pipeline = PipelineService(root / "state.db", install_root=ROOT / ".runtime-build")
+            try:
+                with patch("anima_core.pipeline_recovery.threading.Thread.start", side_effect=RuntimeError("thread start failed")):
+                    with self.assertRaisesRegex(RuntimeError, "thread start failed"):
+                        pipeline.recover_job(job_id, confirmed=True)
+                self.assertFalse(pipeline.is_running(job_id))
+                database = StateDatabase.open(root / "state.db")
+                try:
+                    job = database.get_job(job_id)
+                    self.assertEqual(("interrupted", "running", "caption"), (
+                        job["status"], job["resume_status"], job["current_module_id"],
+                    ))
+                finally:
+                    database.close()
+            finally:
+                pipeline._threads.pop(job_id, None)
                 preparation.close()
 
     def test_recovery_commits_or_reuses_prepared_ocr_sidecar_before_resuming(self) -> None:
@@ -714,6 +755,38 @@ class PipelineTests(unittest.TestCase):
                     database.close()
             finally:
                 pipeline.close()
+                preparation.close()
+
+    def test_resume_rejects_settling_thread_before_persisted_state_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            preparation, job_id = self._dropout_only_job(root)
+            database = StateDatabase.open(root / "state.db")
+            try:
+                scheduler = BoundedScheduler(database)
+                for module_id in ("caption", "classify", "replace", "nl", "count_review"):
+                    scheduler.start_module(job_id, module_id, enabled=False, profile="e621")
+                scheduler.start_module(job_id, "dropout", enabled=True, profile="e621")
+                database.set_module_summary(job_id, "dropout", status="paused")
+                database.set_job_status(job_id, "paused", current_module_id="dropout", resume_status="running")
+            finally:
+                database.close()
+            pipeline = PipelineService(root / "state.db", install_root=ROOT / ".runtime-build")
+            pipeline._threads[job_id] = SimpleNamespace()  # type: ignore[assignment]
+            try:
+                with self.assertRaisesRegex(PipelineError, "settling"):
+                    pipeline.resume(job_id)
+                database = StateDatabase.open(root / "state.db")
+                try:
+                    job = database.get_job(job_id)
+                    summary = database.module_summary(job_id, "dropout")
+                    self.assertEqual(("paused", "paused", "running"), (
+                        job["status"], summary["status"], job["resume_status"],
+                    ))
+                finally:
+                    database.close()
+            finally:
+                pipeline._threads.pop(job_id, None)
                 preparation.close()
 
     def test_policy_overlay_is_committed_only_by_export_after_the_pipeline_finishes(self) -> None:

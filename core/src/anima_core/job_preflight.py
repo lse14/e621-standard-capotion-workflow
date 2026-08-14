@@ -586,6 +586,18 @@ class JobPreparationService:
                 lock.database.close()
         self._locks.clear()
 
+    def release_lock_for_discard(self, job_id: str) -> bool:
+        """Release this process's live handle after the job is durably discarded."""
+        lock = self._locks.get(job_id)
+        if lock is None:
+            return False
+        if lock.database.get_job(job_id)["status"] != "discarded":
+            raise JobPreflightError("only a discarded task can release its live dataset lock")
+        lock.release(recovery_complete=True)
+        lock.database.close()
+        del self._locks[job_id]
+        return True
+
     def release_lock_for_repair(self, job_id: str) -> bool:
         """Hand a terminal task's live dataset lock to a forthcoming repair task."""
         lock = self._locks.get(job_id)

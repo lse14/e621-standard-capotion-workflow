@@ -543,3 +543,43 @@ SDK，即可得到可离线运行的 E621 打标、质量评分、Qwen3 tokenize
   检测到系统 Python/py、Node/npm、nvcc、cl 和 Windows Kits；本机没有可用隔离 Windows VM。
   且本机 Caption CUDA probe 回退 CPU，不满足 NVIDIA 正式矩阵要求的 Caption/Policy CUDA
   证据。因此上述全新 clone 实机成功不能记作 CPU/NVIDIA 干净机验收通过。
+- [x] 2026-08-14：原始工作树中的 9 个未提交文件已保存在本地归档分支
+  `archive/original-local-changes-20260814`，归档提交为 `fec09ec`（`Archive original OCR
+  bootstrap fixes`）；该分支未推送，不属于公开 `main`。
+- [x] 2026-08-14：本地测试生成物已清理：`test-results`、`.playwright-cli` 不存在，
+  `.test-tmp` 当前为空；三个全新安装验证 clone `tagger测试`、`tagger全新验证 NVIDIA
+  20260814`、`tagger最终验证 NVIDIA 20260814` 已永久删除。此项仅记录本机归档与清理，
+  不改变 CPU/NVIDIA 正式干净机验收仍未完成的状态。
+
+## R16 可靠性与 10 万图稳定性
+
+- [x] 2026-08-14：用户确认稳定性优先，允许合理模块耦合，不进行 `StateDatabase`、Pipeline
+  或前端组合根的无证据拆分。实施范围限定为线程启动/恢复状态、正式丢弃后的 live dataset
+  lock、worker stderr 管道，以及 10 万图容量回归。
+- [x] 设计与实施计划分别位于
+  `docs/superpowers/specs/2026-08-14-reliability-and-100k-stability-design.md` 和
+  `docs/superpowers/plans/2026-08-14-reliability-and-100k-stability.md`。
+- [x] 修改前 10 万样本基线 `2/2` 通过，用时 `79.163s`；最大峰值内存 `2,195,229` bytes，
+  最大 SQLite 文件 `146,776,064` bytes，WAL truncate 后为 `0` bytes。
+- [x] 五个已复现故障均按 TDD 修复：首次线程启动失败会注销线程；暂停恢复在任何 SQLite
+  改写前拒绝尚未收尾的旧线程；恢复线程启动失败会还原 `interrupted` 和原 `resume_status`；
+  discard 成功后释放 `JobPreparationService` 持有的 live Windows lock；worker stderr 由单个
+  daemon drainer 持续排空并只保留末尾 `65,536` bytes。新增回归均先在旧实现上复现失败。
+- [x] 受影响完整套件通过：Pipeline `32/32`、API `39/39`、NL runner `32/32`、Repair `9/9`、
+  lifecycle `5/5`、stdio transport `4/4`、transport restart boundary `1/1`，共 `122/122`。
+  Core 模块分解 `13/13`、worker boundary `6/6`、Windows path-lock matrix `5/5` 通过。
+- [x] 提交前独立代码审查补出两个失败路径并完成回归：discard 已持久化后 live-lock release
+  失败可由同一 confirmed API 请求重试；stderr drainer 线程自身启动失败会回收 worker/管道并
+  统一为 transport 错误。两项新增测试均先红后绿，完整 API/transport 复跑通过。
+- [x] 修改后 10 万样本压力门禁 `2/2` 通过，用时 `76.819s`；峰值内存分别为 `2,194,301` /
+  `893,662` bytes，数据库为 `146,776,064` / `34,029,568` bytes，WAL truncate 后均为 `0`；
+  OCR 结果保持 `90,000` success、`10,000` no_text。
+- [x] 项目内 Node `24.18.0` / npm `11.16.0` 的前端生产构建通过，Playwright Chromium
+  `72/72` 通过；Vite 测试服务已关闭，生成的 report/result 已删除，4173/8765 无监听，
+  `.test-tmp` 为空，`git diff --check` 通过。
+- [!] 全量 Core discovery 实际运行 `870` 项：`865` 通过、`2` 跳过、`2` 失败、`1` 错误。
+  未通过项均位于本轮未修改文件：两项要求 Danbooru 默认资源，但当前生产 defaults 按冻结范围
+  为 E621-only；一项要求已按清理决定删除的 `packaging/wheelhouse/ocr-paddle` 存在。完整
+  contract `52` 项另有 `3` 项因 GPU formal artifacts 为 `4/5` partial 而失败；integration `29`
+  项有 `2` 项因同一 partial 状态和已安装 Core runtime 仍是旧 defaults parser 而失败。本轮不以
+  改测试、补 Danbooru 默认资源或伪造 wheelhouse 的方式掩盖这些既有装配/范围冲突。

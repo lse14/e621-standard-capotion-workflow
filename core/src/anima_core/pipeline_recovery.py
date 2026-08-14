@@ -321,5 +321,15 @@ class PipelineRecoveryMixin:
                 thread.start()
             except Exception:
                 self._threads.pop(job_id, None)
+                database = StateDatabase.open(self.database_path)
+                try:
+                    database.set_job_status(
+                        job_id,
+                        "interrupted",
+                        current_module_id=str(module_id or "workspace"),
+                        resume_status=str(resume_status),
+                    )
+                finally:
+                    database.close()
                 raise
             return response

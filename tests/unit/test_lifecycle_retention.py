@@ -8,8 +8,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "core" / "src"))
 
+from PIL import Image
+
 from anima_core.contracts import JobConfig
 from anima_core.db import StateDatabase
+from anima_core.job_preflight import JobPreparationService
 from anima_core.lifecycle import JobLifecycle, JobLifecycleError
 from anima_core.overlay import OverlayLayout
 from anima_core.path_safety import windows_key
@@ -82,6 +85,36 @@ class LifecycleAndRetentionTests(unittest.TestCase):
                 self.assertEqual([], list(database.connection.execute("SELECT job_id FROM dataset_claims")))
             finally:
                 database.close()
+
+    def test_discard_releases_the_live_dataset_handle_for_immediate_reacquisition(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            dataset = root / "dataset"
+            dataset.mkdir()
+            Image.new("RGB", (3, 3), "white").save(dataset / "image.png")
+            config = JobConfig(profile="e621", workMode="in_place", overwriteMode="incremental", sourceRoot=str(dataset))
+            config.caption["enabled"] = config.classify["enabled"] = config.replace["enabled"] = False
+            config.nl["enabled"] = config.dropout["enabled"] = False
+            config.countReview["enabled"] = False  # type: ignore[index]
+            preparation = JobPreparationService(root / "state.db")
+            try:
+                first_job_id = preparation.preflight(config.to_dict()).jobId
+                preparation.confirm_workspace(first_job_id, confirmed=True, confirmed_rebuild=False)
+                database = StateDatabase.open(root / "state.db")
+                try:
+                    database.set_job_status(first_job_id, "running", current_module_id="dropout")
+                    database.set_job_status(first_job_id, "failed", current_module_id="dropout")
+                    JobLifecycle(database).discard(first_job_id, confirmed=True)
+                finally:
+                    database.close()
+                self.assertTrue(preparation.release_lock_for_discard(first_job_id))
+                self.assertFalse(preparation.release_lock_for_discard(first_job_id))
+
+                second_job_id = preparation.preflight(config.to_dict()).jobId
+                result = preparation.confirm_workspace(second_job_id, confirmed=True, confirmed_rebuild=False)
+                self.assertEqual("preparing_workspace", result["status"])
+            finally:
+                preparation.close()
 
     def test_retention_keeps_newest_unpinned_and_never_touches_backup(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

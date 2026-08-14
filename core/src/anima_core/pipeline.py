@@ -74,7 +74,11 @@ class PipelineService(PipelineRecoveryMixin, PipelineDispatchMixin):
                 database.close()
             thread = threading.Thread(target=self._thread_main, args=(job_id, False), daemon=True, name=f"anima-{job_id[:12]}")
             self._threads[job_id] = thread
-            thread.start()
+            try:
+                thread.start()
+            except Exception:
+                self._threads.pop(job_id, None)
+                raise
 
     def is_running(self, job_id: str) -> bool:
         with self._lock:
@@ -83,6 +87,8 @@ class PipelineService(PipelineRecoveryMixin, PipelineDispatchMixin):
     def resume(self, job_id: str) -> bool:
         """Resume a paused current module, starting a thread only when needed."""
         with self._lock:
+            if job_id in self._threads:
+                raise PipelineError("task pipeline is still settling; retry resume")
             resuming_token_budget_review = False
             database = StateDatabase.open(self.database_path)
             try:
@@ -102,8 +108,6 @@ class PipelineService(PipelineRecoveryMixin, PipelineDispatchMixin):
                     # makes Export eligible; no API route reaches the private thread loop.
                     if not self._token_budget_export_gate(database, job_id, config):
                         return False
-                    if job_id in self._threads:
-                        return False
                     database.set_job_status(job_id, "exporting", current_module_id="export", resume_status=None)
                     thread = threading.Thread(
                         target=self._thread_main, args=(job_id, True), daemon=True, name=f"anima-{job_id[:12]}",
@@ -117,8 +121,6 @@ class PipelineService(PipelineRecoveryMixin, PipelineDispatchMixin):
                         raise PipelineError("paused task has no paused current module")
                     database.set_module_summary(job_id, str(module_id), status="running")
                     database.set_job_status(job_id, "running", current_module_id=str(module_id), resume_status=None)
-                    if job_id in self._threads:
-                        return False
                     thread = threading.Thread(
                         target=self._thread_main, args=(job_id, True), daemon=True, name=f"anima-{job_id[:12]}",
                     )

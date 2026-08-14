@@ -28,7 +28,7 @@ from anima_core.api import (
 from anima_core.api_token_budget import _IsolatedShortRewriter
 from anima_core.token_budget_review import TokenBudgetReviewConflictError, TokenBudgetReviewError
 from anima_core.commit_journal import CommitJournal, write as write_journal
-from anima_core.job_preflight import JobPreparationService
+from anima_core.job_preflight import JobPreflightError, JobPreparationService
 from anima_core.contracts import JobConfig, ProgressEvent, SampleIssue, pipeline_module_ids, sha256_json
 from anima_core.credentials import DpapiCredentialStore
 from anima_core.db import StateDatabase
@@ -432,6 +432,31 @@ class ControlPlaneApiTests(unittest.TestCase):
         after = snapshot("job-api", afterEventId=0, issueAfterSampleId=0, issueAfterIssueId=None, limit=200)
         self.assertEqual((5, 1), (after["job"]["apiBudgetExtra"], after["job"]["apiBudgetRevision"]))
 
+    def test_nl_resume_maps_pipeline_conflict_to_bad_request(self) -> None:
+        class SettlingPipeline:
+            def startup_recovery(self) -> dict[str, int]:
+                return {"interruptedJobs": 0, "clearedDatasetClaims": 0, "deletedJobs": 0, "deletedOverlays": 0}
+
+            def resume(self, _job_id: str) -> bool:
+                raise PipelineError("task pipeline is still settling; retry resume")
+
+        database = StateDatabase.open(self.database_path)
+        try:
+            database.set_module_summary("job-api", "nl", status="paused")
+            database.set_job_status("job-api", "paused", current_module_id="nl", resume_status="running")
+        finally:
+            database.close()
+        app = build_control_app(
+            database_path=self.database_path, profile_store=self.profiles, credential_store=self.credentials,
+            preparation_service=self.preparation, pipeline_service=SettlingPipeline(),  # type: ignore[arg-type]
+        )
+        resume = _endpoint(app, "/api/jobs/{job_id}/nl/resume", "POST")
+        with self.assertRaises(HTTPException) as raised:
+            resume("job-api")
+        self.assertEqual((400, "task pipeline is still settling; retry resume"), (
+            raised.exception.status_code, raised.exception.detail,
+        ))
+
     def test_reviewing_token_budget_uses_a_safe_existing_resume_entry(self) -> None:
         """Apply may only reopen Export through a public PipelineService entry."""
         database = StateDatabase.open(self.database_path)
@@ -830,11 +855,47 @@ class ControlPlaneApiTests(unittest.TestCase):
         pin = _endpoint(self.app, "/api/jobs/{job_id}/pin", "PUT")
         cancel = _endpoint(self.app, "/api/jobs/{job_id}/cancel", "POST")
         discard = _endpoint(self.app, "/api/jobs/{job_id}/discard", "POST")
+        released: list[str] = []
+
+        def release_lock(job_id: str) -> bool:
+            released.append(job_id)
+            return False
+
+        self.preparation.release_lock_for_discard = release_lock  # type: ignore[method-assign]
         self.assertEqual({"pinned": True}, pin("job-api", _PinBody(pinned=True)))
         self.assertEqual({"status": "cancelled_recoverable"}, cancel("job-api"))
         with self.assertRaises(HTTPException):
             discard("job-api", _ConfirmBody(confirmed=False))
         self.assertEqual({"jobId": "job-api", "overlayDeleted": False}, discard("job-api", _ConfirmBody(confirmed=True)))
+        self.assertEqual(["job-api"], released)
+
+    def test_discard_retry_finishes_live_lock_release_after_persisted_discard(self) -> None:
+        discard = _endpoint(self.app, "/api/jobs/{job_id}/discard", "POST")
+        cancel = _endpoint(self.app, "/api/jobs/{job_id}/cancel", "POST")
+        attempts: list[str] = []
+
+        def release_lock(job_id: str) -> bool:
+            attempts.append(job_id)
+            if len(attempts) == 1:
+                raise JobPreflightError("injected live lock release failure")
+            return True
+
+        self.preparation.release_lock_for_discard = release_lock  # type: ignore[method-assign]
+        self.assertEqual({"status": "cancelled_recoverable"}, cancel("job-api"))
+        with self.assertRaises(HTTPException) as first:
+            discard("job-api", _ConfirmBody(confirmed=True))
+        self.assertEqual(400, first.exception.status_code)
+        database = StateDatabase.open(self.database_path)
+        try:
+            self.assertEqual("discarded", database.get_job("job-api")["status"])
+        finally:
+            database.close()
+
+        self.assertEqual(
+            {"jobId": "job-api", "overlayDeleted": False},
+            discard("job-api", _ConfirmBody(confirmed=True)),
+        )
+        self.assertEqual(["job-api", "job-api"], attempts)
 
     def test_startup_freezes_jobs_an_earlier_process_left_running(self) -> None:
         # F15: the control plane must run the whole startup recovery sequence, not only

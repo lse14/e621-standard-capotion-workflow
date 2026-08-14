@@ -23,6 +23,7 @@ from .nl_prompt_presets import (
     PromptPresetNotFoundError,
     PromptPresetValidationError,
 )
+from .pipeline_dispatch import PipelineError
 from .scheduler import BoundedScheduler, SchedulerError
 
 
@@ -270,7 +271,7 @@ def build_nl_router(context: ControlPlaneContext) -> APIRouter:
                     return {"apiBudgetExtra": int(database.get_job(job_id)["api_budget_extra"]), "apiBudgetRevision": revision}
                 assert isinstance(body, _ConfirmBody)
                 return {"requeued": scheduler.confirm_nl_api_outcome_unknown(job_id, confirmed=body.confirmed)}
-            except (SchedulerError, ValueError) as exc:
+            except (PipelineError, SchedulerError, ValueError) as exc:
                 raise bad_request(exc) from exc
         finally:
             database.close()
