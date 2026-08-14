@@ -470,3 +470,13 @@ CLIP 文件使用 OpenAI 官方 CDN：
   真实安装根 API `37/37`、预检 `29/29`、fixture `2/2`；production inventory、公开 bootstrap
   资产逐字节验证、release gate、manifest SHA 绑定、Python 编译、PowerShell AST 和
   `git diff --check` 均通过。OCR 模型仍只接受用户手动放入三份官方归档。
+- 2026-08-14：公开新仓库 main `9ebeb7a` 的全新中文/空格路径 clone 完成真实 NVIDIA BAT
+  安装。状态有 15 组件，Policy 与 `ocr-gpu` 为 CUDA，Caption CUDA probe 失败后回退 CPU；
+  无 OCR 归档时只记录模型功能未验证。首次 WebUI Start 成功后 bootstrap 正常退出，证明独立
+  stdout/stderr 日志修复不再等待浏览器后代句柄。
+- 2026-08-14：第二次 BAT 明确退出 0，14 组件跳过，仅重建 Caption CPU fallback；health OK、
+  首页 200、E621 available、8 resources、missing/invalid 为 null。成功清理所有 bootstrap
+  cache/staging/bootstrap/transactions；Stop 退出 0，8765 关闭且无项目进程残留。
+- 2026-08-14：CPU/NVIDIA acceptance JSON 均为 `not-clean`，因为本机有 Python/Node/CUDA/
+  Visual Studio/Windows SDK 且无隔离 Windows VM；Caption 也未留下 CUDA 成功证据。不能把本次
+  全新 clone NVIDIA 实机安装表述为正式 CPU/NVIDIA 干净机矩阵通过。

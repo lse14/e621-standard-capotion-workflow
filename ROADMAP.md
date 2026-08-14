@@ -531,3 +531,15 @@ SDK，即可得到可离线运行的 E621 打标、质量评分、Qwen3 tokenize
   `7/7`、真实安装根 API `37/37`、预检 `29/29`、fixture `2/2`；production inventory、公开
   bootstrap 资产逐字节验证、release gate、manifest SHA 绑定、Python 编译、PowerShell AST
   与 `git diff --check` 均退出 0。OCR 三份官方归档的手动放置边界未改变。
+- [x] 2026-08-14：从公开新仓库 main `9ebeb7a` 克隆到全新中文/空格路径，初始无
+  `.runtime-build`、OCR 归档或模型资源。真实 BAT 发布 NVIDIA/15 组件，保留 `ocr-gpu`
+  CUDA 和 Policy CUDA；Caption CUDA 离线 probe 失败后按设计回退 CPU。日志记录 OCR 模型
+  未验证并指向手动三归档指南，WebUI 第一次 Start 成功且 bootstrap 进程正常返回。
+- [x] 2026-08-14：同一 clone 第二次 `Install-WebUI.bat` 明确退出 0；14 个组件幂等跳过，
+  Caption CPU fallback 重建后 Start 第一次成功。`/health` OK、首页 200、E621 available、
+  8 resources、missing/invalid 均为 null；cache/staging/bootstrap/transactions 均清理。
+  `Stop-WebUI.bat` 退出 0，8765 关闭且无项目进程残留。
+- [!] 2026-08-14：最新 HEAD 的 CPU/NVIDIA 正式 acceptance preflight 均为 `not-clean`，
+  检测到系统 Python/py、Node/npm、nvcc、cl 和 Windows Kits；本机没有可用隔离 Windows VM。
+  且本机 Caption CUDA probe 回退 CPU，不满足 NVIDIA 正式矩阵要求的 Caption/Policy CUDA
+  证据。因此上述全新 clone 实机成功不能记作 CPU/NVIDIA 干净机验收通过。
