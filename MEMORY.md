@@ -399,3 +399,8 @@ CLIP 文件使用 OpenAI 官方 CDN：
   失败资产的 URL。异常消息现使用单行分号分隔格式；回归先红后绿，下载器 `8/8`、installer
   `33/33` 通过。上一轮真实 NVIDIA 安装因下载器重试耗尽退出 1，未发布 install state，
   不得声称 WebUI 已启动。
+- 2026-08-14：第二次真实 NVIDIA 安装显示 E621 `model.onnx` 的 Hugging Face 302 重定向到
+  `us.aws.cdn.hf.co`，原逐项 `allowedHosts` 未声明该官方 CDN，因而被安全下载器重试耗尽。
+  13 个 Hugging Face 资产现在只显式允许 `huggingface.co` 与 `us.aws.cdn.hf.co`，manifest
+  SHA-256 为 `480188f5bc865565df62599a60df96a26a422bdd377037c9e4286051884747c2`。生产下载器
+  已实测 model.onnx `2,527,938` bytes、SHA-256 `51f687...` 成功；未知重定向主机仍拒绝。

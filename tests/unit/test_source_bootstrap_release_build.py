@@ -164,18 +164,23 @@ class SourceBootstrapReleaseBuildTests(unittest.TestCase):
 
     def test_huggingface_resolve_urls_request_the_download_response(self) -> None:
         value = json.loads(INVENTORY.read_text(encoding="utf-8"))
-        urls = [
-            artifact["url"]
+        artifacts = [
+            artifact
             for component in value["manifest"]["components"]
             for variant in component["variants"].values()
             for artifact in variant.get("artifacts", [])
             if artifact.get("url", "").startswith("https://huggingface.co/")
         ]
 
-        self.assertTrue(urls)
-        for url in urls:
+        self.assertTrue(artifacts)
+        for artifact in artifacts:
+            url = artifact["url"]
             with self.subTest(url=url):
                 self.assertTrue(url.endswith("?download=true"), url)
+                self.assertEqual(
+                    ["huggingface.co", "us.aws.cdn.hf.co"],
+                    artifact["allowedHosts"],
+                )
 
     def test_source_bootstrap_defaults_are_e621_only_and_tracked_for_the_installer(self) -> None:
         defaults = ROOT / "resource-library" / "defaults.json"

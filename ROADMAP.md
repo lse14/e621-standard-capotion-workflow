@@ -438,6 +438,13 @@ SDK，即可得到可离线运行的 E621 打标、质量评分、Qwen3 tokenize
   会隐藏失败资产 URL。`ManualDownloadRequired` 现改为单行分号分隔消息，保留官方 URL、目标
   路径、大小和 SHA-256；新增回归先红后绿，下载器 `8/8`、installer `33/33` 通过。上次真实
   NVIDIA 安装仍因下载重试耗尽退出 1，尚未生成 install state 或启动 WebUI。
+- [x] 2026-08-14：第二次真实 NVIDIA 安装日志显示完整失败资产后，进一步核对 Hugging Face
+  固定 URL 的真实 302：E621 `model.onnx` 重定向到官方 `us.aws.cdn.hf.co`，而非原先逐项
+  `allowedHosts` 中的 `huggingface.co`。13 个 Hugging Face 资产现显式允许这两个精确主机
+  （不使用通配符），顶层 manifest 同步加入 CDN 主机；重建 manifest SHA-256 为
+  `480188f5bc865565df62599a60df96a26a422bdd377037c9e4286051884747c2`。生产下载器实测
+  2,527,938 bytes 与 SHA-256 `51f6873c7d8618cfceb6b335dbe41815d46992b5df41c153dbe08669b77ec49b`
+  通过，未知主机仍由安全重定向校验拒绝。此前安装失败未生成 install state，尚未启动 WebUI。
 
 - [x] 2026-08-12：新增维护端 `Test-BootstrapRuntimeAsset.ps1`，独立核对基础 ZIP 的
   provenance 字段、文件名、大小、SHA-256、builder 脚本 SHA-256、安全 ZIP 条目和
