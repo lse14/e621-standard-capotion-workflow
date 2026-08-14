@@ -166,6 +166,10 @@ def validate_evidence(component_id: str, variant: str, evidence: Mapping[str, ob
         if kind != "indexes" or type(evidence.get("resourceCount")) is not int or evidence["resourceCount"] < 1:
             raise ProbeError("E621 index probe evidence is invalid")
         return True
+    if component_id in {"classify-e621", "replace-e621", "nl", "export"}:
+        if kind != "worker" or evidence.get("component") != component_id or evidence.get("check") != "ok":
+            raise ProbeError("source worker probe evidence is invalid")
+        return True
     raise ProbeError(f"offline probe is missing for component: {component_id}")
 
 
@@ -444,6 +448,40 @@ def _target(component_targets: Mapping[str, Path], component_id: str) -> Path:
     return target
 
 
+def _probe_source_worker(runtime: Path, component_id: str, *, runner: Runner | None = None) -> dict[str, object]:
+    script = r'''
+import json
+import sys
+
+component = sys.argv[1]
+if component == "classify-e621":
+    from anima_classify_worker.parsing import normalize_display_tag
+    assert normalize_display_tag("Blue Hair") == "blue_hair"
+elif component == "replace-e621":
+    from anima_replace_worker.replacement import replace_projection, rule_from_csv
+    value = {"quality": ["old"], "count": "", "character": "", "series": "", "artist": "", "appearance": [], "tags": [], "environment": [], "nl": ""}
+    result, summary = replace_projection(value, {"old": rule_from_csv("replace", "new")})
+    assert result["quality"] == ["new"] and summary.replaced == 1
+elif component == "nl":
+    from anima_nl_worker.validation import validate_nl
+    assert validate_nl("A complete offline caption.") == "A complete offline caption."
+elif component == "export":
+    from anima_export_worker.protocol import parse_process
+    items = parse_process({"schemaVersion": 1, "payloadType": "export_process_request", "items": [{"schemaVersion": 1, "sampleId": 1, "leaseId": "lease-1", "relativeImagePath": "images/a.png", "annotationKey": "a.json"}]})
+    assert len(items) == 1 and items[0].sample_id == 1
+else:
+    raise RuntimeError("unknown source worker")
+print(json.dumps({"kind": "worker", "component": component, "check": "ok"}, sort_keys=True))
+'''
+    return run_json_probe(
+        runtime / "python.exe",
+        script,
+        (component_id,),
+        cwd=_runtime_root(runtime),
+        runner=runner,
+    )
+
+
 def run_offline_probes(
     components: Sequence[object],
     *,
@@ -478,6 +516,14 @@ def run_offline_probes(
             results[component_id] = True
 
     run_group(("core",), lambda: _probe_core(_target(component_targets, "core"), runner=runner), "core")
+    for source_component_id in ("classify-e621", "replace-e621", "nl", "export"):
+        run_group(
+            (source_component_id,),
+            lambda component_id=source_component_id: _probe_source_worker(
+                _target(component_targets, component_id), component_id, runner=runner
+            ),
+            source_component_id,
+        )
     run_group(
         ("caption-e621", "e621-tagger"),
         lambda: _probe_caption(

@@ -410,3 +410,6 @@ CLIP 文件使用 OpenAI 官方 CDN：
 - 2026-08-14：第四次真实 NVIDIA 安装在 OCR GPU 组装处发现 7 个 NVIDIA wheels 共享相同
   的空 `nvidia/__init__.py`。`assemble.py` 现在仅允许 `filecmp(..., shallow=False)` 证明
   字节相同的重复文件；内容不同仍 fail closed。新增测试与原重复冲突测试均通过。
+- 2026-08-14：第五次真实安装证明四个源码 runtime 在 `run_offline_probes()` 中从未被调用，
+  因初始值为 False 而恒失败。现增加分类规范化、替换投影、NL 校验、Export 协议解析四个
+  网络阻断功能 probe；mock 组合回归和四个真实嵌入式 runtime 均返回绑定组件的 `check=ok`。

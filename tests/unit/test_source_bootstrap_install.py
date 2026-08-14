@@ -488,6 +488,33 @@ class SourceBootstrapInstallTests(unittest.TestCase):
             self.assertFalse(results["e621-replacement-indexes"])
             self.assertEqual([str(indexes), str(replacement)], probed_packages)
 
+    def test_source_worker_runtimes_receive_functional_probes(self) -> None:
+        probes = _probes_module()
+        with tempfile.TemporaryDirectory() as temporary_name:
+            root = Path(temporary_name)
+            component_ids = ("classify-e621", "replace-e621", "nl", "export")
+            targets = {}
+            for component_id in component_ids:
+                target = root / "runtimes" / component_id
+                target.mkdir(parents=True)
+                targets[component_id] = target
+            components = tuple(
+                SimpleNamespace(component=SimpleNamespace(component_id=component_id), variant=SimpleNamespace(name="cpu"))
+                for component_id in component_ids
+            )
+            observed = []
+
+            def runner(command, **kwargs):
+                component_id = command[-1]
+                observed.append(component_id)
+                output = json.dumps({"kind": "worker", "component": component_id, "check": "ok"}) + "\n"
+                return subprocess.CompletedProcess(command, 0, output, "")
+
+            results = probes.run_offline_probes(components, component_targets=targets, runner=runner)
+
+            self.assertEqual(list(component_ids), observed)
+            self.assertTrue(all(results[component_id] is True for component_id in component_ids))
+
     def test_resource_descriptor_calculates_catalog_fingerprint_without_a_stored_field(self) -> None:
         probes = _probes_module()
         with tempfile.TemporaryDirectory() as temporary_name:

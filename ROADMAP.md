@@ -452,6 +452,10 @@ SDK，即可得到可离线运行的 E621 打标、质量评分、Qwen3 tokenize
 - [x] 2026-08-14：第四次真实 NVIDIA 安装完成模型下载后，OCR GPU 组装发现多个 NVIDIA
   wheels 都含相同的空 `nvidia/__init__.py`。组装器现在只跳过字节完全相同的重复文件，
   仍拒绝不同内容的重复路径；新增相同内容测试通过，原有冲突拒绝测试保持通过。
+- [x] 2026-08-14：第五次真实安装到离线 probe 时确认 `classify-e621`、`replace-e621`、
+  `nl`、`export` 被初始化为失败但从未运行任何 probe，故生产安装必然失败。现为四个源码
+  worker 增加网络阻断下的纯功能 probe，并把证据绑定组件 ID；组合回归通过，且四个已有
+  嵌入式 runtime 实跑均返回 `kind=worker, check=ok`。
 
 - [x] 2026-08-12：新增维护端 `Test-BootstrapRuntimeAsset.ps1`，独立核对基础 ZIP 的
   provenance 字段、文件名、大小、SHA-256、builder 脚本 SHA-256、安全 ZIP 条目和
