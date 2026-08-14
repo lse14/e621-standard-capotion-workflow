@@ -824,7 +824,6 @@ class OcrWorkerTests(unittest.TestCase):
             requirements.read_text(encoding="utf-8").splitlines(),
         )
         self.assertTrue((ROOT / "packaging" / "requirements" / "ocr-paddle.lock").is_file())
-        self.assertTrue((ROOT / "packaging" / "wheelhouse" / "ocr-paddle").is_dir())
 
 
 if __name__ == "__main__":

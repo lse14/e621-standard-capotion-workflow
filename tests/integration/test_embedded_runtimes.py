@@ -48,8 +48,8 @@ class EmbeddedRuntimeTests(unittest.TestCase):
             (INSTALL_ROOT / "manifests" / "runtimes" / "ocr-paddle-gpu.json", False),
             (INSTALL_ROOT / "manifests" / "requirements" / "ocr-paddle-gpu.lock", False),
             (ROOT / "packaging" / "requirements" / "ocr-paddle-gpu.lock", False),
-            (ROOT / "packaging" / "wheelhouse" / "ocr-paddle-gpu", True),
         )
+        self.assertFalse((ROOT / "packaging" / "wheelhouse" / "ocr-paddle-gpu").exists())
         present = tuple(path.exists() for path, _ in formal_targets)
         self.assertIn(present, ((False,) * len(formal_targets), (True,) * len(formal_targets)))
         if not any(present):
@@ -58,7 +58,7 @@ class EmbeddedRuntimeTests(unittest.TestCase):
         for path, is_directory in formal_targets:
             self.assertEqual(is_directory, path.is_dir(), str(path))
 
-        runtime_path, manifest_path, manifest_lock_path, packaging_lock_path, _ = (
+        runtime_path, manifest_path, manifest_lock_path, packaging_lock_path = (
             path for path, _ in formal_targets
         )
         self.assertEqual(packaging_lock_path.read_bytes(), manifest_lock_path.read_bytes())

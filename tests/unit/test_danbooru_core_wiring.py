@@ -286,6 +286,20 @@ class DanbooruCoreWiringTests(unittest.TestCase):
             root = Path(temporary)
             dataset = root / "dataset"
             dataset.mkdir()
+            catalog, cl, _ = _fixture_catalog(root)
+            snapshot = catalog.scan()
+            missing_tagger_catalog = _StaticCatalog(
+                catalog.root,
+                ResourceCatalogSnapshot(
+                    defaults_schema_version=snapshot.defaults_schema_version,
+                    defaults=snapshot.defaults,
+                    packages=tuple(
+                        package for package in snapshot.packages
+                        if package.resource_id != cl.resource_id
+                    ),
+                    invalid=snapshot.invalid,
+                ),
+            )
             config = JobConfig(
                 profile="danbooru",
                 workMode="in_place",
@@ -300,7 +314,7 @@ class DanbooruCoreWiringTests(unittest.TestCase):
             config.nl.update({"enabled": False, "apiEnabled": False})
             service = JobPreparationService(
                 root / "state.db",
-                resource_catalog=ResourceCatalog(ROOT / "resource-library"),
+                resource_catalog=missing_tagger_catalog,  # type: ignore[arg-type]
             )
             with self.assertRaisesRegex(
                 JobPreflightError,

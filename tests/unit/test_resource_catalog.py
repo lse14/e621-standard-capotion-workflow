@@ -769,7 +769,9 @@ class ResourceCatalogTests(unittest.TestCase):
         self.assertEqual("368c31b8af0e96cc61239097688a457a050dfcc1205d054d4e631bd20529c9ca", fingerprints[OCR_RESOURCE_ID])
         self.assertEqual(set(expected_existing) | {OCR_RESOURCE_ID}, set(fingerprints))
         self.assertEqual(2, snapshot.defaults_schema_version)
-        self.assertFalse(snapshot.api_dict()["profiles"]["danbooru"]["available"])
+        self.assertEqual({"e621"}, set(snapshot.api_dict()["profiles"]))
+        with self.assertRaisesRegex(ResourceCatalogError, "unavailable for profile: danbooru"):
+            snapshot.defaults_for("danbooru")
 
 
 if __name__ == "__main__":

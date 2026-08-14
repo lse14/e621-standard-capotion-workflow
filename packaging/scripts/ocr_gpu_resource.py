@@ -5,6 +5,7 @@ import argparse
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import zipfile
 from dataclasses import dataclass
@@ -28,7 +29,6 @@ GPU_FORMAL_TARGETS = (
     ".runtime-build/manifests/runtimes/ocr-paddle-gpu.json",
     ".runtime-build/manifests/requirements/ocr-paddle-gpu.lock",
     "packaging/requirements/ocr-paddle-gpu.lock",
-    "packaging/wheelhouse/ocr-paddle-gpu",
 )
 APPLY_GATES = (
     "fixed cu126 wheel URL and observed size/SHA-256 inventory lock",
@@ -139,8 +139,8 @@ def _install_paths(project_root: Path) -> GpuInstallPaths:
     return values
 
 
-def _formal_targets(paths: GpuInstallPaths) -> tuple[Path, Path, Path, Path, Path]:
-    return (paths.runtime, paths.manifest, paths.manifest_lock, paths.lock, paths.wheelhouse)
+def _formal_targets(paths: GpuInstallPaths) -> tuple[Path, Path, Path, Path]:
+    return (paths.runtime, paths.manifest, paths.manifest_lock, paths.lock)
 
 
 def _archive_existing_staging(
@@ -194,7 +194,6 @@ def _publish_staged_artifacts(paths: GpuInstallPaths) -> None:
         (paths.staging_manifest, paths.manifest),
         (paths.staging_manifest_lock, paths.manifest_lock),
         (paths.staging_lock, paths.lock),
-        (paths.staging_wheelhouse, paths.wheelhouse),
     )
     moved: list[tuple[Path, Path]] = []
     try:
@@ -228,6 +227,14 @@ def install_transaction(
     prepare(paths)
     _require_complete_staging(paths)
     probe(paths)
+    transient_wheelhouses = (paths.staging_wheelhouse, paths.wheelhouse)
+    for wheelhouse in transient_wheelhouses:
+        _assert_no_reparse_between(paths.project, wheelhouse)
+        if wheelhouse.exists() and not wheelhouse.is_dir():
+            raise ValueError("GPU wheelhouse is not a safe directory")
+    for wheelhouse in transient_wheelhouses:
+        if wheelhouse.exists():
+            shutil.rmtree(wheelhouse)
     _publish_staged_artifacts(paths)
     result: dict[str, object] = {
         "action": "install",

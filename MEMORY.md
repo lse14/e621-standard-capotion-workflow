@@ -505,3 +505,36 @@ CLIP 文件使用 OpenAI 官方 CDN：
 - 全量 Core discovery 的 `870` 项仍有 3 项既有冲突（Danbooru defaults 与 E621-only 冻结范围、
   已清理 OCR wheelhouse）；contract/integration 另受 GPU formal artifacts `4/5` partial 和旧 Core
   runtime parser 影响。相关文件均未在本轮修改，不能把这些门禁记录为通过，也不为凑绿扩大范围。
+- 2026-08-14：用户确认修复上述验证冲突并提交到 `main`。决定保持生产 E621-only；Danbooru
+  缺模型行为仅使用临时 catalog 测试；wheelhouse 继续按成功安装清理；GPU 长期工件只包含
+  runtime、runtime manifest、安装锁和源码锁；本机 Core 通过正式 `Install-WebUI.bat` 刷新并在
+  验证后停止服务。该范围不修改 10 万图数据路径或现有模块耦合。
+- 2026-08-14：四项验证契约已按 TDD 修正，生产 profile、Danbooru 缺 tagger、OCR lock、GPU
+  formal-artifact 定向用例从 `3` 个失败加 `1` 个 fixture 通过，变为 `4/4` 通过；生产资源、
+  wheelhouse 和业务处理代码均未修改。
+- 2026-08-14：正式重装发现 source-bootstrap 的真实 wheel 内容被错误合并到 runtime 根目录；
+  既有测试 wheel 错带 `Lib/site-packages/` 前缀而掩盖问题。另发现 CPU fallback 的变体锁未覆盖
+  runtime 校验读取的规范锁。实现已改为将标准 wheel 顶层内容合并到 `Lib/site-packages`，并把
+  所选变体 lock 发布为 `{runtime_id}.lock`；两项回归先红后绿，install 套件 `40/40` 通过。
+- 2026-08-14：旧错误 wheel 布局可能在 runtime 根目录留下 `*.dist-info`，而部分旧锁名原本就是
+  规范名，因此只核对 canonical lock 不能保证迁移。回归先以 `True is not false` 复现；
+  `component_is_current()` 增加 runtime 一级目录检查后，定向用例 `1/1`、完整 install 套件
+  `41/41` 通过。未改变 fingerprint，避免正在执行的正式安装在完成后被无条件再次全量重建。
+- 2026-08-15：正式 `Install-WebUI.bat` 日志记录 NVIDIA 路线安装 15 个组件、Caption CUDA
+  probe 失败后按设计回退 CPU、WebUI 首次启动成功和 source bootstrap 成功完成。状态文件为
+  `12,744,155` bytes；Policy `Lib/site-packages/torch/lib` 已存在，runtime 根目录无直接
+  `*.dist-info`。`/health` 返回 `status=ok`，首页可读，`/api/resources` 返回 E621 available、
+  `invalidResources=[]`；`Stop-WebUI.bat` 退出 `0`，8765 无监听。
+- 2026-08-15：新 runtime 上 Core unit discovery `874/874` 通过（`2` 项按设计跳过），contract
+  `52/52` 通过。integration 首轮 `28/29`，唯一失败仍把成功安装后应清理的 OCR GPU wheelhouse
+  当作第五项长期工件；四项正式 runtime/manifest/安装锁/源码锁均在。删除过期测试断言后，
+  定向 `1/1`、完整 integration `29/29` 通过，生产代码未修改。
+- 2026-08-15：最终复核证明上一项结论不完整：`ocr_gpu_resource.py` 仍会把 staging wheelhouse
+  发布成第五项长期工件，也不会清理旧版遗留目录。TDD 回归先稳定失败，生产事务现只发布四项
+  正式工件，并在发布前校验、删除 staging 与旧版 wheelhouse；任一清理失败均不发布正式工件。
+  新鲜验证为 OCR GPU `19/19`、Core unit `875/875`（另 `2` 项按设计跳过）、integration
+  `29/29`、contract `52/52`、前端构建及 Playwright `72/72`；inventory、release gate 和修改
+  文件 Python 编译均退出 `0`。
+- 已知非阻断边界：`packaging/installer/assemble.py` 的直接 wheel 解包只覆盖当前冻结依赖，
+  不实现通用 PEP 427 `.data` spreading 或 entry-point 脚本生成。当前锁中仅 SymPy 含未使用的
+  man-page `.data` payload，未构成已复现业务回归；依赖集合变化时必须重新审计。

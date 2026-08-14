@@ -583,3 +583,41 @@ SDK，即可得到可离线运行的 E621 打标、质量评分、Qwen3 tokenize
   contract `52` 项另有 `3` 项因 GPU formal artifacts 为 `4/5` partial 而失败；integration `29`
   项有 `2` 项因同一 partial 状态和已安装 Core runtime 仍是旧 defaults parser 而失败。本轮不以
   改测试、补 Danbooru 默认资源或伪造 wheelhouse 的方式掩盖这些既有装配/范围冲突。
+
+## R17 验证契约与本机运行时修复
+
+- [-] 2026-08-14：用户确认按最小方案修复上述四类冲突并提交到 `main`。生产范围保持
+  E621-only，不恢复安装后应清理的 wheelhouse，不修改 10 万图处理链路。
+- [x] 设计与实施计划分别位于
+  `docs/superpowers/specs/2026-08-14-verification-contract-and-runtime-repair-design.md` 和
+  `docs/superpowers/plans/2026-08-14-verification-contract-and-runtime-repair.md`。
+- [x] 修正生产 profile、Danbooru 临时 fixture、OCR lock 和 GPU formal artifacts 测试契约；
+  四个定向用例先红后绿，修改后 `4/4` 通过。
+- [x] Core unit discovery `874/874`（`2` 项按设计跳过）、contract `52/52`、integration
+  `29/29` 全量通过。
+- [x] 通过 `Install-WebUI.bat` 刷新本机全部 15 个组件；Policy 的
+  `Lib/site-packages/torch/lib`、四项 OCR GPU formal artifacts 和规范锁均已发布，runtime
+  根目录无直接 `*.dist-info`。`/health`、首页、`/api/resources` 验证通过，随后
+  `Stop-WebUI.bat` 退出 `0` 且 8765 无监听。
+- [!] 2026-08-14：首次正式重装退出 `0`，但 contract 发现真实 wheel 被解压到 runtime 根目录，
+  Caption 依赖锁校验失败且 Policy 缺少 `Lib/site-packages/torch/lib`。根因是 assembly 目标错误，
+  同时既有 fixture 使用非标准 `Lib/site-packages/` 前缀掩盖了缺陷；修复中。
+- [x] 2026-08-14：真实 wheel 现在合并到 runtime `Lib/site-packages`，所选 CPU/CUDA 变体锁
+  统一发布为 `{runtime_id}.lock`。两项定向回归均先红后绿，完整 source-bootstrap install
+  套件 `40/40` 通过；待重新装配本机 runtime 后执行跨层验证。
+- [x] 2026-08-14：旧错误 wheel 布局仍可能凭已有规范锁被幂等跳过；新增回归先以
+  `True is not false` 复现。`component_is_current()` 现在拒绝 runtime 根目录直接存在
+  `*.dist-info` 目录，定向用例随后 `1/1` 通过，完整 source-bootstrap install `41/41` 通过。
+- [x] 2026-08-15：integration 仍有一处旧 GPU formal-artifact 契约要求安装后保留 wheelhouse，
+  与已确认清理规则冲突；真实安装四项长期工件全部存在，唯一缺项正是应清理的 wheelhouse。
+  删除该过期断言后定向 `1/1`、完整 integration `29/29` 通过，生产代码未修改。
+- [x] 2026-08-15：最终复核发现上一项只修测试仍会让独立 GPU 安装事务发布或遗留 wheelhouse。
+  回归先以多出的第五项 `writes`、未触发清理及旧 wheelhouse 仍存在稳定复现；生产事务现仅发布
+  runtime、runtime manifest、安装锁和源码锁，并在发布前安全删除 staging 与旧版 wheelhouse。
+  清理失败时不发布任何正式产物。OCR GPU `19/19`、Core unit `875/875`（另 `2` 项按设计跳过）、
+  integration `29/29`、contract `52/52`、前端构建及 Playwright `72/72` 均通过；inventory、
+  release gate 和修改文件 Python 编译均退出 `0`。
+- [!] 当前 `assemble.py` 只满足已冻结 wheel 集合，不是通用 PEP 427 安装器：不会展开 wheel
+  `.data` 目录或生成 entry-point 脚本。现有锁仅发现未使用的 SymPy man-page payload，未复现业务
+  回归；以后变更依赖集合时必须重新审计该边界。
+- [ ] 最终复核通过并提交到 `main`。

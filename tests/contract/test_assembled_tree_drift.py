@@ -63,7 +63,6 @@ def _gpu_formal_targets(project_root: Path, install_root: Path) -> tuple[tuple[P
         (install_root / "manifests" / "runtimes" / "ocr-paddle-gpu.json", False),
         (install_root / "manifests" / "requirements" / "ocr-paddle-gpu.lock", False),
         (project_root / "packaging" / "requirements" / "ocr-paddle-gpu.lock", False),
-        (project_root / "packaging" / "wheelhouse" / "ocr-paddle-gpu", True),
     )
 
 

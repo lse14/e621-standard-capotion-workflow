@@ -169,6 +169,12 @@ def component_is_current(layout: ProjectLayout, item: PlannedComponent, record: 
         return False
     if not target.is_dir() or target.is_symlink():
         return False
+    if item.runtime_id is not None:
+        try:
+            if any(entry.is_dir() and entry.name.casefold().endswith(".dist-info") for entry in target.iterdir()):
+                return False
+        except OSError:
+            return False
     expected: dict[str, tuple[int, str]] = {}
     for raw in raw_files:
         if not isinstance(raw, dict) or set(raw) != {"relativePath", "sizeBytes", "sha256"}:
@@ -207,6 +213,20 @@ def component_is_current(layout: ProjectLayout, item: PlannedComponent, record: 
         except (OSError, UnicodeError, ValueError, json.JSONDecodeError, PathSafetyError):
             return False
         if not isinstance(value, dict) or not isinstance(value.get("runtime"), dict) or value["runtime"].get("runtimeId") != item.runtime_id:
+            return False
+        dependency_lock_sha256 = value["runtime"].get("dependencyLockSha256")
+        canonical_lock = layout.runtime_root / "manifests" / "requirements" / f"{item.runtime_id}.lock"
+        if (
+            not isinstance(dependency_lock_sha256, str)
+            or len(dependency_lock_sha256) != 64
+            or not canonical_lock.is_file()
+            or canonical_lock.is_symlink()
+        ):
+            return False
+        try:
+            if _digest(canonical_lock)[1] != dependency_lock_sha256:
+                return False
+        except OSError:
             return False
     return True
 
@@ -301,6 +321,8 @@ def assemble_runtime(
         _assert_ordinary_tree(base)
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copytree(base, target, symlinks=False)
+        package_root = target / "Lib" / "site-packages"
+        package_root.mkdir(parents=True, exist_ok=True)
         seen: set[str] = set()
         for raw_wheel, manifest_relative_path in wheels:
             wheel = assert_within_root(layout.project_root, raw_wheel)
@@ -312,14 +334,12 @@ def assemble_runtime(
                 raise AssemblyError(f"wheel staging path already exists: {extracted}")
             try:
                 safe_extract_zip(wheel, extracted)
-                _merge_extracted_tree(extracted, target, seen)
+                _merge_extracted_tree(extracted, package_root, seen)
             except (PathSafetyError, zipfile.BadZipFile, OSError) as exc:
                 raise AssemblyError(f"wheel cannot be safely assembled: {wheel}") from exc
             finally:
                 if extracted.exists():
                     shutil.rmtree(extracted, ignore_errors=True)
-        package_root = target / "Lib" / "site-packages"
-        package_root.mkdir(parents=True, exist_ok=True)
         for package_name, raw_source in sorted((owner_sources or {}).items()):
             if "\\" in package_name or "/" in package_name:
                 raise AssemblyError(f"owner package name is invalid: {package_name}")
@@ -327,9 +347,9 @@ def assemble_runtime(
             _assert_ordinary_tree(source)
             _merge_extracted_tree(
                 source,
-                target,
+                package_root,
                 seen,
-                relative_prefix=f"Lib\\site-packages\\{package_name}",
+                relative_prefix=package_name,
             )
         for helper_name in ("pip", "wheel", "pytest"):
             helper = package_root / helper_name

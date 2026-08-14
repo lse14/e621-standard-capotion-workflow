@@ -145,7 +145,7 @@ def _write_runtime_manifest_at(source_root: Path, item: PlannedComponent, runtim
     source_lock = requirements_root / f"{item.lock_name}.lock"
     if not source_lock.is_file():
         raise AssemblyError(f"runtime lock is missing: {source_lock}")
-    lock_target = runtime_root / "manifests" / "requirements" / source_lock.name
+    lock_target = runtime_root / "manifests" / "requirements" / f"{item.runtime_id}.lock"
     lock_target.parent.mkdir(parents=True, exist_ok=True)
     lock_target.write_bytes(source_lock.read_bytes())
     return manifest_path

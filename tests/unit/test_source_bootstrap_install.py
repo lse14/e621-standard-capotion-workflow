@@ -30,6 +30,27 @@ def _sha256(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
 
 
+def _write_fixture_runtime_manifest(item, layout) -> str:
+    lock_payload = f"{item.runtime_id}:{item.variant.name}\n".encode("ascii")
+    lock = layout.runtime_root / "manifests" / "requirements" / f"{item.runtime_id}.lock"
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    lock.write_bytes(lock_payload)
+    target = layout.runtime_root / "manifests" / "runtimes" / f"{item.runtime_id}.json"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        json.dumps(
+            {
+                "runtime": {
+                    "runtimeId": item.runtime_id,
+                    "dependencyLockSha256": _sha256(lock_payload),
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    return str(target.relative_to(layout.project_root)).replace("/", "\\")
+
+
 def _artifact(artifact_id: str, relative_path: str) -> dict[str, object]:
     payload = artifact_id.encode("ascii")
     return {
@@ -314,7 +335,7 @@ class SourceBootstrapInstallTests(unittest.TestCase):
         (shared_source / "__init__.py").write_text("VALUE = 'format'\n", encoding="ascii")
         wheel = root / "core.whl"
         with zipfile.ZipFile(wheel, "w") as archive:
-            archive.writestr("Lib/site-packages/fixture_pkg/__init__.py", "VALUE = 1\n")
+            archive.writestr("fixture_pkg/__init__.py", "VALUE = 1\n")
         resource = root / "resource.json"
         resource.write_text('{"fixture":true}\n', encoding="utf-8")
         paths = {"core-cpu-wheel": wheel, "fixture-resource-json": resource}
@@ -325,13 +346,7 @@ class SourceBootstrapInstallTests(unittest.TestCase):
         def probe(item, target):
             return target.is_dir() and item.component.component_id in {"core", "fixture-resource"}
 
-        def write_runtime_manifest(item, layout):
-            target = layout.runtime_root / "manifests" / "runtimes" / f"{item.runtime_id}.json"
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(json.dumps({"runtime": {"runtimeId": item.runtime_id}}), encoding="utf-8")
-            return str(target.relative_to(layout.project_root)).replace("/", "\\")
-
-        return install_module, manifest, base, fetch, probe, write_runtime_manifest
+        return install_module, manifest, base, fetch, probe, _write_fixture_runtime_manifest
 
     def test_representative_probe_rejects_import_only_and_wrong_accelerator_evidence(self) -> None:
         probes = _probes_module()
@@ -821,6 +836,29 @@ class SourceBootstrapInstallTests(unittest.TestCase):
 
             self.assertEqual(_sha256(lock.read_bytes()), value["runtime"]["dependencyLockSha256"])
 
+    def test_runtime_manifest_publishes_selected_variant_as_the_canonical_runtime_lock(self) -> None:
+        install_module = _install_module()
+        _, manifest_module = _modules()
+        manifest = manifest_module.load_manifest_path(ROOT / "packaging" / "installer" / "install-manifest.json")
+        caption = install_module._cpu_fallback_items(manifest)["caption-e621"]
+        self.assertEqual("caption-e621-cpu", caption.lock_name)
+
+        with tempfile.TemporaryDirectory() as temporary_name:
+            runtime_root = Path(temporary_name) / ".runtime-build"
+            runtime = runtime_root / "runtimes" / "caption-e621"
+            worker = runtime / "Lib" / "site-packages" / "anima_caption_worker"
+            (runtime / "Lib" / "site-packages" / "onnxruntime" / "capi").mkdir(parents=True)
+            worker.mkdir(parents=True)
+            (worker / "entry.py").write_text("VALUE = 1\n", encoding="ascii")
+            for filename in ("python.exe", "python311.dll", "python311._pth"):
+                (runtime / filename).write_bytes(filename.encode("ascii"))
+
+            install_module._write_runtime_manifest_at(ROOT, caption, runtime_root)
+
+            canonical = runtime_root / "manifests" / "requirements" / "caption-e621.lock"
+            selected = ROOT / "packaging" / "requirements" / "caption-e621-cpu.lock"
+            self.assertEqual(selected.read_bytes(), canonical.read_bytes())
+
     def test_skip_requires_fingerprint_all_files_and_runtime_manifest(self) -> None:
         assemble, manifest_module = _modules()
         manifest = manifest_module.load_manifest(fixture_manifest())
@@ -855,6 +893,23 @@ class SourceBootstrapInstallTests(unittest.TestCase):
                 "runtimeManifestRelativePath": ".runtime-build\\manifests\\runtimes\\core.json",
             }
 
+            self.assertFalse(assemble.component_is_current(layout, core, record))
+            lock_payload = b"core fixture lock\n"
+            canonical_lock = root / ".runtime-build" / "manifests" / "requirements" / "core.lock"
+            canonical_lock.parent.mkdir(parents=True)
+            canonical_lock.write_bytes(lock_payload)
+            runtime_manifest.write_text(
+                json.dumps(
+                    {
+                        "runtime": {
+                            "runtimeId": "core",
+                            "dependencyLockSha256": _sha256(lock_payload),
+                        }
+                    },
+                    sort_keys=True,
+                ),
+                encoding="utf-8",
+            )
             self.assertTrue(assemble.component_is_current(layout, core, record))
             (target / "marker.txt").write_bytes(b"drift")
             self.assertFalse(assemble.component_is_current(layout, core, record))
@@ -880,14 +935,50 @@ class SourceBootstrapInstallTests(unittest.TestCase):
             (target / "empty.py").write_bytes(b"")
             runtime_manifest = root / ".runtime-build" / "manifests" / "runtimes" / "core.json"
             runtime_manifest.parent.mkdir(parents=True)
+            lock_payload = b"core zero-byte fixture lock\n"
+            canonical_lock = root / ".runtime-build" / "manifests" / "requirements" / "core.lock"
+            canonical_lock.parent.mkdir(parents=True)
+            canonical_lock.write_bytes(lock_payload)
             runtime_manifest.write_text(
-                json.dumps({"runtime": {"runtimeId": "core"}}, sort_keys=True), encoding="utf-8"
+                json.dumps(
+                    {
+                        "runtime": {
+                            "runtimeId": "core",
+                            "dependencyLockSha256": _sha256(lock_payload),
+                        }
+                    },
+                    sort_keys=True,
+                ),
+                encoding="utf-8",
             )
 
             record = assemble.component_record(layout, core)
 
             self.assertEqual(0, record["files"][0]["sizeBytes"])
             self.assertTrue(assemble.component_is_current(layout, core, record))
+
+    def test_runtime_skip_rejects_legacy_root_wheel_metadata(self) -> None:
+        assemble, manifest_module = _modules()
+        manifest = manifest_module.load_manifest(fixture_manifest())
+        core = next(
+            item
+            for item in assemble.installation_plan(manifest, accelerator="cpu").components
+            if item.component.component_id == "core"
+        )
+
+        with tempfile.TemporaryDirectory() as temporary_name:
+            root = Path(temporary_name)
+            layout = assemble.ProjectLayout.create(root)
+            layout.ensure_directories()
+            target = root / ".runtime-build" / "runtimes" / "core"
+            metadata = target / "fixture_pkg-1.0.dist-info" / "METADATA"
+            metadata.parent.mkdir(parents=True)
+            metadata.write_text("Name: fixture-pkg\nVersion: 1.0\n", encoding="ascii")
+            _write_fixture_runtime_manifest(core, layout)
+
+            record = assemble.component_record(layout, core)
+
+            self.assertFalse(assemble.component_is_current(layout, core, record))
 
     def test_runtime_assembly_rejects_duplicate_wheel_paths_before_publish(self) -> None:
         assemble, manifest_module = _modules()
@@ -910,7 +1001,7 @@ class SourceBootstrapInstallTests(unittest.TestCase):
                 wheel = root / f"fixture-{index}.whl"
                 with zipfile.ZipFile(wheel, "w") as archive:
                     archive.writestr("fixture.dist-info/METADATA", "Name: fixture\nVersion: 1\n")
-                    archive.writestr("Lib/site-packages/shared.py", str(index))
+                    archive.writestr("shared.py", str(index))
                 wheels.append(wheel)
 
             with self.assertRaisesRegex(assemble.AssemblyError, "duplicate wheel path"):
@@ -951,7 +1042,10 @@ class SourceBootstrapInstallTests(unittest.TestCase):
                 destination=layout.staging / "core",
             )
 
-            self.assertEqual(b"", (layout.staging / "core" / "nvidia" / "__init__.py").read_bytes())
+            self.assertEqual(
+                b"",
+                (layout.staging / "core" / "Lib" / "site-packages" / "nvidia" / "__init__.py").read_bytes(),
+            )
 
     def test_runtime_assembly_uses_manifest_name_for_hash_named_wheel_cache(self) -> None:
         assemble, manifest_module = _modules()
@@ -966,7 +1060,7 @@ class SourceBootstrapInstallTests(unittest.TestCase):
             (base / "python.exe").write_bytes(b"python")
             wheel_cache = root / ("a" * 64)
             with zipfile.ZipFile(wheel_cache, "w") as archive:
-                archive.writestr("Lib/site-packages/fixture_pkg/__init__.py", "VALUE = 1\n")
+                archive.writestr("fixture_pkg/__init__.py", "VALUE = 1\n")
 
             destination = layout.staging / "core"
             assemble.assemble_runtime(
@@ -992,7 +1086,7 @@ class SourceBootstrapInstallTests(unittest.TestCase):
             (base / "python.exe").write_bytes(b"python")
             wheel_cache = root / ("b" * 64)
             with zipfile.ZipFile(wheel_cache, "w") as archive:
-                archive.writestr("Lib/site-packages/fixture_pkg/__init__.py", "VALUE = 1\n")
+                archive.writestr("fixture_pkg/__init__.py", "VALUE = 1\n")
 
             with self.assertRaisesRegex(assemble.AssemblyError, "wheel input is invalid"):
                 assemble.assemble_runtime(
@@ -1024,7 +1118,7 @@ class SourceBootstrapInstallTests(unittest.TestCase):
                 (base / filename).write_bytes(filename.encode("ascii"))
             wheel = root / "fixture.whl"
             with zipfile.ZipFile(wheel, "w") as archive:
-                archive.writestr("Lib/site-packages/fixture_pkg/__init__.py", "VALUE = 2\n")
+                archive.writestr("fixture_pkg/__init__.py", "VALUE = 2\n")
             owner = root / "owner" / "anima_core"
             owner.mkdir(parents=True)
             (owner / "__init__.py").write_text("VALUE = 'owner'\n", encoding="ascii")
@@ -1128,7 +1222,7 @@ class SourceBootstrapInstallTests(unittest.TestCase):
             (shared_source / "__init__.py").write_text("VALUE = 'format'\n", encoding="ascii")
             wheel = root / "core.whl"
             with zipfile.ZipFile(wheel, "w") as archive:
-                archive.writestr("Lib/site-packages/fixture_pkg/__init__.py", "VALUE = 1\n")
+                archive.writestr("fixture_pkg/__init__.py", "VALUE = 1\n")
             resource = root / "resource.json"
             resource.write_text('{"fixture":true}\n', encoding="utf-8")
             paths = {"core-cpu-wheel": wheel, "fixture-resource-json": resource}
@@ -1141,12 +1235,6 @@ class SourceBootstrapInstallTests(unittest.TestCase):
             def probe(item, target):
                 return target.is_dir() and item.component.component_id in {"core", "fixture-resource"}
 
-            def write_runtime_manifest(item, layout):
-                target = layout.runtime_root / "manifests" / "runtimes" / f"{item.runtime_id}.json"
-                target.parent.mkdir(parents=True, exist_ok=True)
-                target.write_text(json.dumps({"runtime": {"runtimeId": item.runtime_id}}), encoding="utf-8")
-                return str(target.relative_to(layout.project_root)).replace("/", "\\")
-
             first = install_module.install_project(
                 project_root=root,
                 source_root=root,
@@ -1155,7 +1243,7 @@ class SourceBootstrapInstallTests(unittest.TestCase):
                 base_runtime=base,
                 fetch_artifact=fetch,
                 probe_component=probe,
-                write_runtime_manifest=write_runtime_manifest,
+                write_runtime_manifest=_write_fixture_runtime_manifest,
                 require_mandatory_e621=False,
             )
 
@@ -1179,7 +1267,7 @@ class SourceBootstrapInstallTests(unittest.TestCase):
                 base_runtime=base,
                 fetch_artifact=fetch,
                 probe_component=probe,
-                write_runtime_manifest=write_runtime_manifest,
+                write_runtime_manifest=_write_fixture_runtime_manifest,
                 require_mandatory_e621=False,
             )
 
@@ -1223,7 +1311,7 @@ class SourceBootstrapInstallTests(unittest.TestCase):
             unrelated.write_text("preserve", encoding="ascii")
             wheel = root / "core.whl"
             with zipfile.ZipFile(wheel, "w") as archive:
-                archive.writestr("Lib/site-packages/fixture_pkg/__init__.py", "VALUE = 1\n")
+                archive.writestr("fixture_pkg/__init__.py", "VALUE = 1\n")
             fetched: list[str] = []
 
             def fetch(artifact):
@@ -1235,12 +1323,6 @@ class SourceBootstrapInstallTests(unittest.TestCase):
             def probe(item, target):
                 return target.is_dir()
 
-            def write_runtime_manifest(item, layout):
-                target = layout.runtime_root / "manifests" / "runtimes" / f"{item.runtime_id}.json"
-                target.parent.mkdir(parents=True, exist_ok=True)
-                target.write_text(json.dumps({"runtime": {"runtimeId": item.runtime_id}}), encoding="utf-8")
-                return str(target.relative_to(layout.project_root)).replace("/", "\\")
-
             result = install_module.install_project(
                 project_root=root,
                 source_root=root,
@@ -1249,7 +1331,7 @@ class SourceBootstrapInstallTests(unittest.TestCase):
                 base_runtime=base,
                 fetch_artifact=fetch,
                 probe_component=probe,
-                write_runtime_manifest=write_runtime_manifest,
+                write_runtime_manifest=_write_fixture_runtime_manifest,
                 require_mandatory_e621=False,
             )
 
@@ -1441,7 +1523,7 @@ class SourceBootstrapInstallTests(unittest.TestCase):
                         wheel = root / f"{artifact.artifact_id}.whl"
                         with zipfile.ZipFile(wheel, "w") as archive:
                             archive.writestr(
-                                "Lib/site-packages/fixture_pkg/__init__.py",
+                                "fixture_pkg/__init__.py",
                                 "VALUE = 1\n",
                             )
                         artifact_paths[artifact.artifact_id] = wheel
@@ -1461,12 +1543,6 @@ class SourceBootstrapInstallTests(unittest.TestCase):
                     ("ocr-gpu", "cuda"),
                 }
 
-            def write_runtime_manifest(item, layout):
-                target = layout.runtime_root / "manifests" / "runtimes" / f"{item.runtime_id}.json"
-                target.parent.mkdir(parents=True, exist_ok=True)
-                target.write_text(json.dumps({"runtime": {"runtimeId": item.runtime_id}}), encoding="utf-8")
-                return str(target.relative_to(layout.project_root)).replace("/", "\\")
-
             result = install_module.install_project(
                 project_root=root,
                 source_root=root,
@@ -1475,7 +1551,7 @@ class SourceBootstrapInstallTests(unittest.TestCase):
                 base_runtime=base,
                 fetch_artifact=fetch,
                 probe_component=probe,
-                write_runtime_manifest=write_runtime_manifest,
+                write_runtime_manifest=_write_fixture_runtime_manifest,
                 require_mandatory_e621=False,
             )
 
@@ -1521,7 +1597,7 @@ class SourceBootstrapInstallTests(unittest.TestCase):
                         for artifact in variant.artifacts:
                             wheel = root / f"{artifact.artifact_id}.whl"
                             with zipfile.ZipFile(wheel, "w") as archive:
-                                archive.writestr("Lib/site-packages/fixture_pkg/__init__.py", "VALUE = 1\n")
+                                archive.writestr("fixture_pkg/__init__.py", "VALUE = 1\n")
                             artifact_paths[artifact.artifact_id] = wheel
 
                 with self.assertRaisesRegex(Exception, "offline probe failed"):

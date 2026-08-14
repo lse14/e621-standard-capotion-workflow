@@ -119,7 +119,6 @@ class OcrGpuResourceScriptTests(unittest.TestCase):
                     ".runtime-build/manifests/runtimes/ocr-paddle-gpu.json",
                     ".runtime-build/manifests/requirements/ocr-paddle-gpu.lock",
                     "packaging/requirements/ocr-paddle-gpu.lock",
-                    "packaging/wheelhouse/ocr-paddle-gpu",
                 ],
                 preview["targets"],
             )
@@ -174,6 +173,9 @@ class OcrGpuResourceScriptTests(unittest.TestCase):
         self.assertTrue(callable(transaction), "GPU lifecycle needs an explicit staged install transaction")
         with tempfile.TemporaryDirectory() as temporary_name:
             project = Path(temporary_name)
+            legacy_wheelhouse = project / "packaging" / "wheelhouse" / "ocr-paddle-gpu"
+            legacy_wheelhouse.mkdir(parents=True)
+            (legacy_wheelhouse / "legacy.whl").write_bytes(b"legacy")
             calls: list[str] = []
 
             def fake_downloader(paths: object) -> None:
@@ -211,12 +213,18 @@ class OcrGpuResourceScriptTests(unittest.TestCase):
             result = transaction(project, prepare=prepare, probe=fake_probe)
             self.assertEqual(["download", "build", "probe"], calls)
             self.assertEqual("apply", result["mode"])
+            self.assertEqual(
+                [str(target.relative_to(project)).replace("\\", "/") for target in self._formal_gpu_targets(project)],
+                result["writes"],
+            )
             self.assertEqual(b"lock\n", (project / "packaging" / "requirements" / "ocr-paddle-gpu.lock").read_bytes())
             self.assertEqual(
                 (project / "packaging" / "requirements" / "ocr-paddle-gpu.lock").read_bytes(),
                 (project / ".runtime-build" / "manifests" / "requirements" / "ocr-paddle-gpu.lock").read_bytes(),
             )
             self.assertTrue(all(target.exists() for target in self._formal_gpu_targets(project)))
+            self.assertFalse((project / "packaging" / "wheelhouse" / "ocr-paddle-gpu").exists())
+            self.assertFalse(driver._install_paths(project).staging_wheelhouse.exists())
 
         with tempfile.TemporaryDirectory() as temporary_name:
             project = Path(temporary_name)
@@ -241,6 +249,22 @@ class OcrGpuResourceScriptTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "probe"):
                 transaction(project, prepare=prepare, probe=lambda paths: (_ for _ in ()).throw(RuntimeError("probe failed")))
             self.assertFalse(any(target.exists() for target in self._formal_gpu_targets(project)))
+
+    def test_wheelhouse_cleanup_failure_publishes_no_formal_artifacts(self) -> None:
+        driver = _load_driver()
+        with tempfile.TemporaryDirectory() as temporary_name:
+            project = Path(temporary_name)
+
+            with mock.patch("shutil.rmtree", side_effect=OSError("wheelhouse cleanup failed")):
+                with self.assertRaisesRegex(OSError, "wheelhouse cleanup failed"):
+                    driver.install_transaction(
+                        project,
+                        prepare=self._write_complete_gpu_staging,
+                        probe=lambda paths: None,
+                    )
+
+            self.assertFalse(any(target.exists() for target in self._formal_gpu_targets(project)))
+            self.assertTrue(driver._install_paths(project).staging_wheelhouse.is_dir())
 
     def test_existing_staging_is_archived_before_a_fresh_transaction(self) -> None:
         driver = _load_driver()
@@ -712,7 +736,6 @@ class OcrGpuResourceScriptTests(unittest.TestCase):
             project / ".runtime-build" / "manifests" / "runtimes" / "ocr-paddle-gpu.json",
             project / ".runtime-build" / "manifests" / "requirements" / "ocr-paddle-gpu.lock",
             project / "packaging" / "requirements" / "ocr-paddle-gpu.lock",
-            project / "packaging" / "wheelhouse" / "ocr-paddle-gpu",
         )
 
 
