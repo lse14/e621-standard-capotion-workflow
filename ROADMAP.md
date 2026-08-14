@@ -620,4 +620,4 @@ SDK，即可得到可离线运行的 E621 打标、质量评分、Qwen3 tokenize
 - [!] 当前 `assemble.py` 只满足已冻结 wheel 集合，不是通用 PEP 427 安装器：不会展开 wheel
   `.data` 目录或生成 entry-point 脚本。现有锁仅发现未使用的 SymPy man-page payload，未复现业务
   回归；以后变更依赖集合时必须重新审计该边界。
-- [ ] 最终复核通过并提交到 `main`。
+- [x] 最终复核通过；修复提交 `0dd97b1` 已落在本地 `main`。

@@ -538,3 +538,4 @@ CLIP 文件使用 OpenAI 官方 CDN：
 - 已知非阻断边界：`packaging/installer/assemble.py` 的直接 wheel 解包只覆盖当前冻结依赖，
   不实现通用 PEP 427 `.data` spreading 或 entry-point 脚本生成。当前锁中仅 SymPy 含未使用的
   man-page `.data` payload，未构成已复现业务回归；依赖集合变化时必须重新审计。
+- 2026-08-15：上述修复与验证记录已由提交 `0dd97b1` 落在本地 `main`，未推送远端。
