@@ -450,3 +450,15 @@ CLIP 文件使用 OpenAI 官方 CDN：
   8 resources、0 invalid；install state 记录 NVIDIA/15 组件，Stop 退出 0、端口不可达，
   bootstrap 临时目录已清理。该证据是 NVIDIA 修复/幂等路径，不是最新 HEAD 的全新 CPU/NVIDIA
   干净机矩阵；OCR 模型仍按已确认边界要求用户放置三份官方归档。
+- 2026-08-14：`origin/main` 已快进为 `6d3790657ba47998a10b77a4928f14b6106e563a`；合并前
+  source-bootstrap `109/109`、API `37/37`、预检 `29/29`、production inventory、公开 bootstrap
+  资产逐字节重下、release gate 和 manifest SHA 绑定均通过。CPU/NVIDIA acceptance preflight
+  均为 `not-clean`，因为本机存在 Python/Node/CUDA/VS/SDK，且没有可用 Windows VM/Sandbox；
+  不得把本机空目录安装称为干净机验收。
+- 2026-08-14：全新中文/空格路径 clone 的 NVIDIA 基础安装发布 15 个组件并保留 OCR GPU runtime，
+  没有 OCR 归档时日志记录模型功能未验证。首次安装后自动 Start 的 Windows 事件为
+  `Distributed core runtime verification failed`；同一 runtime 随后自检、手动 Start 和第二次
+  BAT 都成功，health OK、首页 200、E621 available、missing/invalid 为 null、8 个资源。
+  bootstrap Start 现最多尝试两次、间隔 2 秒并记录子 PowerShell 输出，第二次仍失败才退出；
+  TDD 回归及 source-bootstrap `110/110`、desktop-control `7/7` 通过。OCR 模型边界不变：用户
+  手动放置三份官方归档，安装器不下载、镜像或发布模型权重。

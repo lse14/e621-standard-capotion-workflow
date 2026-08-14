@@ -492,6 +492,20 @@ SDK，即可得到可离线运行的 E621 打标、质量评分、Qwen3 tokenize
   `/api/resources` 返回 schema 2、E621 available、0 missing、8 resources、0 invalid；
   install state 为 NVIDIA/15 组件，Stop 退出 0 且端口关闭，bootstrap 临时目录已清理。
   这是现有 NVIDIA 安装的修复/幂等路径证据，不替代最新 HEAD 的全新 CPU/NVIDIA 干净机矩阵。
+- [x] 2026-08-14：`origin/main` 已从 `1ccdc42` 快进到 `6d37906`，旧仓库地址和迁移后的
+  `lse14/e621-standard-capotion-workflow` 均返回同一 main SHA。合并前 source-bootstrap
+  `109/109`、API `37/37`、预检 `29/29`、production inventory、公开 CPython 资产逐字节重下、
+  release gate、manifest SHA 绑定、Python/PowerShell 语法均退出 0。
+- [!] 2026-08-14：CPU/NVIDIA 正式 acceptance preflight 均以 `not-clean` 退出 1，明确检测到
+  Python、py、Node/npm、nvcc、cl 和 Windows Kits；本机也没有 Windows Sandbox、Hyper-V
+  控制台、VirtualBox、VMware 或 Docker。不能把本机新目录测试记为 CPU/NVIDIA 干净机通过。
+- [x] 2026-08-14：从最新 main 克隆到全新中文/空格路径，无旧 `.runtime-build` 或 OCR 归档。
+  NVIDIA 基础安装写入 15 组件状态并保留 `ocr-gpu`，日志明确记录 OCR 模型功能未验证；首次
+  自动 Start 的 Windows 事件证据为 `Distributed core runtime verification failed`，稍后同一
+  runtime 自检、手动 Start 及第二次 BAT 均成功。bootstrap 现在记录子 PowerShell 输出，并对
+  该瞬态 Start 失败做一次 2 秒后的有界重试；TDD 回归先红后绿，source-bootstrap `110/110`、
+  desktop-control `7/7`、PowerShell AST 和 `git diff --check` 通过。OCR 三份官方归档仍只由
+  用户手动放置，不自动下载、镜像或发布。
 
 - [x] 2026-08-12：新增维护端 `Test-BootstrapRuntimeAsset.ps1`，独立核对基础 ZIP 的
   provenance 字段、文件名、大小、SHA-256、builder 脚本 SHA-256、安全 ZIP 条目和

@@ -54,6 +54,22 @@ function Write-InstallLog([string]$Message) {
     Write-Host $Message
 }
 
+function Start-InstalledWebUi([string]$DesktopControl) {
+    for ($attempt = 1; $attempt -le 2; $attempt++) {
+        $output = @(& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $DesktopControl -Action Start 2>&1)
+        $exitCode = $LASTEXITCODE
+        foreach ($line in $output) {
+            Write-InstallLog ("WebUI start attempt {0}: {1}" -f $attempt, [string]$line)
+        }
+        if ($exitCode -eq 0) { return }
+        if ($attempt -lt 2) {
+            Write-InstallLog ("WebUI start attempt {0} failed with exit code {1}; retrying" -f $attempt, $exitCode)
+            Start-Sleep -Seconds 2
+        }
+    }
+    throw "WebUI failed to start after 2 attempts; see $script:logPath"
+}
+
 function Get-Sha256Hex([string]$Path) {
     $stream = [System.IO.File]::Open($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read)
     $algorithm = [System.Security.Cryptography.SHA256]::Create()
@@ -382,8 +398,7 @@ try {
     $desktopControl = Get-ProjectPath (Join-Path $script:projectRoot 'packaging\scripts\desktop_control.ps1')
     if (-not (Test-Path -LiteralPath $desktopControl -PathType Leaf)) { throw "WebUI control script is missing: $desktopControl" }
     Write-InstallLog 'Starting WebUI.'
-    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $desktopControl -Action Start
-    if ($LASTEXITCODE -ne 0) { throw "WebUI failed to start; see $script:logPath" }
+    Start-InstalledWebUi $desktopControl
     Clear-BootstrapSuccessArtifacts
     Write-InstallLog 'Source bootstrap completed successfully.'
 } catch {

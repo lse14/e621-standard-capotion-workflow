@@ -372,6 +372,41 @@ class SourceBootstrapPowerShellTests(unittest.TestCase):
         self.assertIn("OCR_MODEL_DOWNLOAD.md", script)
         self.assertNotIn("OcrMode", script)
 
+    def test_bootstrap_retries_a_transient_webui_start_and_logs_child_output(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_name:
+            log_path = Path(temporary_name) / "bootstrap.log"
+            log_literal = str(log_path).replace("'", "''")
+            command = (
+                "$tokens=$null; $errors=$null; "
+                "$ast=[System.Management.Automation.Language.Parser]::ParseFile("
+                "(Resolve-Path 'packaging\\scripts\\bootstrap_install.ps1'),[ref]$tokens,[ref]$errors); "
+                "if($errors.Count){exit 1}; "
+                "$wanted=@('Write-InstallLog','Start-InstalledWebUi'); "
+                "$nodes=$ast.FindAll({param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $wanted -contains $node.Name},$true); "
+                "$start=$nodes | Where-Object Name -eq 'Start-InstalledWebUi'; "
+                "if($null -eq $start){Write-Error 'Start-InstalledWebUi is missing'; exit 2}; "
+                "Invoke-Expression (($nodes | ForEach-Object {$_.Extent.Text}) -join \"`n\"); "
+                f"$script:logPath='{log_literal}'; "
+                "$script:utf8NoBom=New-Object System.Text.UTF8Encoding($false); "
+                "$script:attempts=0; "
+                "function global:powershell.exe { "
+                "$script:attempts++; "
+                "if($script:attempts -eq 1){$global:LASTEXITCODE=1; 'transient core verification failure'} "
+                "else{$global:LASTEXITCODE=0; 'webui ready'} }; "
+                "try { Start-InstalledWebUi 'C:\\fixture\\desktop_control.ps1' } finally { Remove-Item function:global:powershell.exe }; "
+                f"[ordered]@{{attempts=$script:attempts;log=[IO.File]::ReadAllText('{log_literal}')}} | ConvertTo-Json -Compress"
+            )
+            completed = subprocess.run(
+                ["powershell.exe", "-NoProfile", "-Command", command], cwd=ROOT,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False,
+            )
+
+            self.assertEqual(0, completed.returncode, completed.stdout + completed.stderr)
+            result = json.loads(completed.stdout.splitlines()[-1])
+            self.assertEqual(2, result["attempts"])
+            self.assertIn("transient core verification failure", result["log"])
+            self.assertIn("retrying", result["log"].lower())
+
     def test_release_validator_requires_ocr_runtime_but_not_manual_ocr_models(self) -> None:
         self.assertTrue(RELEASE_VALIDATOR.is_file(), "source bootstrap release validator must exist")
         script = RELEASE_VALIDATOR.read_text(encoding="utf-8")
