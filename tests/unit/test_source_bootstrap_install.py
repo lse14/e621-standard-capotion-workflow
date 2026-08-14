@@ -9,6 +9,8 @@ import tempfile
 import unittest
 import zipfile
 import importlib.util
+from contextlib import redirect_stderr
+from io import StringIO
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -154,6 +156,38 @@ class IsolatedInstallerEntryTests(unittest.TestCase):
 
         self.assertEqual(0, completed.returncode, completed.stdout + completed.stderr)
         self.assertIn("--bootstrap-runtime", completed.stdout)
+
+    def test_installer_main_reports_manual_download_details_without_a_traceback(self) -> None:
+        install_module = _install_module()
+        artifact = SimpleNamespace(
+            artifact_id="fixture",
+            url="https://downloads.example.test/fixture.bin",
+            allowed_hosts=("downloads.example.test",),
+            size_bytes=7,
+            sha256="a" * 64,
+            relative_path="fixture.bin",
+        )
+        error = install_module.ManualDownloadRequired(artifact, "fixture download failed")
+        stderr = StringIO()
+
+        with (
+            mock.patch.object(sys, "argv", [
+                "install.py", "--project-root", ".", "--manifest", "manifest.json",
+                "--manifest-sha256", "a" * 64, "--accelerator", "cpu",
+                "--bootstrap-runtime", ".",
+            ]),
+            mock.patch.object(Path, "read_bytes", return_value=b"manifest"),
+            mock.patch.object(install_module, "sha256_bytes", return_value="a" * 64),
+            mock.patch.object(install_module, "load_manifest_path", return_value=object()),
+            mock.patch.object(install_module, "install_project", side_effect=error),
+            mock.patch.object(install_module, "_bootstrap_runtime_from_argument", return_value=Path(".")),
+            redirect_stderr(stderr),
+        ):
+            exit_code = install_module.main()
+
+        self.assertEqual(1, exit_code)
+        self.assertIn("Official URL: https://downloads.example.test/fixture.bin", stderr.getvalue())
+        self.assertNotIn("Traceback", stderr.getvalue())
 
 
 def _probes_module():

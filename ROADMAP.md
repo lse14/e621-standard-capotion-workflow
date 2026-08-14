@@ -420,6 +420,21 @@ SDK，即可得到可离线运行的 E621 打标、质量评分、Qwen3 tokenize
   外层完成 bootstrap 清理。新增回归后 source-bootstrap 单测 `96/96`、PowerShell AST、
   production inventory 校验和 `git diff --check` 通过。
 
+- [x] 2026-08-14：`E:\Desktop\tagger测试` 的真实 NVIDIA 安装在固定 revision 的 E621
+  Tagger `model.onnx` 下载处失败；故障现场中原 Hugging Face resolve URL 返回 `404`，追加
+  `?download=true` 后返回完整 `2,527,938` bytes。13 个 Hugging Face 资产统一使用该下载
+  响应参数，production manifest 重建并绑定 SHA-256
+  `6cf63ac7421122ef6273fa18f56029b8a1fcc1c3642d17de0b11369de73415a1`；回归逐项约束 URL。
+  2026-08-14 新鲜复核时两种 URL 均返回 `200` 和相同字节，故原 `404` 记录为代理/CDN
+  时态故障，不表述为 Hugging Face 的永久行为。
+- [x] 2026-08-14：下载器的 `ManualDownloadRequired` 原先未被 `install.main()` 捕获，导致
+  BAT 失败时输出 Python traceback。入口现在返回退出码 1，并完整输出官方 URL、预期大小、
+  SHA-256 和缓存提示；新增回归确认无 traceback。定向 installer/release-build 测试分别
+  `33/33`、`17/17` 通过；完整 source-bootstrap `101/101`、fixture `2/2`、inventory、
+  manifest 可重复生成与 SHA 绑定、Python 编译、PowerShell AST、公开 CPython 资产重下门禁
+  和 `git diff --check` 均通过。该结果只关闭当前下载错误可见性阻断，尚不构成 NVIDIA
+  端到端验收。
+
 - [x] 2026-08-12：新增维护端 `Test-BootstrapRuntimeAsset.ps1`，独立核对基础 ZIP 的
   provenance 字段、文件名、大小、SHA-256、builder 脚本 SHA-256、安全 ZIP 条目和
   解压后的 `python.exe -B -I` 标准库探测。单测实际生成 ZIP、验证成功并以等长篡改触发

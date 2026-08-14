@@ -383,3 +383,15 @@ CLIP 文件使用 OpenAI 官方 CDN：
   失败时现保留 bootstrap/cache，只清理 staging/transactions；子进程退出后由 PowerShell
   外层完成 bootstrap 清理。新增回归后 source-bootstrap 单测 `96/96`、PowerShell AST、
   production inventory 校验和 `git diff --check` 通过。该结果尚不是 NVIDIA 安装成功证据。
+- 2026-08-14：`E:\Desktop\tagger测试` 的真实 NVIDIA 安装在 E621 Tagger 固定 revision
+  `model.onnx` 下载处触发 `ManualDownloadRequired`。故障现场原 resolve URL 返回 `404`，同一
+  URL 加 `?download=true` 返回 `2,527,938` bytes；13 个 Hugging Face 资产因此统一追加该
+  参数，并把 production manifest SHA-256 更新为
+  `6cf63ac7421122ef6273fa18f56029b8a1fcc1c3642d17de0b11369de73415a1`。新鲜复核时两个 URL
+  均为 `200` 和相同字节，说明此前状态具有代理/CDN 时态性，不能声称原 URL 永久无效。
+- 2026-08-14：`install.main()` 现在显式捕获 `ManualDownloadRequired`，以退出码 1 和可操作
+  的官方 URL/大小/SHA-256/缓存信息结束，不再泄漏 traceback。新增两个契约后定向
+  installer `33/33`、release-build `17/17`，完整 source-bootstrap `101/101`、fixture `2/2`
+  通过；inventory、manifest 可重复生成与 SHA 绑定、Python 编译、PowerShell AST、公开
+  CPython 资产重下门禁和 `git diff --check` 均通过。仍需推送后在测试 clone 继续完整
+  NVIDIA 安装，成功状态、自动启动、健康接口和停止能力尚未得到证据。

@@ -2044,7 +2044,7 @@
               },
               {
                 "id": "e621-tagger-model-onnx",
-                "url": "https://huggingface.co/nzs234/eva02_large_E621_FULL_V1/resolve/04a88fab40711ea5fdad1a8d051d25bdcb77a4e3/model.onnx",
+                "url": "https://huggingface.co/nzs234/eva02_large_E621_FULL_V1/resolve/04a88fab40711ea5fdad1a8d051d25bdcb77a4e3/model.onnx?download=true",
                 "allowedHosts": [
                   "huggingface.co"
                 ],
@@ -2056,7 +2056,7 @@
               },
               {
                 "id": "e621-tagger-model-onnx-data",
-                "url": "https://huggingface.co/nzs234/eva02_large_E621_FULL_V1/resolve/04a88fab40711ea5fdad1a8d051d25bdcb77a4e3/model.onnx.data",
+                "url": "https://huggingface.co/nzs234/eva02_large_E621_FULL_V1/resolve/04a88fab40711ea5fdad1a8d051d25bdcb77a4e3/model.onnx.data?download=true",
                 "allowedHosts": [
                   "huggingface.co"
                 ],
@@ -2068,7 +2068,7 @@
               },
               {
                 "id": "e621-tagger-preprocess-json",
-                "url": "https://huggingface.co/nzs234/eva02_large_E621_FULL_V1/resolve/04a88fab40711ea5fdad1a8d051d25bdcb77a4e3/preprocess.json",
+                "url": "https://huggingface.co/nzs234/eva02_large_E621_FULL_V1/resolve/04a88fab40711ea5fdad1a8d051d25bdcb77a4e3/preprocess.json?download=true",
                 "allowedHosts": [
                   "huggingface.co"
                 ],
@@ -2080,7 +2080,7 @@
               },
               {
                 "id": "e621-tagger-tags-json",
-                "url": "https://huggingface.co/nzs234/eva02_large_E621_FULL_V1/resolve/04a88fab40711ea5fdad1a8d051d25bdcb77a4e3/tags.json",
+                "url": "https://huggingface.co/nzs234/eva02_large_E621_FULL_V1/resolve/04a88fab40711ea5fdad1a8d051d25bdcb77a4e3/tags.json?download=true",
                 "allowedHosts": [
                   "huggingface.co"
                 ],
@@ -2092,7 +2092,7 @@
               },
               {
                 "id": "e621-tagger-thresholds-json",
-                "url": "https://huggingface.co/nzs234/eva02_large_E621_FULL_V1/resolve/04a88fab40711ea5fdad1a8d051d25bdcb77a4e3/thresholds.json",
+                "url": "https://huggingface.co/nzs234/eva02_large_E621_FULL_V1/resolve/04a88fab40711ea5fdad1a8d051d25bdcb77a4e3/thresholds.json?download=true",
                 "allowedHosts": [
                   "huggingface.co"
                 ],
@@ -2127,7 +2127,7 @@
               },
               {
                 "id": "qwen3-tokenizer-config-json",
-                "url": "https://huggingface.co/Qwen/Qwen3-0.6B/resolve/c1899de289a04d12100db370d81485cdf75e47ca/config.json",
+                "url": "https://huggingface.co/Qwen/Qwen3-0.6B/resolve/c1899de289a04d12100db370d81485cdf75e47ca/config.json?download=true",
                 "allowedHosts": [
                   "huggingface.co"
                 ],
@@ -2139,7 +2139,7 @@
               },
               {
                 "id": "qwen3-tokenizer-merges-txt",
-                "url": "https://huggingface.co/Qwen/Qwen3-0.6B/resolve/c1899de289a04d12100db370d81485cdf75e47ca/merges.txt",
+                "url": "https://huggingface.co/Qwen/Qwen3-0.6B/resolve/c1899de289a04d12100db370d81485cdf75e47ca/merges.txt?download=true",
                 "allowedHosts": [
                   "huggingface.co"
                 ],
@@ -2151,7 +2151,7 @@
               },
               {
                 "id": "qwen3-tokenizer-tokenizer-json",
-                "url": "https://huggingface.co/Qwen/Qwen3-0.6B/resolve/c1899de289a04d12100db370d81485cdf75e47ca/tokenizer.json",
+                "url": "https://huggingface.co/Qwen/Qwen3-0.6B/resolve/c1899de289a04d12100db370d81485cdf75e47ca/tokenizer.json?download=true",
                 "allowedHosts": [
                   "huggingface.co"
                 ],
@@ -2163,7 +2163,7 @@
               },
               {
                 "id": "qwen3-tokenizer-tokenizer-config-json",
-                "url": "https://huggingface.co/Qwen/Qwen3-0.6B/resolve/c1899de289a04d12100db370d81485cdf75e47ca/tokenizer_config.json",
+                "url": "https://huggingface.co/Qwen/Qwen3-0.6B/resolve/c1899de289a04d12100db370d81485cdf75e47ca/tokenizer_config.json?download=true",
                 "allowedHosts": [
                   "huggingface.co"
                 ],
@@ -2175,7 +2175,7 @@
               },
               {
                 "id": "qwen3-tokenizer-vocab-json",
-                "url": "https://huggingface.co/Qwen/Qwen3-0.6B/resolve/c1899de289a04d12100db370d81485cdf75e47ca/vocab.json",
+                "url": "https://huggingface.co/Qwen/Qwen3-0.6B/resolve/c1899de289a04d12100db370d81485cdf75e47ca/vocab.json?download=true",
                 "allowedHosts": [
                   "huggingface.co"
                 ],
@@ -2220,7 +2220,7 @@
               },
               {
                 "id": "quality-stack-fusion-5kdataset-safetensors",
-                "url": "https://huggingface.co/lse14/lse14-scorer/resolve/655377cb813d35291a2010031f724e778b7d80dd/5kdataset.safetensors",
+                "url": "https://huggingface.co/lse14/lse14-scorer/resolve/655377cb813d35291a2010031f724e778b7d80dd/5kdataset.safetensors?download=true",
                 "allowedHosts": [
                   "huggingface.co"
                 ],
@@ -2232,7 +2232,7 @@
               },
               {
                 "id": "quality-stack-jtp3-jtp-3-hydra-safetensors",
-                "url": "https://huggingface.co/RedRocket/Hydra/resolve/d82e15954de3d99b94217fe015d5005d30e24332/jtp-3-hydra.safetensors",
+                "url": "https://huggingface.co/RedRocket/Hydra/resolve/d82e15954de3d99b94217fe015d5005d30e24332/jtp-3-hydra.safetensors?download=true",
                 "allowedHosts": [
                   "huggingface.co"
                 ],
@@ -2244,7 +2244,7 @@
               },
               {
                 "id": "quality-stack-waifu-model-safetensors",
-                "url": "https://huggingface.co/Eugeoter/waifu-scorer-v3/resolve/c2a747fd61d310a90e9cbbf8fc590c522f234424/model.safetensors",
+                "url": "https://huggingface.co/Eugeoter/waifu-scorer-v3/resolve/c2a747fd61d310a90e9cbbf8fc590c522f234424/model.safetensors?download=true",
                 "allowedHosts": [
                   "huggingface.co"
                 ],

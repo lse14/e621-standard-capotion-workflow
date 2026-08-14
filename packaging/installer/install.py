@@ -30,7 +30,7 @@ from assemble import (
     read_install_state,
     write_install_state,
 )
-from download import download_verified
+from download import ManualDownloadRequired, download_verified
 from manifest import Artifact, InstallManifest, ManifestError, load_manifest_path, sha256_bytes
 from paths import (
     ProjectLayout,
@@ -574,7 +574,7 @@ def main() -> int:
             accelerator=arguments.accelerator,
             base_runtime=_bootstrap_runtime_from_argument(arguments.bootstrap_runtime),
         )
-    except (AssemblyError, ManifestError, OSError) as exc:
+    except (AssemblyError, ManifestError, ManualDownloadRequired, OSError) as exc:
         print(f"source bootstrap failed: {exc}", file=sys.stderr)
         return 1
     for message in result.messages:
