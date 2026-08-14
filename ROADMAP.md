@@ -456,6 +456,9 @@ SDK，即可得到可离线运行的 E621 打标、质量评分、Qwen3 tokenize
   `nl`、`export` 被初始化为失败但从未运行任何 probe，故生产安装必然失败。现为四个源码
   worker 增加网络阻断下的纯功能 probe，并把证据绑定组件 ID；组合回归通过，且四个已有
   嵌入式 runtime 实跑均返回 `kind=worker, check=ok`。
+- [x] 2026-08-14：第六次真实安装进入 Caption/Policy CUDA fallback 后，CPU planner 被整个
+  manifest 的 required CUDA-only `ocr-gpu` 阻断。CPU fallback 现只为明确允许 fallback 的
+  `caption-e621`、`policy` 构建子计划；生产 manifest 回归确认不再扫描 OCR GPU。
 
 - [x] 2026-08-12：新增维护端 `Test-BootstrapRuntimeAsset.ps1`，独立核对基础 ZIP 的
   provenance 字段、文件名、大小、SHA-256、builder 脚本 SHA-256、安全 ZIP 条目和

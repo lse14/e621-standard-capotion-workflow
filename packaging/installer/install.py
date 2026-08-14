@@ -9,7 +9,7 @@ import os
 import shutil
 import sys
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Callable, Mapping
 
@@ -310,9 +310,17 @@ def _stage_target_root(target: Path, item: PlannedComponent) -> Path:
 
 
 def _cpu_fallback_items(manifest: InstallManifest) -> dict[str, PlannedComponent]:
+    fallback_manifest = replace(
+        manifest,
+        components=tuple(
+            component
+            for component in manifest.components
+            if component.component_id in _CUDA_PROBE_COMPANIONS
+        ),
+    )
     return {
         item.component.component_id: item
-        for item in installation_plan(manifest, accelerator="cpu").components
+        for item in installation_plan(fallback_manifest, accelerator="cpu").components
     }
 
 

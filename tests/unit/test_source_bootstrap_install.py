@@ -611,6 +611,16 @@ class SourceBootstrapInstallTests(unittest.TestCase):
         self.assertEqual(set(), discarded_gpu)
         self.assertEqual(["e621-tagger", "quality-stack"], failures)
 
+    def test_cpu_fallback_items_ignore_required_cuda_only_ocr_gpu(self) -> None:
+        install_module = _install_module()
+        _, manifest_module = _modules()
+        manifest = manifest_module.load_manifest_path(ROOT / "packaging" / "installer" / "install-manifest.json")
+
+        fallback_items = install_module._cpu_fallback_items(manifest)
+
+        self.assertEqual({"caption-e621", "policy"}, set(fallback_items))
+        self.assertTrue(all(item.variant.name == "cpu" for item in fallback_items.values()))
+
     def test_unverified_ocr_gpu_probe_does_not_discard_the_cuda_runtime(self) -> None:
         install_module = _install_module()
         pending = [

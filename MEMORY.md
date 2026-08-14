@@ -413,3 +413,6 @@ CLIP 文件使用 OpenAI 官方 CDN：
 - 2026-08-14：第五次真实安装证明四个源码 runtime 在 `run_offline_probes()` 中从未被调用，
   因初始值为 False 而恒失败。现增加分类规范化、替换投影、NL 校验、Export 协议解析四个
   网络阻断功能 probe；mock 组合回归和四个真实嵌入式 runtime 均返回绑定组件的 `check=ok`。
+- 2026-08-14：第六次真实安装的 CUDA fallback 错误地对完整 manifest 建 CPU plan，被 required
+  CUDA-only `ocr-gpu` 以“no usable variant”阻断。`_cpu_fallback_items()` 现只规划允许 fallback
+  的 Caption/Policy，生产 manifest 回归通过。
