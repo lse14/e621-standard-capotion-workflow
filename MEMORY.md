@@ -404,3 +404,6 @@ CLIP 文件使用 OpenAI 官方 CDN：
   13 个 Hugging Face 资产现在只显式允许 `huggingface.co` 与 `us.aws.cdn.hf.co`，manifest
   SHA-256 为 `480188f5bc865565df62599a60df96a26a422bdd377037c9e4286051884747c2`。生产下载器
   已实测 model.onnx `2,527,938` bytes、SHA-256 `51f687...` 成功；未知重定向主机仍拒绝。
+- 2026-08-14：第三次真实 NVIDIA 安装发现 RedRocket Hydra URL 漏写 `models/` 目录。上游
+  revision API 返回文件 `models/jtp-3-hydra.safetensors`，大小 `1,002,587,976`、SHA-256
+  `b2bb072d...` 与现有身份一致；只修 URL 路径，manifest SHA 更新为 `3827bf76...`。

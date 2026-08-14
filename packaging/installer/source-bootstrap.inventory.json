@@ -2244,7 +2244,7 @@
               },
               {
                 "id": "quality-stack-jtp3-jtp-3-hydra-safetensors",
-                "url": "https://huggingface.co/RedRocket/Hydra/resolve/d82e15954de3d99b94217fe015d5005d30e24332/jtp-3-hydra.safetensors?download=true",
+                "url": "https://huggingface.co/RedRocket/Hydra/resolve/d82e15954de3d99b94217fe015d5005d30e24332/models/jtp-3-hydra.safetensors?download=true",
                 "allowedHosts": [
                   "huggingface.co",
                   "us.aws.cdn.hf.co"

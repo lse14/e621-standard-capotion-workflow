@@ -445,6 +445,10 @@ SDK，即可得到可离线运行的 E621 打标、质量评分、Qwen3 tokenize
   `480188f5bc865565df62599a60df96a26a422bdd377037c9e4286051884747c2`。生产下载器实测
   2,527,938 bytes 与 SHA-256 `51f6873c7d8618cfceb6b335dbe41815d46992b5df41c153dbe08669b77ec49b`
   通过，未知主机仍由安全重定向校验拒绝。此前安装失败未生成 install state，尚未启动 WebUI。
+- [x] 2026-08-14：第三次真实安装越过 E621/Qwen 下载后，RedRocket Hydra URL 返回 404。
+  固定 revision API 证明文件实际位于 `models/jtp-3-hydra.safetensors`，且大小/SHA 与清单
+  一致；修正遗漏的 `models/` 路径，重建 manifest SHA-256 为
+  `3827bf769eb01b71eb64c534a0dbdf4d72b39923f5e728e1e4609486e2f11be4`。
 
 - [x] 2026-08-12：新增维护端 `Test-BootstrapRuntimeAsset.ps1`，独立核对基础 ZIP 的
   provenance 字段、文件名、大小、SHA-256、builder 脚本 SHA-256、安全 ZIP 条目和

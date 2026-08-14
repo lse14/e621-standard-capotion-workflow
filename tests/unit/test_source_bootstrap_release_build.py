@@ -182,6 +182,9 @@ class SourceBootstrapReleaseBuildTests(unittest.TestCase):
                     artifact["allowedHosts"],
                 )
 
+        hydra = next(item for item in artifacts if item["id"] == "quality-stack-jtp3-jtp-3-hydra-safetensors")
+        self.assertIn("/models/jtp-3-hydra.safetensors?download=true", hydra["url"])
+
     def test_source_bootstrap_defaults_are_e621_only_and_tracked_for_the_installer(self) -> None:
         defaults = ROOT / "resource-library" / "defaults.json"
         self.assertTrue(defaults.is_file(), "source-bootstrap defaults must exist")
