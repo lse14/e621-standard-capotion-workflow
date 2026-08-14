@@ -42,10 +42,10 @@ class ManualDownloadRequired(RuntimeError):
 
     def __init__(self, artifact: ArtifactLike, reason: str) -> None:
         super().__init__(
-            f"{reason}\n"
-            f"Official URL: {artifact.url}\n"
-            f"Target file: {artifact.relative_path}\n"
-            f"Expected size: {artifact.size_bytes}\n"
+            f"{reason}; "
+            f"Official URL: {artifact.url}; "
+            f"Target file: {artifact.relative_path}; "
+            f"Expected size: {artifact.size_bytes}; "
             f"SHA-256: {artifact.sha256}"
         )
 

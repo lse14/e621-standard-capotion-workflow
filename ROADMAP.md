@@ -434,6 +434,10 @@ SDK，即可得到可离线运行的 E621 打标、质量评分、Qwen3 tokenize
   manifest 可重复生成与 SHA 绑定、Python 编译、PowerShell AST、公开 CPython 资产重下门禁
   和 `git diff --check` 均通过。该结果只关闭当前下载错误可见性阻断，尚不构成 NVIDIA
   端到端验收。
+- [x] 2026-08-14：真实 BAT 链路进一步确认 Windows PowerShell 只记录多行 Python 异常的首行，
+  会隐藏失败资产 URL。`ManualDownloadRequired` 现改为单行分号分隔消息，保留官方 URL、目标
+  路径、大小和 SHA-256；新增回归先红后绿，下载器 `8/8`、installer `33/33` 通过。上次真实
+  NVIDIA 安装仍因下载重试耗尽退出 1，尚未生成 install state 或启动 WebUI。
 
 - [x] 2026-08-12：新增维护端 `Test-BootstrapRuntimeAsset.ps1`，独立核对基础 ZIP 的
   provenance 字段、文件名、大小、SHA-256、builder 脚本 SHA-256、安全 ZIP 条目和

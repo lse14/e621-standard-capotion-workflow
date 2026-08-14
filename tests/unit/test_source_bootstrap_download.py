@@ -194,6 +194,19 @@ class SourceBootstrapDownloadTests(unittest.TestCase):
             self.assertFalse((cache / artifact.sha256).exists())
             self.assertFalse((cache / f"{artifact.sha256}.partial").exists())
 
+    def test_manual_download_details_are_single_line_for_powershell_capture(self) -> None:
+        module = self._module()
+        artifact = artifact_for(b"payload")
+        error = module.ManualDownloadRequired(artifact, "fixture download failed")
+
+        message = str(error)
+
+        self.assertNotIn("\n", message)
+        self.assertIn(f"Official URL: {artifact.url}", message)
+        self.assertIn(f"Target file: {artifact.relative_path}", message)
+        self.assertIn(f"Expected size: {artifact.size_bytes}", message)
+        self.assertIn(f"SHA-256: {artifact.sha256}", message)
+
     def test_transient_failure_preserves_only_resumable_partial(self) -> None:
         module = self._module()
         payload = b"retry payload"

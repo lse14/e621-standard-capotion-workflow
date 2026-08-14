@@ -395,3 +395,7 @@ CLIP 文件使用 OpenAI 官方 CDN：
   通过；inventory、manifest 可重复生成与 SHA 绑定、Python 编译、PowerShell AST、公开
   CPython 资产重下门禁和 `git diff --check` 均通过。仍需推送后在测试 clone 继续完整
   NVIDIA 安装，成功状态、自动启动、健康接口和停止能力尚未得到证据。
+- 2026-08-14：真实 BAT 日志把 Python 多行 `ManualDownloadRequired` 折叠为首行，隐藏了
+  失败资产的 URL。异常消息现使用单行分号分隔格式；回归先红后绿，下载器 `8/8`、installer
+  `33/33` 通过。上一轮真实 NVIDIA 安装因下载器重试耗尽退出 1，未发布 install state，
+  不得声称 WebUI 已启动。
