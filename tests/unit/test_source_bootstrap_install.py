@@ -189,6 +189,33 @@ class IsolatedInstallerEntryTests(unittest.TestCase):
         self.assertIn("Official URL: https://downloads.example.test/fixture.bin", stderr.getvalue())
         self.assertNotIn("Traceback", stderr.getvalue())
 
+    def test_installer_main_preserves_its_running_bootstrap_for_outer_cleanup(self) -> None:
+        install_module = _install_module()
+        installer = mock.Mock(return_value=SimpleNamespace(
+            messages=(),
+            installed_component_ids=(),
+            skipped_component_ids=(),
+            state_path=Path("install-state.json"),
+        ))
+
+        with (
+            mock.patch.object(sys, "argv", [
+                "install.py", "--project-root", ".", "--manifest", "manifest.json",
+                "--manifest-sha256", "a" * 64, "--accelerator", "cpu",
+                "--bootstrap-runtime", ".",
+            ]),
+            mock.patch.object(Path, "read_bytes", return_value=b"manifest"),
+            mock.patch.object(install_module, "sha256_bytes", return_value="a" * 64),
+            mock.patch.object(install_module, "load_manifest_path", return_value=object()),
+            mock.patch.object(install_module, "install_project", installer),
+            mock.patch.object(install_module, "_bootstrap_runtime_from_argument", return_value=Path(".")),
+            mock.patch("builtins.print"),
+        ):
+            exit_code = install_module.main()
+
+        self.assertEqual(0, exit_code)
+        self.assertIs(True, installer.call_args.kwargs.get("preserve_bootstrap_on_success"))
+
 
 def _probes_module():
     sys.path.insert(0, str(INSTALLER_ROOT))

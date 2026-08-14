@@ -472,6 +472,12 @@ SDK，即可得到可离线运行的 E621 打标、质量评分、Qwen3 tokenize
   回归用同一未漂移树先红后绿，校验现接受非负大小，仍拒绝负数并继续核对完整文件集合、
   精确大小和 SHA-256。source-bootstrap 单测 `107/107`、Python 编译、production inventory、
   release gate 和 `git diff --check` 均退出 0。完整 BAT 需发布此修复后继续验证。
+- [x] 2026-08-14：第九次真实 BAT 完成发布并写入 `11,738,079` bytes 的 install state，
+  随后仍在运行的 bootstrap Python 调用成功清理，删除自身 `libcrypto-3.dll` 时触发
+  `WinError 5`，使入口退出 1 且未启动 WebUI。CLI 入口现要求内部成功清理保留正在运行的
+  bootstrap，只清除 cache/staging/transactions；子进程退出后仍由外层 PowerShell 完成
+  bootstrap 最终清理。source-bootstrap 单测 `109/109`、Python 编译、PowerShell AST、
+  production inventory、release gate 和 `git diff --check` 均退出 0。
 
 - [x] 2026-08-12：新增维护端 `Test-BootstrapRuntimeAsset.ps1`，独立核对基础 ZIP 的
   provenance 字段、文件名、大小、SHA-256、builder 脚本 SHA-256、安全 ZIP 条目和

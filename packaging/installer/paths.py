@@ -356,7 +356,10 @@ def cleanup_failure(
             _remove_tree(layout.project_root, path)
 
 
-def cleanup_success(layout: ProjectLayout) -> None:
+def cleanup_success(layout: ProjectLayout, *, preserve_bootstrap: bool = False) -> None:
     layout.ensure_directories()
-    for path in (layout.bootstrap, layout.cache, layout.staging, layout.transactions):
+    paths = (layout.cache, layout.staging, layout.transactions)
+    if not preserve_bootstrap:
+        paths = (layout.bootstrap, *paths)
+    for path in paths:
         _remove_tree(layout.project_root, path)

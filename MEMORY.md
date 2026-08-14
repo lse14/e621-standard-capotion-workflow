@@ -429,3 +429,9 @@ CLIP 文件使用 OpenAI 官方 CDN：
   `sizeBytes < 1` 拒绝同一记录。回归先红后绿后改为只拒绝负数，文件集合、大小和 SHA-256
   验证不变。source-bootstrap 单测 `107/107`、Python 编译、production inventory、release
   gate 和 `git diff --check` 均退出 0。失败现场没有 install state 或 WebUI 成功证据，需发布后继续 BAT。
+- 2026-08-14：第九次真实 BAT 已写入 `11,738,079` bytes 的 install state，但 bootstrap
+  Python 在返回前由内部 `cleanup_success()` 删除自身目录，Windows 仍锁定 `libcrypto-3.dll`
+  并以 `WinError 5` 退出 1，父 PowerShell 因而未启动 WebUI。CLI 生产入口现让内部成功清理
+  保留 bootstrap，只清 cache/staging/transactions；等待子进程退出的 PowerShell 继续负责
+  最终 bootstrap 清理。source-bootstrap 单测 `109/109`、Python 编译、PowerShell AST、
+  production inventory、release gate 和 `git diff --check` 均退出 0。

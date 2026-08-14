@@ -378,6 +378,7 @@ def install_project(
     write_runtime_manifest: RuntimeManifestWriter | None = None,
     require_mandatory_e621: bool = True,
     import_optional_ocr_models: OptionalOcrModelImporter | None = None,
+    preserve_bootstrap_on_success: bool = False,
 ) -> InstallResult:
     """Assemble, probe, publish and record a manifest-selected installation."""
     layout = ProjectLayout.create(project_root)
@@ -520,7 +521,7 @@ def install_project(
                 raise AssemblyError(f"published component cannot be verified: {item.component.component_id}")
         state = build_install_state(manifest, final_plan, records)
         state_path = write_install_state(layout, state)
-        cleanup_success(layout)
+        cleanup_success(layout, preserve_bootstrap=preserve_bootstrap_on_success)
         if import_optional_ocr_models is not None:
             if _complete_manual_ocr_archives(layout.project_root):
                 import_optional_ocr_models(layout.project_root)
@@ -581,6 +582,7 @@ def main() -> int:
             manifest=manifest,
             accelerator=arguments.accelerator,
             base_runtime=_bootstrap_runtime_from_argument(arguments.bootstrap_runtime),
+            preserve_bootstrap_on_success=True,
         )
     except (AssemblyError, ManifestError, ManualDownloadRequired, OSError) as exc:
         print(f"source bootstrap failed: {exc}", file=sys.stderr)

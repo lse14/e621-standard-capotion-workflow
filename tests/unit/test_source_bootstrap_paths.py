@@ -211,6 +211,24 @@ class SourceBootstrapPathTests(unittest.TestCase):
             self.assertFalse(layout.staging.exists())
             self.assertFalse(layout.transactions.exists())
 
+    def test_success_cleanup_can_preserve_running_bootstrap_runtime(self) -> None:
+        module = self._module()
+        with tempfile.TemporaryDirectory() as temporary_name:
+            root = Path(temporary_name)
+            layout = module.ProjectLayout.create(root)
+            layout.ensure_directories()
+            (layout.bootstrap / "python.exe").write_bytes(b"bootstrap")
+            (layout.cache / "verified").write_bytes(b"verified")
+            (layout.staging / "complete").mkdir()
+            (layout.transactions / "complete.json").write_text("{}", encoding="utf-8")
+
+            module.cleanup_success(layout, preserve_bootstrap=True)
+
+            self.assertTrue((layout.bootstrap / "python.exe").is_file())
+            self.assertFalse(layout.cache.exists())
+            self.assertFalse(layout.staging.exists())
+            self.assertFalse(layout.transactions.exists())
+
 
 if __name__ == "__main__":
     unittest.main()
