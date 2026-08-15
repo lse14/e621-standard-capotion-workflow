@@ -24,7 +24,7 @@ JOB_TRANSITIONS: dict[str, frozenset[str]] = {
     "exporting": frozenset({"committing", "reviewing", "cancelling", "failed", "interrupted"}),
     "committing": frozenset({"succeeded", "cancelled_recoverable", "failed", "interrupted"}),
     "cancelling": frozenset({"cancelled_recoverable", "succeeded", "failed", "interrupted"}),
-    "cancelled_recoverable": frozenset({"preparing_workspace", "running", "reviewing", "exporting", "discarded"}),
+    "cancelled_recoverable": frozenset({"preparing_workspace", "running", "reviewing", "exporting", "interrupted", "discarded"}),
     "succeeded": frozenset(),
     "failed": frozenset({"preparing_workspace", "running", "reviewing", "discarded"}),
     "discarded": frozenset(),

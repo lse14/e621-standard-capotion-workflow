@@ -273,6 +273,68 @@ class SchedulerTests(unittest.TestCase):
             finally:
                 database.close()
 
+    def test_cancelled_recoverable_recovery_requires_confirmation_and_settles_safe_work(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            database = self._database(Path(temporary), count=2)
+            try:
+                scheduler = BoundedScheduler(database, lease_id_factory=iter(("lease-prepared", "lease-returned")).__next__)
+                scheduler.start_module("job-1", "caption", enabled=True, profile="e621")
+                config_hash = str(database.get_job("job-1")["config_hash"])
+                prepared, leased = scheduler.claim_batch("job-1", "caption", "worker-1", config_hash, limit=2)
+                scheduler.stage_prepared(prepared, relative_path="prepared\\caption\\lease-prepared.txt", sha256="a" * 64)
+                database.connection.execute(
+                    "UPDATE jobs SET status='cancelled_recoverable',resume_status='running' WHERE job_id='job-1'"
+                )
+                committed: list[tuple[str, int, str, str]] = []
+
+                def commit_prepared(job_id: str, sample_id: int, relative: str, digest: str) -> bool:
+                    committed.append((job_id, sample_id, relative, digest))
+                    return True
+
+                with self.assertRaisesRegex(SchedulerError, "manual confirmation is required"):
+                    scheduler.recover(
+                        "job-1", confirmed=False, expected_config_hash=config_hash, manifest_schema_version=1,
+                        protocol_version="1.0", verify_source_fingerprints=lambda: True, commit_prepared=commit_prepared,
+                    )
+                report = scheduler.recover(
+                    "job-1", confirmed=True, expected_config_hash=config_hash, manifest_schema_version=1,
+                    protocol_version="1.0", verify_source_fingerprints=lambda: True, commit_prepared=commit_prepared,
+                )
+                self.assertEqual((1, 1, 0), (report.returnedLeases, report.committedPrepared, report.repeatedPrepared))
+                self.assertEqual(
+                    [("job-1", prepared.sampleId, "prepared\\caption\\lease-prepared.txt", "a" * 64)],
+                    committed,
+                )
+                self.assertEqual("completed", database.get_sample_state("job-1", prepared.sampleId)["status"])
+                self.assertEqual("pending", database.get_sample_state("job-1", leased.sampleId)["status"])
+            finally:
+                database.close()
+
+    def test_cancelled_recoverable_unknown_api_decision_can_transition_to_interrupted(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            database = self._database(Path(temporary), count=1)
+            try:
+                scheduler = BoundedScheduler(database)
+                scheduler.start_module("job-1", "caption", enabled=True, profile="e621")
+                scheduler.begin_cancellation("job-1")
+                scheduler.settle_cancellation("job-1")
+                database.set_job_status("job-1", "interrupted", current_module_id="nl", resume_status="running")
+                database.set_sample_state(
+                    "job-1", 1,
+                    SampleRunState(
+                        sampleId=1, currentModuleId="nl", status="request_started", attempt=1,
+                        leaseId="unknown-api", workerInstanceId="nl-worker", leaseExpiresAt="2030-01-01T00:00:00Z",
+                    ),
+                )
+                self.assertEqual(1, scheduler.confirm_nl_api_outcome_unknown("job-1", confirmed=True))
+                self.assertEqual("pending", database.get_sample_state("job-1", 1)["status"])
+                job = database.get_job("job-1")
+                self.assertEqual(("interrupted", "nl", "running"), (
+                    job["status"], job["current_module_id"], job["resume_status"],
+                ))
+            finally:
+                database.close()
+
     def test_expired_leases_are_reclaimed_before_the_next_claim(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             database = self._database(Path(temporary), count=2)

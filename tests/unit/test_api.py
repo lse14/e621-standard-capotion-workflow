@@ -59,6 +59,8 @@ EXPECTED_CONTROL_ROUTES = {
     ("POST", "/api/jobs/preflight"),
     ("POST", "/api/jobs/{job_id}/confirm-workspace"),
     ("POST", "/api/jobs/{job_id}/start"),
+    ("POST", "/api/jobs/{job_id}/pause"),
+    ("POST", "/api/jobs/{job_id}/resume"),
     ("GET", "/api/jobs/{job_id}/token-budget/reviews"),
     ("POST", "/api/jobs/{job_id}/token-budget/recount"),
     ("POST", "/api/jobs/{job_id}/token-budget/rewrite-short"),
@@ -464,6 +466,59 @@ class ControlPlaneApiTests(unittest.TestCase):
             raised.exception.status_code, raised.exception.detail,
         ))
 
+    def test_job_pause_and_resume_forward_to_the_pipeline(self) -> None:
+        class JobPipeline:
+            def __init__(self) -> None:
+                self.paused: list[str] = []
+                self.resumed: list[str] = []
+
+            def startup_recovery(self) -> dict[str, int]:
+                return {"interruptedJobs": 0, "clearedDatasetClaims": 0, "deletedJobs": 0, "deletedOverlays": 0}
+
+            def pause(self, job_id: str) -> bool:
+                self.paused.append(job_id)
+                return True
+
+            def resume(self, job_id: str) -> bool:
+                self.resumed.append(job_id)
+                return True
+
+        pipeline = JobPipeline()
+        app = build_control_app(
+            database_path=self.database_path, profile_store=self.profiles, credential_store=self.credentials,
+            preparation_service=self.preparation, pipeline_service=pipeline,  # type: ignore[arg-type]
+        )
+        pause = _endpoint(app, "/api/jobs/{job_id}/pause", "POST")
+        resume = _endpoint(app, "/api/jobs/{job_id}/resume", "POST")
+        self.assertEqual({"status": "paused"}, pause("job-api"))
+        self.assertEqual({"status": "running"}, resume("job-api"))
+        self.assertEqual(["job-api"], pipeline.paused)
+        self.assertEqual(["job-api"], pipeline.resumed)
+
+    def test_job_pause_and_resume_map_pipeline_and_missing_job_errors(self) -> None:
+        class FailingPipeline:
+            def startup_recovery(self) -> dict[str, int]:
+                return {"interruptedJobs": 0, "clearedDatasetClaims": 0, "deletedJobs": 0, "deletedOverlays": 0}
+
+            def pause(self, _job_id: str) -> bool:
+                raise PipelineError("task cannot be paused")
+
+            def resume(self, _job_id: str) -> bool:
+                raise KeyError("missing-job")
+
+        app = build_control_app(
+            database_path=self.database_path, profile_store=self.profiles, credential_store=self.credentials,
+            preparation_service=self.preparation, pipeline_service=FailingPipeline(),  # type: ignore[arg-type]
+        )
+        pause = _endpoint(app, "/api/jobs/{job_id}/pause", "POST")
+        resume = _endpoint(app, "/api/jobs/{job_id}/resume", "POST")
+        with self.assertRaises(HTTPException) as pause_error:
+            pause("job-api")
+        self.assertEqual((400, "task cannot be paused"), (pause_error.exception.status_code, pause_error.exception.detail))
+        with self.assertRaises(HTTPException) as missing_job:
+            resume("missing-job")
+        self.assertEqual(404, missing_job.exception.status_code)
+
     def test_reviewing_token_budget_uses_a_safe_existing_resume_entry(self) -> None:
         """Apply may only reopen Export through a public PipelineService entry."""
         database = StateDatabase.open(self.database_path)
@@ -722,6 +777,34 @@ class ControlPlaneApiTests(unittest.TestCase):
         )
         recover = _endpoint(app, "/api/jobs/{job_id}/recover", "POST")
         self.assertEqual("interrupted", recover("job-api", _ConfirmBody(confirmed=True))["status"])
+        self.assertEqual([("job-api", True)], pipeline.calls)
+
+    def test_recover_route_forwards_confirmation_for_the_selected_cancelled_task(self) -> None:
+        class RecoveryPipeline:
+            def __init__(self) -> None:
+                self.calls: list[tuple[str, bool]] = []
+
+            def startup_recovery(self) -> dict[str, int]:
+                return {"interruptedJobs": 0, "clearedDatasetClaims": 0, "deletedJobs": 0, "deletedOverlays": 0}
+
+            def recover_job(self, job_id: str, *, confirmed: bool) -> dict[str, object]:
+                self.calls.append((job_id, confirmed))
+                return {"jobId": job_id, "started": True, "status": "running", "pendingApiDecisions": 0}
+
+        database = StateDatabase.open(self.database_path)
+        try:
+            database.connection.execute(
+                "UPDATE jobs SET status='cancelled_recoverable',current_module_id='nl',resume_status='running' WHERE job_id='job-api'"
+            )
+        finally:
+            database.close()
+        pipeline = RecoveryPipeline()
+        app = build_control_app(
+            database_path=self.database_path, profile_store=self.profiles, credential_store=self.credentials,
+            preparation_service=self.preparation, pipeline_service=pipeline,  # type: ignore[arg-type]
+        )
+        recover = _endpoint(app, "/api/jobs/{job_id}/recover", "POST")
+        self.assertEqual("running", recover("job-api", _ConfirmBody(confirmed=True))["status"])
         self.assertEqual([("job-api", True)], pipeline.calls)
 
     def test_repair_route_starts_the_new_task_and_snapshot_exposes_aggregate_preview(self) -> None:

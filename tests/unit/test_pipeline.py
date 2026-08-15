@@ -348,6 +348,32 @@ class PipelineTests(unittest.TestCase):
                 pipeline.close()
                 preparation.close()
 
+    def test_recovery_target_status_is_derived_from_the_persisted_current_module(self) -> None:
+        for module_id, expected_status in (
+            ("caption", "running"),
+            ("export", "exporting"),
+            ("count_review", "reviewing"),
+            ("token_budget", "reviewing"),
+            (None, "preparing_workspace"),
+        ):
+            with self.subTest(module_id=module_id):
+                self.assertEqual(expected_status, PipelineService._recovery_target_status(module_id))
+
+    def test_recovery_does_not_replace_an_existing_pipeline_thread(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            pipeline = PipelineService(root / "state.db", install_root=ROOT / ".runtime-build")
+            existing_thread = SimpleNamespace()
+            job_id = "job-already-running"
+            pipeline._threads[job_id] = existing_thread  # type: ignore[assignment]
+            try:
+                with self.assertRaisesRegex(PipelineError, "already running"):
+                    pipeline.recover_job(job_id, confirmed=True)
+                self.assertEqual({job_id: existing_thread}, pipeline._threads)
+            finally:
+                pipeline._threads.pop(job_id, None)
+                pipeline.close()
+
     def test_recovery_start_failure_restores_interrupted_resume_state(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
