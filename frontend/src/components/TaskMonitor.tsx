@@ -41,29 +41,21 @@ export type TaskMonitorProps = {
   modules: TaskMonitorModule[];
   labels: {
     taskOverview: string; taskProgress: string; annotationProfile: string; currentModule: string; currentBatch: string;
-    taskActions: string; pauseNl: string; resumeNl: string; pausePolicy: string; resumePolicy: string;
-    cancelTask: string; recoverTask: string; pinTask: string; unpinTask: string; discardTask: string;
+    taskActions: string; pauseTask: string; resumeTask: string; terminateTask: string; recoverTask: string;
+    pinTask: string; unpinTask: string; discardTask: string;
     additionalAttempts: string; addBudget: string; pendingApiDecisions: string; confirmUnknown: string;
     issues: string; noTask: string; loadingTask: string; retryTask: string;
     ocrRuntime: string; ocrAvailability: string; ocrGpu: string; ocrRequestedDevice: string; ocrObservedDevice: string;
     ocrRecommended: string; ocrEffective: string; ocrStartupReason: string;
   };
-  nlRunning: boolean;
-  nlPaused: boolean;
-  policyRunning: boolean;
-  policyPaused: boolean;
-  canCancel: boolean;
-  canRecover: boolean;
   canDiscard: boolean;
   budget: string;
   pendingApiDecisions: number;
   nlAwaitsDecision: boolean;
   pendingActions: ReadonlySet<string>;
-  onPauseNl: () => void;
-  onResumeNl: () => void;
-  onPausePolicy: () => void;
-  onResumePolicy: () => void;
-  onCancel: () => void;
+  onPause: () => void;
+  onResume: () => void;
+  onTerminate: () => void;
   onRecover: () => void;
   onPin: () => void;
   onDiscard: () => void;
@@ -79,11 +71,14 @@ function formatGiB(bytes: number): string {
 
 export function TaskMonitor({
   snapshot, loading, error, statusLabel, profileLabel, currentModuleLabel, currentBatchLabel, rawE621ConvertedMessage, modules, labels,
-  nlRunning, nlPaused, policyRunning, policyPaused, canCancel, canRecover, canDiscard, budget, pendingApiDecisions,
-  nlAwaitsDecision, pendingActions, onPauseNl, onResumeNl, onPausePolicy, onResumePolicy, onCancel, onRecover, onPin, onDiscard,
+  canDiscard, budget, pendingApiDecisions, nlAwaitsDecision, pendingActions, onPause, onResume, onTerminate, onRecover, onPin, onDiscard,
   onBudgetChange, onAddBudget, onConfirmUnknown, onRetry,
 }: TaskMonitorProps) {
   const isPending = (action: string) => pendingActions.has(action);
+  const canPause = snapshot?.status === "running";
+  const canResume = snapshot?.status === "paused";
+  const canRecover = snapshot?.status === "interrupted" || snapshot?.status === "cancelled_recoverable";
+  const canTerminate = Boolean(snapshot && ["preparing_workspace", "running", "paused", "reviewing", "exporting"].includes(snapshot.status));
 
   return <aside className="task-monitor" aria-busy={loading || pendingActions.size > 0}>
     <div className="monitor-heading">
@@ -123,14 +118,12 @@ export function TaskMonitor({
       <section className="task-actions">
         <h3>{labels.taskActions}</h3>
         <div className="action-grid">
-          <button type="button" disabled={!nlRunning || isPending("nl_pause")} aria-busy={isPending("nl_pause")} onClick={onPauseNl}>{labels.pauseNl}</button>
-          <button type="button" disabled={!nlPaused || isPending("nl_resume")} aria-busy={isPending("nl_resume")} onClick={onResumeNl}>{labels.resumeNl}</button>
-          <button type="button" disabled={!policyRunning || isPending("policy_pause")} aria-busy={isPending("policy_pause")} onClick={onPausePolicy}>{labels.pausePolicy}</button>
-          <button type="button" disabled={!policyPaused || isPending("policy_resume")} aria-busy={isPending("policy_resume")} onClick={onResumePolicy}>{labels.resumePolicy}</button>
+          <button type="button" disabled={!canPause || isPending("pause")} aria-busy={isPending("pause")} onClick={onPause}>{labels.pauseTask}</button>
+          <button type="button" disabled={!canResume || isPending("resume")} aria-busy={isPending("resume")} onClick={onResume}>{labels.resumeTask}</button>
+          <button className="secondary" type="button" disabled={!canTerminate || isPending("terminate")} aria-busy={isPending("terminate")} onClick={onTerminate}>{labels.terminateTask}</button>
+          <button className="secondary" type="button" disabled={!canRecover || isPending("recover")} aria-busy={isPending("recover")} onClick={onRecover}>{labels.recoverTask}</button>
         </div>
         <div className="action-grid">
-          <button className="secondary" type="button" disabled={!canCancel || isPending("cancel")} aria-busy={isPending("cancel")} onClick={onCancel}>{labels.cancelTask}</button>
-          <button className="secondary" type="button" disabled={!canRecover || isPending("recover")} aria-busy={isPending("recover")} onClick={onRecover}>{labels.recoverTask}</button>
           <button className="secondary" type="button" disabled={isPending("pin")} aria-busy={isPending("pin")} onClick={onPin}>{snapshot.pinned ? labels.unpinTask : labels.pinTask}</button>
           <button className="danger-action" type="button" disabled={!canDiscard || isPending("discard")} aria-busy={isPending("discard")} onClick={onDiscard}>{labels.discardTask}</button>
         </div>

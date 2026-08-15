@@ -120,45 +120,66 @@ test.describe("task status and issue characterization", () => {
     await expect(page.getByLabel("OCR device", { exact: true })).toBeDisabled();
   });
 
-  test("shows a running NL task and pauses it through the existing endpoint", async ({ page, api }) => {
-    setJobSnapshot(api, makeSnapshot({ status: "running", currentModuleId: "nl" }));
+  test("pauses then resumes a running task through the task lifecycle endpoints", async ({ page, api }) => {
+    setJobSnapshot(api, makeSnapshot({ status: "running", currentModuleId: "caption" }));
     await openTrackedJob(page, "running");
 
-    await page.getByRole("button", { name: "Pause NL" }).click();
-    await expect.poll(() => mutationsFor(api, "POST", `/api/jobs/${DEFAULT_JOB_ID}/nl/pause`).length).toBe(1);
+    const pauseTask = page.getByRole("button", { name: "Pause task" });
+    await expect(pauseTask).toBeVisible({ timeout: 1_500 });
+    await pauseTask.click();
+    await expect.poll(() => mutationsFor(api, "POST", `/api/jobs/${DEFAULT_JOB_ID}/pause`).length).toBe(1);
     await expect(page.locator(".task-monitor > .monitor-heading > .status")).toHaveText("paused");
-  });
 
-  test("shows a paused NL task and resumes it through the existing endpoint", async ({ page, api }) => {
-    setJobSnapshot(api, makeSnapshot({ status: "paused", currentModuleId: "nl" }));
-    await openTrackedJob(page, "paused");
-
-    await page.getByRole("button", { name: "Resume NL" }).click();
-    await expect.poll(() => mutationsFor(api, "POST", `/api/jobs/${DEFAULT_JOB_ID}/nl/resume`).length).toBe(1);
+    const resumeTask = page.getByRole("button", { name: "Resume task" });
+    await expect(resumeTask).toBeVisible({ timeout: 1_500 });
+    await resumeTask.click();
+    await expect.poll(() => mutationsFor(api, "POST", `/api/jobs/${DEFAULT_JOB_ID}/resume`).length).toBe(1);
     await expect(page.locator(".task-monitor > .monitor-heading > .status")).toHaveText("running");
   });
 
-  test("pauses and resumes a running Policy task through the existing endpoints", async ({ page, api }) => {
-    setJobSnapshot(api, makeSnapshot({ status: "running", currentModuleId: "dropout" }));
+  test("refreshes the selected snapshot after pausing while a poll is in flight", async ({ page, api }) => {
+    setJobSnapshot(api, makeSnapshot({ status: "running", currentModuleId: "caption" }));
+    await installSnapshotFetchProbe(page, DEFAULT_JOB_ID);
     await openTrackedJob(page, "running");
+    const initialRequests = (await snapshotFetchProbe(page)).started;
 
-    await page.getByRole("button", { name: "Pause policy" }).click();
-    await expect.poll(() => mutationsFor(api, "POST", `/api/jobs/${DEFAULT_JOB_ID}/policy/pause`).length).toBe(1);
-    await expect(page.locator(".task-monitor > .monitor-heading > .status")).toHaveText("paused");
-
-    await page.getByRole("button", { name: "Resume policy" }).click();
-    await expect.poll(() => mutationsFor(api, "POST", `/api/jobs/${DEFAULT_JOB_ID}/policy/resume`).length).toBe(1);
-    await expect(page.locator(".task-monitor > .monitor-heading > .status")).toHaveText("running");
+    const releasePoll = holdRoute(api, `GET /api/jobs/${DEFAULT_JOB_ID}`);
+    try {
+      await expect.poll(async () => (await snapshotFetchProbe(page)).started).toBeGreaterThan(initialRequests);
+      const inFlightRequests = (await snapshotFetchProbe(page)).started;
+      await page.getByRole("button", { name: "Pause task" }).click();
+      await expect.poll(() => mutationsFor(api, "POST", `/api/jobs/${DEFAULT_JOB_ID}/pause`).length).toBe(1);
+      await expect.poll(async () => (await snapshotFetchProbe(page)).started, { timeout: 1_500 }).toBeGreaterThan(inFlightRequests);
+    } finally {
+      releasePoll();
+    }
   });
 
-  test("shows an interrupted task and recovers it through the existing endpoint", async ({ page, api }) => {
-    setJobSnapshot(api, makeSnapshot({ status: "interrupted", currentModuleId: "caption" }));
-    await openTrackedJob(page, "interrupted");
+  test("recovers a selected cancelled recoverable task", async ({ page, api }) => {
+    setJobSnapshot(api, makeSnapshot({ status: "cancelled_recoverable", currentModuleId: "caption" }));
+    await openTrackedJob(page, "cancelled, recoverable");
 
     page.once("dialog", (dialog) => dialog.accept());
-    await page.getByRole("button", { name: "Recover task" }).click();
+    const recoverTask = page.getByRole("button", { name: "Recover task" });
+    await expect(recoverTask).toBeEnabled({ timeout: 1_500 });
+    await recoverTask.click();
     await expect.poll(() => mutationsFor(api, "POST", `/api/jobs/${DEFAULT_JOB_ID}/recover`).length).toBe(1);
     await expect(page.locator(".task-monitor > .monitor-heading > .status")).toHaveText("running");
+  });
+
+  test("terminates a selected task through cancel after confirmation", async ({ page, api }) => {
+    setJobSnapshot(api, makeSnapshot({ status: "running", currentModuleId: "caption" }));
+    await openTrackedJob(page, "running");
+
+    page.once("dialog", (dialog) => {
+      expect(dialog.message()).toContain("safely drains active work");
+      dialog.accept();
+    });
+    const terminateTask = page.getByRole("button", { name: "Terminate task" });
+    await expect(terminateTask).toBeVisible({ timeout: 1_500 });
+    await terminateTask.click();
+    await expect.poll(() => mutationsFor(api, "POST", `/api/jobs/${DEFAULT_JOB_ID}/cancel`).length).toBe(1);
+    await expect(page.locator(".task-monitor > .monitor-heading > .status")).toHaveText("cancelling");
   });
 
   test("shows OCR diagnostics and starts OCR repair through the existing endpoint", async ({ page, api }) => {

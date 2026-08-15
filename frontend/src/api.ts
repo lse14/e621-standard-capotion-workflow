@@ -304,6 +304,8 @@ export function pauseNl(jobId: string): Promise<{ status: string }> { return req
 export function resumeNl(jobId: string): Promise<{ status: string }> { return request(`/api/jobs/${encodeURIComponent(jobId)}/nl/resume`, { method: "POST" }); }
 export function pausePolicy(jobId: string): Promise<{ status: string }> { return request(`/api/jobs/${encodeURIComponent(jobId)}/policy/pause`, { method: "POST" }); }
 export function resumePolicy(jobId: string): Promise<{ status: string }> { return request(`/api/jobs/${encodeURIComponent(jobId)}/policy/resume`, { method: "POST" }); }
+export function pauseJob(jobId: string): Promise<{ status: string }> { return request(`/api/jobs/${encodeURIComponent(jobId)}/pause`, { method: "POST" }); }
+export function resumeJob(jobId: string): Promise<{ status: string }> { return request(`/api/jobs/${encodeURIComponent(jobId)}/resume`, { method: "POST" }); }
 export function addNlBudget(jobId: string, amount: number): Promise<{ apiBudgetExtra: number; apiBudgetRevision: number }> {
   return request(`/api/jobs/${encodeURIComponent(jobId)}/nl/api-budget`, { method: "POST", body: JSON.stringify({ amount }) });
 }
