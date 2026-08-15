@@ -87,11 +87,11 @@ class PipelineService(PipelineRecoveryMixin, PipelineDispatchMixin):
     def pause(self, job_id: str) -> bool:
         """Persist a cooperative pause for the active worker module."""
         with self._lock:
-            if job_id not in self._threads:
-                raise PipelineError("only a running worker module can pause")
             database = StateDatabase.open(self.database_path)
             try:
                 job = database.get_job(job_id)
+                if job_id not in self._threads:
+                    raise PipelineError("only a running worker module can pause")
                 module_id = job["current_module_id"]
                 if job["status"] != "running" or module_id not in _RUNTIMES:
                     raise PipelineError("only a running worker module can pause")

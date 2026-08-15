@@ -814,15 +814,18 @@ class PipelineTests(unittest.TestCase):
                     ))
                 finally:
                     database.close()
+                pipeline._threads.pop(job_id)
+                with self.assertRaisesRegex(PipelineError, "running worker"):
+                    pipeline.pause(job_id)
             finally:
                 pipeline._threads.pop(job_id, None)
 
-    def test_pause_rejects_a_job_without_a_live_pipeline_thread(self) -> None:
+    def test_pause_preserves_the_missing_job_error(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             pipeline = PipelineService(Path(temporary) / "state.db", install_root=ROOT / ".runtime-build")
             try:
-                with self.assertRaisesRegex(PipelineError, "running worker"):
-                    pipeline.pause("job-pause")
+                with self.assertRaises(KeyError):
+                    pipeline.pause("missing-job")
             finally:
                 pipeline.close()
 
