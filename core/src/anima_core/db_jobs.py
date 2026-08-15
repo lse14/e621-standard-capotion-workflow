@@ -489,6 +489,14 @@ class JobDatabaseMixin:
         if result.rowcount != 1:
             raise KeyError(f"job does not exist: {job_id}")
 
+    def clear_cancellation_metadata(self, job_id: str) -> None:
+        """Clear only cancellation timestamps after a recovery is accepted."""
+        result = self.connection.execute(
+            "UPDATE jobs SET cancel_requested_at=NULL,finished_at=NULL WHERE job_id=?", (job_id,)
+        )
+        if result.rowcount != 1:
+            raise KeyError(f"job does not exist: {job_id}")
+
     def preflight_projection_counts(self, job_id: str) -> dict[str, Any]:
         """Project module-6 file effects from manifest state and the frozen format.
 

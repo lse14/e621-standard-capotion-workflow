@@ -223,6 +223,33 @@ class SchedulerTests(unittest.TestCase):
             finally:
                 database.close()
 
+    def test_begin_cancellation_preserves_the_normalized_resume_target(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            database = self._database(Path(temporary), count=1)
+            try:
+                cases = (
+                    ("preparing_workspace", None, "preparing_workspace"),
+                    ("running", "caption", "running"),
+                    ("paused", "caption", "running"),
+                    ("reviewing", "count_review", "reviewing"),
+                    ("exporting", "export", "exporting"),
+                )
+                for status, module_id, expected_resume_status in cases:
+                    with self.subTest(status=status):
+                        database.connection.execute(
+                            "UPDATE jobs SET status=?,current_module_id=?,resume_status=NULL WHERE job_id='job-1'",
+                            (status, module_id),
+                        )
+                        database.begin_cancellation("job-1")
+                        self.assertEqual(
+                            ("cancelling", expected_resume_status),
+                            tuple(database.get_job("job-1")[key] for key in ("status", "resume_status")),
+                        )
+                        database.begin_cancellation("job-1")
+                        self.assertEqual(expected_resume_status, database.get_job("job-1")["resume_status"])
+            finally:
+                database.close()
+
     def test_module_cannot_finish_until_all_work_is_settled(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             database = self._database(Path(temporary), count=1)

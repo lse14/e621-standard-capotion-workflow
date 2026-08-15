@@ -654,7 +654,12 @@ class SchedulerDatabaseMixin:
 
     def begin_cancellation(self, job_id: str) -> None:
         result = self.connection.execute(
-            """UPDATE jobs SET status='cancelling',cancel_requested_at=COALESCE(cancel_requested_at,?)
+            """UPDATE jobs SET resume_status=CASE
+                    WHEN status='cancelling' THEN resume_status
+                    WHEN status='paused' THEN 'running'
+                    ELSE status
+                END,
+                status='cancelling',cancel_requested_at=COALESCE(cancel_requested_at,?)
                WHERE job_id=? AND status IN ('preparing_workspace','running','paused','reviewing','exporting','cancelling')""",
             (utc_now(), job_id),
         )

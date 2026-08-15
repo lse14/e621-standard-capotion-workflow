@@ -105,6 +105,18 @@ def _recover_ocr_prepared(
 class PipelineRecoveryMixin:
     """Startup, commit, fingerprint, prepared artifact, and explicit recovery."""
 
+    @staticmethod
+    def _recovery_target_status(current_module_id: object) -> str:
+        if current_module_id in {None, "workspace"}:
+            return "preparing_workspace"
+        if current_module_id in {"count_review", "token_budget"}:
+            return "reviewing"
+        if current_module_id == "export":
+            return "exporting"
+        if current_module_id in _RUNTIMES:
+            return "running"
+        raise PipelineError("interrupted job has no recoverable current module")
+
     def startup_recovery(self) -> dict[str, int]:
         """The single backend startup entry point before any job may be resumed.
 
@@ -242,11 +254,17 @@ class PipelineRecoveryMixin:
                     raise PipelineError("frozen JobConfig cannot be recovered") from exc
                 if config.config_hash != job["config_hash"]:
                     raise PipelineError("frozen JobConfig hash no longer matches")
+                module_id = job["current_module_id"]
+                resume_status = job["resume_status"]
+                target_status = self._recovery_target_status(module_id)
+                if not isinstance(resume_status, str):
+                    raise PipelineError("interrupted job has no recoverable worker state")
+                if resume_status != target_status:
+                    raise PipelineError("persisted recovery target is incompatible with current module")
                 if not isinstance(job["overlay_root"], str) or not job["overlay_root"]:
                     raise PipelineError("interrupted job has no annotation overlay")
                 layout = OverlayLayout.open_existing(str(job["overlay_root"]), job_id)
                 view = WorkingAnnotationView(BaselineView(Path(str(job["dataset_root"]))), layout)
-                module_id = job["current_module_id"]
                 if module_id == "token_budget":
                     # Review-owned unprepared leases must return to the failed review
                     # state before generic recovery would otherwise make them pending.
@@ -295,24 +313,31 @@ class PipelineRecoveryMixin:
                     "pendingApiDecisions": report.pendingApiDecisions, "started": False,
                 }
                 if report.pendingApiDecisions:
+                    if job["status"] == "cancelled_recoverable":
+                        database.set_job_status(
+                            job_id,
+                            "interrupted",
+                            current_module_id=module_id if isinstance(module_id, str) else None,
+                            resume_status=resume_status,
+                        )
                     response["status"] = "interrupted"
                     return response
-                resume_status = job["resume_status"]
-                if resume_status == "reviewing":
-                    database.set_job_status(job_id, "reviewing", current_module_id=str(module_id or "export"), resume_status=None)
-                    response["status"] = "reviewing"
+                if job["status"] == "cancelled_recoverable":
+                    database.clear_cancellation_metadata(job_id)
+                database.set_job_status(
+                    job_id,
+                    target_status,
+                    current_module_id=module_id if isinstance(module_id, str) else None,
+                    resume_status=None,
+                )
+                response["status"] = target_status
+                if target_status == "reviewing":
                     return response
-                if resume_status not in {"preparing_workspace", "running", "exporting"}:
-                    raise PipelineError("interrupted job has no recoverable worker state")
-                if resume_status != "preparing_workspace" and module_id not in {*_RUNTIMES, "count_review"}:
-                    raise PipelineError("interrupted job has no recoverable current module")
-                database.set_job_status(job_id, str(resume_status), current_module_id=str(module_id or "workspace"), resume_status=None)
                 thread = threading.Thread(
-                    target=self._thread_main, args=(job_id, resume_status != "preparing_workspace"),
+                    target=self._thread_main, args=(job_id, target_status != "preparing_workspace"),
                     daemon=True, name=f"anima-{job_id[:12]}",
                 )
                 self._threads[job_id] = thread
-                response["status"] = str(resume_status)
                 response["started"] = True
             finally:
                 database.close()
@@ -326,8 +351,8 @@ class PipelineRecoveryMixin:
                     database.set_job_status(
                         job_id,
                         "interrupted",
-                        current_module_id=str(module_id or "workspace"),
-                        resume_status=str(resume_status),
+                        current_module_id=module_id if isinstance(module_id, str) else None,
+                        resume_status=target_status,
                     )
                 finally:
                     database.close()

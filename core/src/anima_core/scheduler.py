@@ -376,8 +376,8 @@ class BoundedScheduler:
         if not confirmed:
             raise SchedulerError("manual confirmation is required before recovery")
         job = self.database.get_job(job_id)
-        if job["status"] != "interrupted":
-            raise SchedulerError("only interrupted jobs require manual recovery")
+        if job["status"] not in {"interrupted", "cancelled_recoverable"}:
+            raise SchedulerError("only interrupted or cancelled recoverable jobs require manual recovery")
         if job["config_hash"] != expected_config_hash or int(job["manifest_schema_version"]) != manifest_schema_version:
             raise SchedulerError("job configuration or manifest schema no longer matches")
         if protocol_version != PROTOCOL_VERSION:
