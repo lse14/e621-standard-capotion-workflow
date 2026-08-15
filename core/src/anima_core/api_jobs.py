@@ -24,7 +24,7 @@ from .scheduler import SchedulerError
 
 
 def _ocr_runtime_snapshot(job: object, config: object) -> dict[str, object] | None:
-    if not isinstance(job, dict) or not isinstance(config, dict) or config.get("schemaVersion") != 7:
+    if not isinstance(job, dict) or not isinstance(config, dict) or config.get("schemaVersion") not in {7, 8}:
         return None
     ocr = config.get("ocr")
     if not isinstance(ocr, dict) or ocr.get("enabled") is not True:

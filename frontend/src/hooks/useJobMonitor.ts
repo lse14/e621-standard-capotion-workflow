@@ -58,7 +58,8 @@ export function useJobMonitor({
   const [issueCursor, setIssueCursor] = useState<IssueCursor>(initialIssueCursor);
   const mountedRef = useRef(true);
   const eventCursorRef = useRef(0);
-  const snapshotInFlightRef = useRef(false);
+  const snapshotInFlightRequestIdRef = useRef<number | null>(null);
+  const snapshotAbortControllerRef = useRef<AbortController | null>(null);
   const jobsRequestIdRef = useRef(0);
   const snapshotRequestIdRef = useRef(0);
   const jobListFailureMessageRef = useRef(jobListFailureMessage);
@@ -92,13 +93,15 @@ export function useJobMonitor({
   const loadMoreJobs = useCallback(() => jobsCursor ? loadJobsPage(jobsCursor, true) : Promise.resolve(), [jobsCursor, loadJobsPage]);
 
   const refreshSnapshot = useCallback(async () => {
-    if (!jobId || snapshotInFlightRef.current) return;
-    snapshotInFlightRef.current = true;
+    if (!jobId || snapshotInFlightRequestIdRef.current !== null) return;
     const requestId = snapshotRequestIdRef.current + 1;
     snapshotRequestIdRef.current = requestId;
+    snapshotInFlightRequestIdRef.current = requestId;
+    const abortController = new AbortController();
+    snapshotAbortControllerRef.current = abortController;
     if (mountedRef.current) setSnapshotLoading(true);
     try {
-      const value = await pollJob(jobId, eventCursorRef.current, issueCursor.sampleId, issueCursor.issueId);
+      const value = await pollJob(jobId, eventCursorRef.current, issueCursor.sampleId, issueCursor.issueId, abortController.signal);
       if (!mountedRef.current || requestId !== snapshotRequestIdRef.current) return;
       eventCursorRef.current = value.snapshotRequired ? value.job.lastEventId : value.nextAfterEventId;
       setSnapshot(value);
@@ -108,25 +111,38 @@ export function useJobMonitor({
       const message = cause instanceof Error ? cause.message : jobRequestFailureMessageRef.current;
       setSnapshotError(message);
     } finally {
-      snapshotInFlightRef.current = false;
+      if (snapshotInFlightRequestIdRef.current === requestId) snapshotInFlightRequestIdRef.current = null;
+      if (snapshotAbortControllerRef.current === abortController) snapshotAbortControllerRef.current = null;
       if (mountedRef.current && requestId === snapshotRequestIdRef.current) setSnapshotLoading(false);
     }
   }, [issueCursor.issueId, issueCursor.sampleId, jobId]);
 
-  const selectJob = useCallback((nextJobId: string) => {
+  const invalidateSnapshotRequest = useCallback(() => {
     snapshotRequestIdRef.current += 1;
+    snapshotAbortControllerRef.current?.abort();
+    snapshotAbortControllerRef.current = null;
+    snapshotInFlightRequestIdRef.current = null;
+  }, []);
+
+  const selectJob = useCallback((nextJobId: string) => {
+    invalidateSnapshotRequest();
     eventCursorRef.current = 0;
     setIssueCursor(initialIssueCursor);
     setJobId(nextJobId);
     setSnapshot(null);
+    setSnapshotLoading(false);
     setSnapshotError(null);
-  }, []);
+  }, [invalidateSnapshotRequest]);
 
-  const firstIssuePage = useCallback(() => setIssueCursor(initialIssueCursor), []);
+  const firstIssuePage = useCallback(() => {
+    invalidateSnapshotRequest();
+    setIssueCursor(initialIssueCursor);
+  }, [invalidateSnapshotRequest]);
   const nextIssuePage = useCallback(() => {
     if (!snapshot) return;
+    invalidateSnapshotRequest();
     setIssueCursor({ sampleId: snapshot.nextIssueAfterSampleId, issueId: snapshot.nextIssueAfterIssueId });
-  }, [snapshot]);
+  }, [invalidateSnapshotRequest, snapshot]);
 
   useEffect(() => {
     mountedRef.current = true;

@@ -1,6 +1,7 @@
 import {
   DEFAULT_JOB_ID,
   expect,
+  holdRoute,
   makeSnapshot,
   mutationsFor,
   openApp,
@@ -13,7 +14,83 @@ async function openTrackedJob(page: Parameters<typeof openApp>[0], status: strin
   await expect(page.locator(".task-monitor > .monitor-heading > .status")).toHaveText(status);
 }
 
+type SnapshotFetchProbe = { active: number; maxActive: number; started: number };
+
+async function installSnapshotFetchProbe(page: Parameters<typeof openApp>[0], jobId: string): Promise<void> {
+  await page.addInitScript((path) => {
+    const probe: SnapshotFetchProbe = { active: 0, maxActive: 0, started: 0 };
+    const scope = window as typeof window & { __snapshotFetchProbe?: SnapshotFetchProbe };
+    const originalFetch = window.fetch.bind(window);
+    scope.__snapshotFetchProbe = probe;
+    window.fetch = async (...args) => {
+      const input = args[0];
+      const href = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      if (new URL(href, window.location.href).pathname !== path) return originalFetch(...args);
+      probe.active += 1;
+      probe.started += 1;
+      probe.maxActive = Math.max(probe.maxActive, probe.active);
+      try {
+        return await originalFetch(...args);
+      } finally {
+        probe.active -= 1;
+      }
+    };
+  }, `/api/jobs/${encodeURIComponent(jobId)}`);
+}
+
+async function snapshotFetchProbe(page: Parameters<typeof openApp>[0]): Promise<SnapshotFetchProbe> {
+  return page.evaluate(() => {
+    const probe = (window as typeof window & { __snapshotFetchProbe?: SnapshotFetchProbe }).__snapshotFetchProbe;
+    if (!probe) throw new Error("snapshot fetch probe is not installed");
+    return { ...probe };
+  });
+}
+
 test.describe("task status and issue characterization", () => {
+  test("loads task switches without overlapping a repeated snapshot target", async ({ page, api }) => {
+    const nextJobId = "job-selected-while-previous-pending";
+    setJobSnapshot(api, makeSnapshot({ jobId: DEFAULT_JOB_ID, status: "running", currentModuleId: "nl" }));
+    api.snapshots.set(nextJobId, makeSnapshot({ jobId: nextJobId, status: "failed", currentModuleId: "ocr" }));
+    await installSnapshotFetchProbe(page, DEFAULT_JOB_ID);
+    const releasePrevious = holdRoute(api, `GET /api/jobs/${DEFAULT_JOB_ID}`);
+    try {
+      await openApp(page, { jobId: DEFAULT_JOB_ID, language: "en" });
+      await expect.poll(async () => (await snapshotFetchProbe(page)).started).toBe(1);
+      await page.getByLabel("Task ID").fill(nextJobId);
+      await expect(page.locator(".task-monitor > .monitor-heading > .status")).toHaveText("failed", { timeout: 2000 });
+      await page.getByLabel("Task ID").fill(DEFAULT_JOB_ID);
+      await expect.poll(async () => (await snapshotFetchProbe(page)).started).toBe(2);
+      expect((await snapshotFetchProbe(page)).maxActive).toBe(1);
+    } finally {
+      releasePrevious();
+    }
+    await expect(page.locator(".task-monitor > .monitor-heading > .status")).toHaveText("running");
+  });
+
+  test("switches issue pages without overlapping snapshot requests", async ({ page, api }) => {
+    const snapshot = makeSnapshot({ jobId: DEFAULT_JOB_ID, status: "running", currentModuleId: "nl" });
+    snapshot.issues = [{
+      issue_id: "issue-page-one", sample_id: 1, module_id: "nl", code: "review", severity: "warning",
+      message: "Review this sample", retriable: 1, attempt: 1, repair_start_module: "nl",
+    }];
+    snapshot.nextIssueAfterSampleId = 1;
+    snapshot.nextIssueAfterIssueId = "issue-page-one";
+    setJobSnapshot(api, snapshot);
+    await installSnapshotFetchProbe(page, DEFAULT_JOB_ID);
+    await openApp(page, { jobId: DEFAULT_JOB_ID, language: "en" });
+    await expect(page.getByText("Review this sample")).toBeVisible();
+
+    const releasePrevious = holdRoute(api, `GET /api/jobs/${DEFAULT_JOB_ID}`);
+    try {
+      await expect.poll(async () => (await snapshotFetchProbe(page)).active, { timeout: 2000 }).toBe(1);
+      await page.getByRole("button", { name: "Next page", exact: true }).click();
+      await expect.poll(async () => (await snapshotFetchProbe(page)).started).toBeGreaterThanOrEqual(3);
+      expect((await snapshotFetchProbe(page)).maxActive).toBe(1);
+    } finally {
+      releasePrevious();
+    }
+  });
+
   test("submits task-only OCR execution tuning and shows the compact frozen runtime", async ({ page, api }) => {
     await openApp(page, { language: "en" });
 

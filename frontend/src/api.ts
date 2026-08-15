@@ -246,9 +246,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
-export function pollJob(jobId: string, afterEventId: number, issueAfterSampleId = 0, issueAfterIssueId: string | null = null): Promise<JobSnapshot> {
+export function pollJob(jobId: string, afterEventId: number, issueAfterSampleId = 0, issueAfterIssueId: string | null = null, signal?: AbortSignal): Promise<JobSnapshot> {
   const cursor = issueAfterIssueId ? `&issueAfterIssueId=${encodeURIComponent(issueAfterIssueId)}` : "";
-  return request(`/api/jobs/${encodeURIComponent(jobId)}?afterEventId=${afterEventId}&issueAfterSampleId=${issueAfterSampleId}${cursor}`);
+  return request(`/api/jobs/${encodeURIComponent(jobId)}?afterEventId=${afterEventId}&issueAfterSampleId=${issueAfterSampleId}${cursor}`, { signal });
 }
 
 export function listJobs(afterCreatedAt: string | null = null, afterJobId: string | null = null, limit = 20): Promise<JobListPage> {

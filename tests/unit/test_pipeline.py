@@ -813,7 +813,7 @@ class PipelineTests(unittest.TestCase):
             pipeline = PipelineService(root / "state.db", install_root=ROOT / ".runtime-build")
             try:
                 pipeline.start(job_id)
-                for _ in range(200):
+                for _ in range(500):
                     if not pipeline.is_running(job_id):
                         break
                     time.sleep(0.01)

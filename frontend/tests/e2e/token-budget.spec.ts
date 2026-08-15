@@ -150,8 +150,10 @@ test.describe("v8 Token Budget configuration", () => {
     clearRouteFailure(api, "POST /api/jobs/job-e621-characterization/token-budget/recount");
     const release = holdRoute(api, "POST /api/jobs/job-e621-characterization/token-budget/rewrite-short");
     await page.getByRole("checkbox", { name: "#1" }).check();
-    const rewrite = page.getByRole("button", { name: "Rewrite short", exact: true });
-    await Promise.all([rewrite.click(), rewrite.click()]);
+    const rewrite = page.locator(".review-batch-bar").getByRole("button");
+    await rewrite.click();
+    await expect(rewrite).toBeDisabled();
+    await rewrite.dispatchEvent("click");
     release();
     await expect.poll(() => mutationsFor(api, "POST", "/api/jobs/job-e621-characterization/token-budget/rewrite-short").length).toBe(1);
   });

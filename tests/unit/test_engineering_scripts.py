@@ -51,6 +51,7 @@ def _ps_literal(value: str | Path) -> str:
 
 
 def _powershell(command: str) -> subprocess.CompletedProcess[str]:
+    command = "[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false); " + command
     encoded = base64.b64encode(command.encode("utf-16le")).decode("ascii")
     return subprocess.run(
         ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-EncodedCommand", encoded],

@@ -214,16 +214,6 @@ class ControlPlaneApiTests(unittest.TestCase):
         try:
             dataset = Path(self.temporary.name) / "dataset"
             layout = OverlayLayout.create(dataset, "job-api")
-            config = JobConfig(
-                profile="e621", workMode="in_place", overwriteMode="incremental",
-                sourceRoot=str(dataset), schemaVersion=7,
-            )
-            config.ocr.update({"enabled": True, "device": "auto"})
-            frozen = config.to_dict()
-            database.connection.execute(
-                "UPDATE jobs SET config_schema_version=?,config_json=?,config_hash=?,overlay_root=? WHERE job_id=?",
-                (7, json.dumps(frozen), sha256_json(frozen), str(layout.root), "job-api"),
-            )
             binding = OcrRuntimeBindingV1.from_dict({
                 "schemaVersion": 1,
                 "requested": {
@@ -247,21 +237,36 @@ class ControlPlaneApiTests(unittest.TestCase):
             write_runtime_binding(layout.resource_path("ocr-runtime-binding-v1.json"), binding)
         finally:
             database.close()
-        snapshot = _endpoint(self.app, "/api/jobs/{job_id}", "GET")(
-            "job-api", afterEventId=0, issueAfterSampleId=0, issueAfterIssueId=None, limit=100,
-        )
-        runtime = snapshot.get("ocrRuntime")
-        self.assertEqual(
-            {
-                "availability": "available", "runtimeId": "ocr-paddle-gpu",
-                "gpuName": "NVIDIA Test GPU", "totalVramBytes": 24 * 1024 ** 3,
-                "requestedDevice": "auto", "observedDevice": "cuda",
-                "recommended": {"textDetLimitSideLen": 2560, "textBatchSize": 4},
-                "effective": {"textDetLimitSideLen": 2560, "textBatchSize": 4},
-                "startupReason": None,
-            },
-            runtime,
-        )
+        for schema_version in (7, 8):
+            with self.subTest(schema_version=schema_version):
+                config = JobConfig(
+                    profile="e621", workMode="in_place", overwriteMode="incremental",
+                    sourceRoot=str(dataset), schemaVersion=schema_version,
+                )
+                config.ocr.update({"enabled": True, "device": "auto"})
+                frozen = config.to_dict()
+                database = StateDatabase.open(self.database_path)
+                try:
+                    database.connection.execute(
+                        "UPDATE jobs SET config_schema_version=?,config_json=?,config_hash=?,overlay_root=? WHERE job_id=?",
+                        (schema_version, json.dumps(frozen), sha256_json(frozen), str(layout.root), "job-api"),
+                    )
+                finally:
+                    database.close()
+                snapshot = _endpoint(self.app, "/api/jobs/{job_id}", "GET")(
+                    "job-api", afterEventId=0, issueAfterSampleId=0, issueAfterIssueId=None, limit=100,
+                )
+                self.assertEqual(
+                    {
+                        "availability": "available", "runtimeId": "ocr-paddle-gpu",
+                        "gpuName": "NVIDIA Test GPU", "totalVramBytes": 24 * 1024 ** 3,
+                        "requestedDevice": "auto", "observedDevice": "cuda",
+                        "recommended": {"textDetLimitSideLen": 2560, "textBatchSize": 4},
+                        "effective": {"textDetLimitSideLen": 2560, "textBatchSize": 4},
+                        "startupReason": None,
+                    },
+                    snapshot.get("ocrRuntime"),
+                )
 
     def test_profile_and_credential_responses_never_echo_secret(self) -> None:
         save_credential = _endpoint(self.app, "/api/nl/credentials/{reference}", "PUT")
