@@ -681,8 +681,8 @@ def validate_job_config(
             raise ValueError("trigger terms must stay non-blank and trimmed after display formatting")
     if "ocr" in config.nl:
         raise ValueError("nl.ocr is not supported")
-    if config.nl.get("apiEnabled") and not config.nl.get("useImage") and not config.nl.get("useFullJson"):
-        raise ValueError("API requires image or full JSON context")
+    if config.nl.get("apiEnabled") and config.nl.get("useImage") is not True:
+        raise ValueError("API-enabled NL requires image input")
     if config.export.get("format") not in {"json", "flat_txt", "both"}:
         raise ValueError("invalid export format")
 

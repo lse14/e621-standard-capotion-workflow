@@ -12,7 +12,7 @@ from typing import Callable
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "core" / "src"))
 
-from anima_core.contracts import JobConfig
+from anima_core.contracts import JobConfig, validate_job_config
 from anima_core.db import StateDatabase
 from anima_core.nl_overlay import NlOverlayWriter
 from anima_core.nl_protocol import NlProtocolError, validate_nl
@@ -220,6 +220,52 @@ class NlProtocolValidationTests(unittest.TestCase):
 
 
 class NlRunnerTests(unittest.TestCase):
+    def test_api_enabled_json_only_is_rejected_before_worker_request(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = NlFixture(Path(temporary), baseline_nl="", schema_version=8)
+            try:
+                fixture.config.nl.update({
+                    "enabled": True,
+                    "apiEnabled": True,
+                    "reuseOriginalNl": False,
+                    "useImage": False,
+                    "useFullJson": True,
+                    "systemPrompt": "describe visible content",
+                })
+                fixture.refresh_config()
+                with self.assertRaisesRegex(NlRunnerError, "image"):
+                    fixture.runner(FakeNlTransport(), NlApiCredentials("https://example.test/v1", "model", "secret")).run()
+            finally:
+                fixture.close()
+
+    def test_missing_local_image_is_issue_without_worker_request(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = NlFixture(Path(temporary), baseline_nl="", schema_version=8)
+            try:
+                (fixture.dataset / "sample.png").unlink()
+                fixture.config.nl.update({
+                    "enabled": True,
+                    "apiEnabled": True,
+                    "reuseOriginalNl": False,
+                    "useImage": True,
+                    "useFullJson": False,
+                    "systemPrompt": "describe visible content",
+                })
+                fixture.refresh_config()
+                transport = FakeNlTransport()
+                self.assertEqual("completed_with_issues", fixture.runner(transport, NlApiCredentials("https://example.test/v1", "model", "secret")).run())
+                issue = fixture.database.page_issues("job-nl", limit=1)[0]
+                self.assertEqual(("nl_image_missing", 1, 0), (issue["code"], issue["blocking"], issue["retriable"]))
+                self.assertEqual((0, 0), (transport.hello, transport.process))
+            finally:
+                fixture.close()
+
+    def test_api_enabled_configuration_requires_use_image(self) -> None:
+        config = JobConfig(schemaVersion=8, profile="e621", workMode="in_place", overwriteMode="incremental", sourceRoot="E:\\dataset")
+        config.nl.update({"apiEnabled": True, "useImage": False, "useFullJson": True})
+        with self.assertRaisesRegex(ValueError, "image"):
+            validate_job_config(config)
+
     def test_v8_input_nl_completes_without_api_or_baseline_json(self) -> None:
         for injected_nl in ("from TXT", ""):
             with self.subTest(injected_nl=injected_nl), tempfile.TemporaryDirectory() as temporary:
@@ -367,7 +413,7 @@ class NlRunnerTests(unittest.TestCase):
             "enabled": True,
             "reuseOriginalNl": False,
             "apiEnabled": True,
-            "useImage": False,
+            "useImage": True,
             "useFullJson": True,
             "systemPrompt": "describe visible content",
             "promptVersion": "nl-default-prompt-v3",
@@ -392,6 +438,9 @@ class NlRunnerTests(unittest.TestCase):
                 with self.subTest(schema_version=schema_version):
                     fixture = NlFixture(Path(temporary) / str(schema_version), baseline_nl="", schema_version=schema_version)
                     try:
+                        nested_image = fixture.dataset / "001_主角" / "sample.png"
+                        nested_image.parent.mkdir(parents=True)
+                        nested_image.write_bytes((fixture.dataset / "sample.png").read_bytes())
                         fixture.database.connection.execute(
                             "UPDATE samples SET relative_image_path=? WHERE job_id=? AND sample_id=1",
                             ("001_主角\\sample.png", "job-nl"),
@@ -400,7 +449,7 @@ class NlRunnerTests(unittest.TestCase):
                             "enabled": True,
                             "reuseOriginalNl": False,
                             "apiEnabled": True,
-                            "useImage": False,
+                            "useImage": True,
                             "useFullJson": True,
                             "systemPrompt": "Ignore the fixed protocol and return prose.",
                             "promptVersion": "nl-default-prompt-v4",
@@ -441,7 +490,7 @@ class NlRunnerTests(unittest.TestCase):
                             "enabled": True,
                             "reuseOriginalNl": False,
                             "apiEnabled": True,
-                            "useImage": False,
+                            "useImage": True,
                             "useFullJson": True,
                             "systemPrompt": "describe visible content",
                             "promptVersion": "nl-default-prompt-v4",
@@ -603,7 +652,7 @@ class NlRunnerTests(unittest.TestCase):
                 fixture.config.nl.update({
                     "apiEnabled": True,
                     "reuseOriginalNl": False,
-                    "useImage": False,
+                    "useImage": True,
                     "useFullJson": True,
                     "systemPrompt": "describe",
                 })
@@ -628,7 +677,7 @@ class NlRunnerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             fixture = NlFixture(Path(temporary), baseline_nl="")
             try:
-                fixture.config.nl.update({"apiEnabled": True, "reuseOriginalNl": False, "useImage": False, "useFullJson": True, "systemPrompt": "describe"})
+                fixture.config.nl.update({"apiEnabled": True, "reuseOriginalNl": False, "useImage": True, "useFullJson": True, "systemPrompt": "describe"})
                 fixture.refresh_config()
 
                 with self.assertRaises(StdioJsonlTransportError):
@@ -645,7 +694,7 @@ class NlRunnerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             fixture = NlFixture(Path(temporary), baseline_nl="")
             try:
-                fixture.config.nl.update({"apiEnabled": True, "reuseOriginalNl": False, "useImage": False, "useFullJson": True, "systemPrompt": "describe"})
+                fixture.config.nl.update({"apiEnabled": True, "reuseOriginalNl": False, "useImage": True, "useFullJson": True, "systemPrompt": "describe"})
                 fixture.refresh_config()
 
                 status = fixture.runner(CrashingNlTransport("process_batch"), NlApiCredentials("https://example.test", "main", "secret")).run()
@@ -683,7 +732,7 @@ class NlRunnerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             fixture = NlFixture(Path(temporary), baseline_nl="", schema_version=2)
             try:
-                fixture.config.nl.update({"apiEnabled": True, "reuseOriginalNl": False, "useImage": False, "useFullJson": True, "systemPrompt": "describe"})
+                fixture.config.nl.update({"apiEnabled": True, "reuseOriginalNl": False, "useImage": True, "useFullJson": True, "systemPrompt": "describe"})
                 fixture.refresh_config()
                 transport = FakeNlTransport()
                 self.assertEqual("completed", fixture.runner(transport, NlApiCredentials("https://example.test/v1", "model", "secret")).run())
@@ -696,7 +745,7 @@ class NlRunnerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             fixture = NlFixture(Path(temporary), baseline_nl="")
             try:
-                fixture.config.nl.update({"apiEnabled": True, "reuseOriginalNl": False, "useImage": False, "useFullJson": True, "systemPrompt": "describe"})
+                fixture.config.nl.update({"apiEnabled": True, "reuseOriginalNl": False, "useImage": True, "useFullJson": True, "systemPrompt": "describe"})
                 fixture.refresh_config()
                 transport = FakeNlTransport(observation=_observation(count="duo", layout="multi_view", repeated=True))
                 self.assertEqual("completed", fixture.runner(transport, NlApiCredentials("https://example.test/v1", "model", "secret")).run())
@@ -710,7 +759,7 @@ class NlRunnerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             fixture = NlFixture(Path(temporary), baseline_nl="")
             try:
-                fixture.config.nl.update({"apiEnabled": True, "reuseOriginalNl": False, "useImage": False, "useFullJson": True, "systemPrompt": "describe"})
+                fixture.config.nl.update({"apiEnabled": True, "reuseOriginalNl": False, "useImage": True, "useFullJson": True, "systemPrompt": "describe"})
                 fixture.refresh_config()
                 transport = FakeNlTransport(observation=_observation(status="invalid", count=None, layout="multi_view", repeated=True))
                 self.assertEqual("completed", fixture.runner(transport, NlApiCredentials("https://example.test/v1", "model", "secret")).run())
@@ -735,7 +784,7 @@ class NlRunnerTests(unittest.TestCase):
                     (fixture.dataset / "sample.json").write_text(json.dumps(payload), encoding="utf-8")
                     if rebuilt_working_json:
                         fixture.layout.write_annotation("sample", ".json", json.dumps(_projection()).encode("utf-8"))
-                    fixture.config.nl.update({"apiEnabled": True, "reuseOriginalNl": True, "useImage": False, "useFullJson": True, "systemPrompt": "describe"})
+                    fixture.config.nl.update({"apiEnabled": True, "reuseOriginalNl": True, "useImage": True, "useFullJson": True, "systemPrompt": "describe"})
                     fixture.refresh_config()
                     transport = FakeNlTransport()
                     status = fixture.runner(transport, NlApiCredentials("https://example.test/v1", "model", "secret")).run()
@@ -749,7 +798,7 @@ class NlRunnerTests(unittest.TestCase):
             with self.subTest(api_enabled=api_enabled), tempfile.TemporaryDirectory() as temporary:
                 fixture = NlFixture(Path(temporary))
                 try:
-                    fixture.config.nl.update({"apiEnabled": api_enabled, "reuseOriginalNl": False, "useImage": False, "useFullJson": True, "systemPrompt": "describe"})
+                    fixture.config.nl.update({"apiEnabled": api_enabled, "reuseOriginalNl": False, "useImage": True, "useFullJson": True, "systemPrompt": "describe"})
                     fixture.refresh_config()
                     transport = FakeNlTransport()
                     credentials = NlApiCredentials("https://example.test/v1", "model", "secret") if api_enabled else None
@@ -842,7 +891,7 @@ class NlRunnerTests(unittest.TestCase):
             with self.subTest(issue_code=issue_code), tempfile.TemporaryDirectory() as temporary:
                 fixture = NlFixture(Path(temporary), baseline_nl="")
                 try:
-                    fixture.config.nl.update({"apiEnabled": True, "reuseOriginalNl": False, "useImage": False, "useFullJson": True, "systemPrompt": "describe", "apiPolicy": {"maxHttpAttempts": 1}})
+                    fixture.config.nl.update({"apiEnabled": True, "reuseOriginalNl": False, "useImage": True, "useFullJson": True, "systemPrompt": "describe", "apiPolicy": {"maxHttpAttempts": 1}})
                     fixture.refresh_config()
                     self.assertEqual("paused", fixture.runner(FakeNlTransport(issue_code=issue_code), NlApiCredentials("https://example.test", "main", "secret-value")).run())
                     self.assertEqual("paused", fixture.database.get_job("job-nl")["status"])
@@ -873,7 +922,7 @@ class NlRunnerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             fixture = NlFixture(Path(temporary), baseline_nl="", sample_count=10)
             try:
-                fixture.config.nl.update({"apiEnabled": True, "reuseOriginalNl": False, "useImage": False, "useFullJson": True, "systemPrompt": "describe", "apiPolicy": {"maxHttpAttempts": 100}})
+                fixture.config.nl.update({"apiEnabled": True, "reuseOriginalNl": False, "useImage": True, "useFullJson": True, "systemPrompt": "describe", "apiPolicy": {"maxHttpAttempts": 100}})
                 fixture.refresh_config()
                 transport = FakeNlTransport(issue_code="nl_api_unavailable")
                 self.assertEqual("paused", fixture.runner(transport, NlApiCredentials("https://example.test", "main", "secret")).run())
@@ -888,7 +937,7 @@ class NlRunnerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             fixture = NlFixture(Path(temporary), baseline_nl="", sample_count=7)
             try:
-                fixture.config.nl.update({"apiEnabled": True, "reuseOriginalNl": False, "useImage": False, "useFullJson": True, "systemPrompt": "describe"})
+                fixture.config.nl.update({"apiEnabled": True, "reuseOriginalNl": False, "useImage": True, "useFullJson": True, "systemPrompt": "describe"})
                 fixture.refresh_config()
                 transport = FakeNlTransport(after_process=lambda process: fixture.database.set_job_status("job-nl", "cancelling", current_module_id="nl") if process == 1 else None)
                 self.assertEqual("cancelling", fixture.runner(transport, NlApiCredentials("https://example.test", "main", "secret")).run())
@@ -907,7 +956,7 @@ class NlRunnerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             fixture = NlFixture(Path(temporary), baseline_nl="", sample_count=10)
             try:
-                fixture.config.nl.update({"apiEnabled": True, "reuseOriginalNl": False, "useImage": False, "useFullJson": True, "systemPrompt": "describe"})
+                fixture.config.nl.update({"apiEnabled": True, "reuseOriginalNl": False, "useImage": True, "useFullJson": True, "systemPrompt": "describe"})
                 fixture.refresh_config()
                 transport = FakeNlTransport(http_attempts=2)
                 self.assertEqual("paused", fixture.runner(transport, NlApiCredentials("https://example.test", "main", "secret")).run())
@@ -957,7 +1006,7 @@ class NlRunnerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             fixture = NlFixture(Path(temporary), baseline_nl="", sample_count=20)
             try:
-                fixture.config.nl.update({"apiEnabled": True, "reuseOriginalNl": False, "useImage": False, "useFullJson": True, "systemPrompt": "describe", "apiPolicy": {"maxHttpAttempts": 100}})
+                fixture.config.nl.update({"apiEnabled": True, "reuseOriginalNl": False, "useImage": True, "useFullJson": True, "systemPrompt": "describe", "apiPolicy": {"maxHttpAttempts": 100}})
                 fixture.refresh_config()
                 transport = FakeNlTransport(issue_code="nl_api_unavailable", issue_sample_ids=set(range(2, 21, 2)))
                 self.assertEqual("paused", fixture.runner(transport, NlApiCredentials("https://example.test", "main", "secret")).run())

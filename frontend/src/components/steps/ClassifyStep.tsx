@@ -20,7 +20,7 @@ export type ClassifyStepProps = {
   resourcePickerCopy: ResourcePickerProps["copy"];
   t: Translate;
   guidanceCopy: FieldGuidanceCopy;
-  copy: { classificationIndex: string; classificationIndexHelp: string };
+  copy: { classificationIndex: string; classificationIndexHelp: string; anthroReplacementNote: string };
   onClassifyChange: (patch: Partial<Draft["classify"]>) => void;
   onRefreshResources: () => void;
 };
@@ -39,6 +39,7 @@ export function ClassifyStep({
       selectionDisabled={taskLocked || !classificationResourceActive} refreshDisabled={taskLocked} note={copy.classificationIndexHelp} copy={resourcePickerCopy}
       onChange={(resourceId) => onClassifyChange({ resourceId })} onRefresh={onRefreshResources}
     />
+    {annotationProfile === "e621" ? <small>{copy.anthroReplacementNote}</small> : null}
     <ToggleField id="classify-overwrite-json" label={t("overwriteJson")} checked={draft.classify.overwriteJson} disabled={taskLocked || rebuild || !classifyEnabled} onChange={(overwriteJson) => onClassifyChange({ overwriteJson })} copy={guidanceCopy} guidance={{ description: t("fieldHelp_overwriteJson"), defaultValue: draft.classify.overwriteJson ? t("fieldEnabled") : t("fieldDisabled") }} />
     <ToggleField id="classify-overwrite-count" label={t("overwriteCount")} checked={draft.classify.overwriteCount} disabled={taskLocked || rebuild || !classifyEnabled} onChange={(overwriteCount) => onClassifyChange({ overwriteCount })} copy={guidanceCopy} guidance={{ description: t("fieldHelp_overwriteCount"), defaultValue: draft.classify.overwriteCount ? t("fieldEnabled") : t("fieldDisabled") }} />
   </div>;

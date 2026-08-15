@@ -20,6 +20,39 @@ def _projection() -> dict[str, object]:
 
 
 class ReplacementProcessingTests(unittest.TestCase):
+    def test_single_post_index_anthro_tag_is_wholly_replaced_below_half_probability(self) -> None:
+        projection = {
+            "quality": [], "count": "solo", "character": "", "series": "", "artist": "",
+            "appearance": ["source"], "tags": [], "environment": [], "nl": "",
+        }
+        rules = {"source": rule_from_csv("replace", "female_anthro")}
+
+        result, _ = replace_projection(projection, rules, random_value=lambda: 0.49)
+
+        self.assertEqual(["furry"], result["appearance"])
+
+    def test_pipe_replacement_anthro_tag_is_directly_replaced(self) -> None:
+        projection = {
+            "quality": [], "count": "solo", "character": "", "series": "", "artist": "",
+            "appearance": ["mixed"], "tags": [], "environment": [], "nl": "",
+        }
+        rules = {"mixed": rule_from_csv("replace", "human|anthro")}
+
+        result, _ = replace_projection(projection, rules, random_value=lambda: 0.0)
+
+        self.assertEqual(["human", "furry"], result["appearance"])
+
+    def test_post_index_anthro_tag_is_preserved_at_half_probability(self) -> None:
+        projection = {
+            "quality": [], "count": "solo", "character": "", "series": "", "artist": "",
+            "appearance": [], "tags": ["custom_anthro"], "environment": [], "nl": "",
+        }
+
+        result, summary = replace_projection(projection, {}, random_value=lambda: 0.5)
+
+        self.assertEqual(["custom_anthro"], result["tags"])
+        self.assertEqual(1, summary.passthrough)
+
     def test_keep_replace_drop_and_passthrough_are_single_round_and_ordered(self) -> None:
         # F02: this case previously asserted field scoped dedup, so ":|" appeared in both
         # quality and appearance and "left"/"right" in both appearance and tags.

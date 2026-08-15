@@ -21,7 +21,7 @@ from pydantic import SecretStr
 from starlette.routing import Mount
 
 from anima_core.api import (
-    _AmountBody, _ConfirmBody, _PinBody, _PreflightBody, _ProfileBody, _SecretBody, _ShutdownBody,
+    _AmountBody, _ConfirmBody, _NlManualRetryBody, _NlManualWriteBody, _PinBody, _PreflightBody, _ProfileBody, _SecretBody, _ShutdownBody,
     _TokenBudgetApplyBody, _TokenBudgetRecountBody, _TokenBudgetRewriteShortBody, _WorkspaceBody,
     build_control_app,
 )
@@ -92,6 +92,8 @@ EXPECTED_CONTROL_ROUTES = {
     ("POST", "/api/jobs/{job_id}/nl/resume"),
     ("POST", "/api/jobs/{job_id}/nl/api-budget"),
     ("POST", "/api/jobs/{job_id}/nl/confirm-api-outcomes"),
+    ("POST", "/api/jobs/{job_id}/nl/manual-retry"),
+    ("POST", "/api/jobs/{job_id}/nl/manual-write"),
     ("POST", "/api/jobs/{job_id}/policy/pause"),
     ("POST", "/api/jobs/{job_id}/policy/resume"),
     ("POST", "/api/application/select-path"),

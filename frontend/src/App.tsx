@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  addNlBudget, cancelJob, confirmNlOutcomes, confirmWorkspace, deleteNlSecret, discardJob, listNlProfiles,
+  addNlBudget, cancelJob, confirmNlOutcomes, confirmWorkspace, deleteNlSecret, discardJob, listNlProfiles, manualNlRetry, manualNlWrite,
   pauseNl, pausePolicy, preflightJob, recoverJob, restoreOriginalAnnotations, resumeNl, resumePolicy, saveNlProfile,
   setJobPin, repairJob, saveNlSecret, startPipeline, type NlProfile, type OcrExecutionRequest, type PreflightSummary,
   type AnnotationProfile, type PipelineModuleId, type ResourceCatalogResponse, type ResourceKind,
@@ -31,7 +31,7 @@ import "./styles.css";
 type StepId = "setup" | PipelineModuleId;
 type PendingAction =
   | "preflight" | "confirm_workspace" | "start" | "repair" | "recover"
-  | "cancel" | "pin" | "discard" | "restore" | "nl_pause" | "nl_resume"
+  | "cancel" | "pin" | "discard" | "restore" | "nl_pause" | "nl_resume" | "nl_manual_retry" | "nl_manual_write"
   | "nl_budget" | "nl_confirm_outcomes" | "policy_pause" | "policy_resume"
   | "profile_save" | "credential_delete"
   | null;
@@ -340,6 +340,24 @@ export function App() {
     setPreflight(null);
     void refreshJobs();
   };
+  const startManualNlRetry = (issue: { issueId: string; sampleId: number }) => {
+    if (!window.confirm(t("confirmNlManualRetry"))) return;
+    void control("nl_manual_retry", async () => {
+      const result = await manualNlRetry(jobId, { issueId: issue.issueId });
+      selectJob(result.jobId);
+      await refreshJobs();
+      return result;
+    });
+  };
+  const startManualNlWrite = (issue: { issueId: string; sampleId: number }, nl: string) => {
+    if (!window.confirm(t("confirmNlManualWrite"))) return;
+    void control("nl_manual_write", async () => {
+      const result = await manualNlWrite(jobId, { issueId: issue.issueId, nl });
+      selectJob(result.jobId);
+      await refreshJobs();
+      return result;
+    });
+  };
   const submitProfile = async () => {
     // F25: the prompt the runtime sends is the task's, so the profile only mirrors it.
     const saved = await runAction("profile_save", async () => {
@@ -508,6 +526,9 @@ export function App() {
     nextPage: t("nextPage"),
     restoreOriginal: t("restoreOriginal"),
     reprocess: t("reprocess"),
+    nlRetry: t("nlManualRetry"),
+    nlWrite: t("nlManualWrite"),
+    nlWritePlaceholder: t("nlManualWritePlaceholder"),
   };
   const taskMonitorModules = orderedModules.map((module) => ({
     moduleId: module.module_id,
@@ -643,7 +664,7 @@ export function App() {
     resourcePickerCopy={resourcePickerCopy}
     t={t}
     guidanceCopy={guidanceCopy}
-    copy={{ classificationIndex: copy.classificationIndex, classificationIndexHelp: copy.classificationIndexHelp }}
+    copy={{ classificationIndex: copy.classificationIndex, classificationIndexHelp: copy.classificationIndexHelp, anthroReplacementNote: copy.anthroReplacementNote }}
     onClassifyChange={(patch) => updateSection("classify", patch)}
     onRefreshResources={() => void refreshResources()}
   /> : currentStep.id === "replace" ? <ReplaceStep
@@ -821,6 +842,7 @@ export function App() {
     {snapshot && <IssuePanel
       issues={snapshot.issues.map((item) => ({
         issueId: item.issue_id,
+        sampleId: item.sample_id,
         moduleId: item.module_id,
         code: item.code,
         message: item.message,
@@ -833,12 +855,15 @@ export function App() {
       nextCursor={{ sampleId: snapshot.nextIssueAfterSampleId, issueId: snapshot.nextIssueAfterIssueId }}
       labels={issuePanelLabels}
        canRestore={snapshot.job.status === "succeeded"}
-       canReprocess={retriableCount > 0 && ["reviewing", "failed"].includes(snapshot.job.status)}
-       pendingActions={pendingActions}
+      canReprocess={retriableCount > 0 && ["reviewing", "failed"].includes(snapshot.job.status)}
+      canManualNl={Boolean(snapshot.job.status === "reviewing" || snapshot.job.status === "failed")}
+      pendingActions={pendingActions}
       onFirstPage={firstIssuePage}
       onNextPage={nextIssuePage}
        onRestore={() => { if (window.confirm(t("confirmRestore"))) void control("restore", () => restoreOriginalAnnotations(jobId)); }}
       onReprocess={() => void startRepair()}
+      onManualNlRetry={startManualNlRetry}
+      onManualNlWrite={startManualNlWrite}
     />}
   </main>;
 }

@@ -8,6 +8,8 @@ from .api_context import ControlPlaneContext, bad_request, conflict, not_found
 from .api_models import (
     _AmountBody,
     _ConfirmBody,
+    _NlManualRetryBody,
+    _NlManualWriteBody,
     _NlModelDiscoveryBody,
     _NlPromptPresetBody,
     _NlTestMessageBody,
@@ -23,6 +25,8 @@ from .nl_prompt_presets import (
     PromptPresetNotFoundError,
     PromptPresetValidationError,
 )
+from .nl_manual_review import NlManualWriteService
+from .repair import RepairPreparationError
 from .pipeline_dispatch import PipelineError
 from .scheduler import BoundedScheduler, SchedulerError
 
@@ -291,5 +295,73 @@ def build_nl_router(context: ControlPlaneContext) -> APIRouter:
     @router.post("/api/jobs/{job_id}/nl/confirm-api-outcomes")
     def confirm_nl_outcomes(job_id: str, body: _ConfirmBody) -> dict[str, Any]:
         return nl_control(job_id, "confirm", body)
+
+    @router.post("/api/jobs/{job_id}/nl/manual-retry")
+    def manual_nl_retry(job_id: str, body: _NlManualRetryBody) -> dict[str, Any]:
+        if not body.confirmed:
+            raise bad_request(ValueError("manual NL retry requires explicit confirmation"))
+        released_parent_lock = False
+        try:
+            released_parent_lock = context.preparation_service.release_lock_for_repair(job_id)
+            result = context.repair_service.prepare_manual_nl(
+                job_id, sample_id=body.sampleId, issue_id=body.issueId, confirmed=body.confirmed,
+            )
+            context.pipeline_service.start(result.repairJobId)
+            return {
+                "jobId": result.repairJobId,
+                "parentJobId": result.parentJobId,
+                "sampleId": body.sampleId,
+                "issueId": body.issueId,
+                "targetCount": result.targetCount,
+                "started": True,
+            }
+        except KeyError as exc:
+            raise not_found(exc) from exc
+        except (RepairPreparationError, PipelineError, SchedulerError, ValueError) as exc:
+            if released_parent_lock:
+                context.preparation_service.restore_lock_after_repair_failure(job_id)
+            raise bad_request(exc) from exc
+
+    @router.post("/api/jobs/{job_id}/nl/manual-write")
+    def manual_nl_write(job_id: str, body: _NlManualWriteBody) -> dict[str, Any]:
+        if not body.confirmed:
+            raise bad_request(ValueError("manual NL write requires explicit confirmation"))
+        try:
+            NlManualWriteService.validate_text(body.nl)
+        except ValueError as exc:
+            raise bad_request(exc) from exc
+        released_parent_lock = False
+        try:
+            released_parent_lock = context.preparation_service.release_lock_for_repair(job_id)
+            result = context.repair_service.prepare_manual_nl(
+                job_id, sample_id=body.sampleId, issue_id=body.issueId, confirmed=body.confirmed, for_manual_write=True,
+            )
+            database = StateDatabase.open(context.database_path)
+            try:
+                target = database.connection.execute(
+                    "SELECT sample_id FROM repair_targets WHERE repair_job_id=?", (result.repairJobId,),
+                ).fetchone()
+                if target is None:
+                    raise RepairPreparationError("manual NL write repair target is missing")
+                NlManualWriteService(database, result.repairJobId).seed(
+                    sample_id=int(target["sample_id"]), issue_id=body.issueId, nl=body.nl, confirmed=body.confirmed,
+                )
+            finally:
+                database.close()
+            context.pipeline_service.start(result.repairJobId)
+            return {
+                "jobId": result.repairJobId,
+                "parentJobId": result.parentJobId,
+                "sampleId": body.sampleId,
+                "issueId": body.issueId,
+                "targetCount": result.targetCount,
+                "started": True,
+            }
+        except KeyError as exc:
+            raise not_found(exc) from exc
+        except (RepairPreparationError, PipelineError, SchedulerError, ValueError) as exc:
+            if released_parent_lock:
+                context.preparation_service.restore_lock_after_repair_failure(job_id)
+            raise bad_request(exc) from exc
 
     return router

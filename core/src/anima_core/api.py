@@ -19,6 +19,8 @@ from .api_models import (
     _CountReviewBatchItem,
     _CountReviewDecisionBody,
     _NlDiagnosticCredentialsBody,
+    _NlManualRetryBody,
+    _NlManualWriteBody,
     _NlModelDiscoveryBody,
     _NlPromptPresetBody,
     _NlTestMessageBody,

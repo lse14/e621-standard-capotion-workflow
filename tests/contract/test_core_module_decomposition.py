@@ -81,7 +81,7 @@ RESOURCE_VALIDATION_FUNCTIONS = frozenset({
 
 API_REQUEST_MODELS = frozenset({
     "_AmountBody", "_ConfirmBody", "_CountReviewBatchBody", "_CountReviewBatchItem",
-    "_CountReviewDecisionBody", "_NlDiagnosticCredentialsBody", "_NlModelDiscoveryBody",
+    "_CountReviewDecisionBody", "_NlDiagnosticCredentialsBody", "_NlManualRetryBody", "_NlManualWriteBody", "_NlModelDiscoveryBody",
     "_NlPromptPresetBody", "_NlTestMessageBody", "_PinBody", "_PreflightBody", "_ProfileBody", "_SelectPathBody",
     "_SecretBody", "_ShutdownBody", "_TokenBudgetApplyBody", "_TokenBudgetRecountBody",
     "_TokenBudgetRewriteShortBody", "_WorkspaceBody",
@@ -139,6 +139,8 @@ API_NL_ROUTES = frozenset({
     ("POST", "/api/jobs/{job_id}/nl/resume"),
     ("POST", "/api/jobs/{job_id}/nl/api-budget"),
     ("POST", "/api/jobs/{job_id}/nl/confirm-api-outcomes"),
+    ("POST", "/api/jobs/{job_id}/nl/manual-retry"),
+    ("POST", "/api/jobs/{job_id}/nl/manual-write"),
 })
 
 API_TOKEN_BUDGET_ROUTES = frozenset({

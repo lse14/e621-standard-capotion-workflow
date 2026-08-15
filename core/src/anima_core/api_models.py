@@ -65,6 +65,33 @@ class _ConfirmBody(BaseModel):
     confirmed: bool
 
 
+class _NlManualRetryBody(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    sampleId: int | None = Field(default=None, ge=1)
+    issueId: str | None = Field(default=None, min_length=1, max_length=128)
+    confirmed: bool
+
+    @model_validator(mode="after")
+    def _require_one_selector(self) -> "_NlManualRetryBody":
+        if (self.sampleId is None) == (self.issueId is None):
+            raise ValueError("manual NL retry requires exactly one sampleId or issueId")
+        return self
+
+
+class _NlManualWriteBody(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    sampleId: int | None = Field(default=None, ge=1)
+    issueId: str | None = Field(default=None, min_length=1, max_length=128)
+    nl: str = Field(max_length=16_384)
+    confirmed: bool
+
+    @model_validator(mode="after")
+    def _require_one_selector(self) -> "_NlManualWriteBody":
+        if (self.sampleId is None) == (self.issueId is None):
+            raise ValueError("manual NL write requires exactly one sampleId or issueId")
+        return self
+
+
 class _ShutdownBody(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     token: str

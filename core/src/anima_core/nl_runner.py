@@ -500,8 +500,8 @@ class NlRunner:
         input_txt_nl = input_txt_mode == "nl"
         api_enabled = nl.get("apiEnabled") is True and not input_txt_nl
         use_image, use_json = nl.get("useImage") is True, nl.get("useFullJson") is True
-        if api_enabled and not (use_image or use_json):
-            raise self._fatal("nl_protocol_violation", "API requires image or JSON context")
+        if api_enabled and not use_image:
+            raise self._fatal("nl_protocol_violation", "API-enabled NL requires image input")
         policy = self._policy(nl) if api_enabled else None
         active: list[WorkLease] = []
         try:
@@ -572,6 +572,26 @@ class NlRunner:
                         self.scheduler.complete(lease)
                         active.remove(lease)
                         continue
+                    if api_enabled and use_image:
+                        image_path = dataset_root / str(row["relative_image_path"])
+                        try:
+                            safe_image_path = ensure_within(dataset_root, image_path)
+                            with safe_image_path.open("rb") as image_file:
+                                if not image_file.read(1):
+                                    raise OSError("image is empty")
+                        except PathSafetyError as exc:
+                            raise self._fatal("nl_protocol_violation", "leased image path escapes dataset root") from exc
+                        except OSError:
+                            self._not_requested(lease, "image_missing")
+                            self._issue(
+                                lease,
+                                row,
+                                "nl_image_missing",
+                                "local image is missing or unreadable; no API request was sent",
+                                retriable=False,
+                            )
+                            active.remove(lease)
+                            continue
                     request_items.append((lease, row, projection))
                 if not request_items:
                     continue

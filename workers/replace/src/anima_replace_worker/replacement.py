@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Mapping
+from random import random
+from typing import Callable, Mapping
 
 
 VALID_ACTIONS = frozenset({"keep", "replace", "drop"})
@@ -58,7 +59,12 @@ def rule_from_csv(action: object, replacement_tags: object) -> ReplacementRule:
     return ReplacementRule(action, _output_tags(action, replacement_tags))
 
 
-def _transform_tags(tags: list[str], rules: Mapping[str, ReplacementRule], seen: set[str]) -> tuple[list[str], ReplacementSummary]:
+def _transform_tags(
+    tags: list[str],
+    rules: Mapping[str, ReplacementRule],
+    seen: set[str],
+    random_value: Callable[[], float],
+) -> tuple[list[str], ReplacementSummary]:
     output: list[str] = []
     replaced = dropped = passthrough = keep_rewritten = 0
     for tag in tags:
@@ -76,6 +82,8 @@ def _transform_tags(tags: list[str], rules: Mapping[str, ReplacementRule], seen:
             elif candidates != (tag,):
                 keep_rewritten += 1
         for candidate in candidates:
+            if "anthro" in candidate and random_value() < 0.5:
+                candidate = "furry"
             key = candidate.casefold()
             if key not in seen:
                 output.append(candidate)
@@ -95,7 +103,12 @@ def _field_tags(value: Mapping[str, object], field: str) -> list[str]:
     return tags
 
 
-def replace_projection(value: Mapping[str, object], rules: Mapping[str, ReplacementRule]) -> tuple[dict[str, object], ReplacementSummary]:
+def replace_projection(
+    value: Mapping[str, object],
+    rules: Mapping[str, ReplacementRule],
+    *,
+    random_value: Callable[[], float] = random,
+) -> tuple[dict[str, object], ReplacementSummary]:
     required = {"quality", "count", "character", "series", "artist", "appearance", "tags", "environment", "nl"}
     if set(value) != required:
         raise ReplacementError("replacement projection must contain exactly the nine fields")
@@ -103,7 +116,7 @@ def replace_projection(value: Mapping[str, object], rules: Mapping[str, Replacem
     seen: set[str] = set()
     totals = ReplacementSummary(0, 0, 0, 0)
     for field in PRIORITY_FIELDS:
-        transformed, summary = _transform_tags(_field_tags(value, field), rules, seen)
+        transformed, summary = _transform_tags(_field_tags(value, field), rules, seen, random_value)
         result[field] = ", ".join(transformed) if field == "character" else transformed
         totals = totals.merge(summary)
     return result, totals

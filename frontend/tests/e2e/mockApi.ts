@@ -796,6 +796,14 @@ async function handleApiRequest(scenario: ApiScenario, route: Route, pathname: s
     return fulfillJson(route, { requeued: 0 });
   }
 
+  const manualNlMatch = pathname.match(/^\/api\/jobs\/([^/]+)\/nl\/(manual-retry|manual-write)$/);
+  if (manualNlMatch && method === "POST") {
+    const parentJobId = decodeURIComponent(manualNlMatch[1]);
+    const jobId = `${parentJobId}-${manualNlMatch[2]}`;
+    scenario.snapshots.set(jobId, makeSnapshot({ jobId, status: "running", currentModuleId: "nl" }));
+    return fulfillJson(route, { jobId, parentJobId, targetCount: 1, started: true });
+  }
+
   const recoverMatch = pathname.match(/^\/api\/jobs\/([^/]+)\/recover$/);
   if (recoverMatch && method === "POST") {
     const snapshot = snapshotFor(scenario, decodeURIComponent(recoverMatch[1]));

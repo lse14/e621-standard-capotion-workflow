@@ -14,7 +14,7 @@ import httpx
 from .images import NlImageError, encode_image_data_url
 from .protocol import NlHelloV1, NlWorkItemV1, parse_hello, process_issue, process_result
 from .prompt_resources import compose_v4_prompt, load_v4_fragments
-from .validation import NlValidationError, validate_completion_response, validate_completion_response_v2
+from .validation import NL_IMAGE_NOT_RECEIVED, NlValidationError, validate_completion_response, validate_completion_response_v2
 
 
 RETRIABLE_STATUSES = frozenset({408, 429, 500, 502, 503, 504})
@@ -172,6 +172,13 @@ class NlWorker:
         assert self.hello is not None and self.client is not None
         last_message = "request failed"
         attempts_used = 0
+        if item.imagePath is None:
+            return process_issue(
+                item,
+                "nl_image_missing",
+                "NL API request requires a local image",
+                retriable=False,
+            )
         try:
             # F23: a single unreadable or oversized image must fail only its own sample.
             messages = self._messages(item)
@@ -192,8 +199,7 @@ class NlWorker:
                 try:
                     response = await self.client.post(self.hello.endpoint, headers={"Authorization": f"Bearer {self.hello.apiKey}"}, json={"model": model, "temperature": self.hello.policy.temperature, "top_p": self.hello.policy.topP, "max_tokens": self.hello.policy.maxTokens, "messages": messages})
                     if response.status_code in {401, 403}:
-                        # F27: the module pauses on auth failures; the sample stays repairable after a key change.
-                        return process_issue(item, "nl_auth_failed", f"API returned HTTP {response.status_code}", retriable=True, http_attempts=attempts_used)
+                        return process_issue(item, "nl_auth_failed", f"API returned HTTP {response.status_code}", retriable=False, http_attempts=attempts_used)
                     if response.status_code not in RETRIABLE_STATUSES and response.status_code >= 400:
                         return process_issue(item, "nl_api_rejected", f"API returned HTTP {response.status_code}", retriable=False, http_attempts=attempts_used)
                     if response.status_code in RETRIABLE_STATUSES:
@@ -209,6 +215,14 @@ class NlWorker:
                     else:
                         nl, request_id, usage = validate_completion_response(response.content)
                         observation = None
+                    if nl == NL_IMAGE_NOT_RECEIVED:
+                        return process_issue(
+                            item,
+                            "nl_image_not_received",
+                            "model reported that the image was not received",
+                            retriable=False,
+                            http_attempts=attempts_used,
+                        )
                     return process_result(
                         item,
                         nl=nl,
@@ -224,7 +238,7 @@ class NlWorker:
                         continue
                 except (NlImageError, NlValidationError) as exc:
                     return process_issue(item, "nl_response_invalid", str(exc), retriable=False, http_attempts=attempts_used)
-        return process_issue(item, "nl_api_unavailable", last_message, retriable=True, http_attempts=attempts_used)
+        return process_issue(item, "nl_api_unavailable", last_message, retriable=False, http_attempts=attempts_used)
 
     async def process(self, items: tuple[NlWorkItemV1, ...], http_attempt_allowance: int) -> list[dict[str, Any]]:
         if self.hello is None or self.client is None:
@@ -255,7 +269,7 @@ class NlWorker:
                 # F23: an unexpected per-sample failure must not escape and kill the batch.
                 if isinstance(result, asyncio.CancelledError):
                     raise result
-                outcomes.append(process_issue(item, "nl_processing_failed", f"unexpected NL failure: {type(result).__name__}", retriable=True))
+                outcomes.append(process_issue(item, "nl_processing_failed", f"unexpected NL failure: {type(result).__name__}", retriable=False))
             else:
                 outcomes.append(result)
         return outcomes

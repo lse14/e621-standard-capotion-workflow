@@ -40,6 +40,9 @@ class NlValidationError(ValueError):
     pass
 
 
+NL_IMAGE_NOT_RECEIVED = "__NL_IMAGE_NOT_RECEIVED__"
+
+
 def normalize_endpoint(value: object) -> str:
     if not isinstance(value, str) or not value or len(value.encode("utf-8")) > 2_048 or any(c.isspace() for c in value):
         raise NlValidationError("API endpoint is invalid")
@@ -100,7 +103,12 @@ def _completion_parts(body: bytes) -> tuple[str, str | None, dict[str, int]]:
 
 def validate_completion_response(body: bytes) -> tuple[str, str | None, dict[str, int]]:
     content, request_id, summary = _completion_parts(body)
-    return validate_nl(content), request_id, summary
+    if content == NL_IMAGE_NOT_RECEIVED:
+        return content, request_id, summary
+    nl = validate_nl(content)
+    if nl == NL_IMAGE_NOT_RECEIVED:
+        raise NlValidationError("image-not-received sentinel must be exact")
+    return nl, request_id, summary
 
 
 def _strict_object(text: str) -> dict[str, object]:
@@ -130,7 +138,13 @@ def validate_completion_response_v2(
     content, request_id, summary = _completion_parts(body)
     value = _strict_object(content)
     # NL is independently valuable and is validated before the observation fields.
-    nl = validate_nl(value.get("nl"))
+    raw_nl = value.get("nl")
+    if raw_nl == NL_IMAGE_NOT_RECEIVED:
+        nl = NL_IMAGE_NOT_RECEIVED
+    else:
+        nl = validate_nl(raw_nl)
+        if nl == NL_IMAGE_NOT_RECEIVED:
+            raise NlValidationError("image-not-received sentinel must be exact")
     raw_count = value.get("count")
     raw_layout = value.get("layout")
     raw_repeated = value.get("sameCharacterRepeated")

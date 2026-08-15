@@ -310,6 +310,18 @@ export function addNlBudget(jobId: string, amount: number): Promise<{ apiBudgetE
 export function confirmNlOutcomes(jobId: string): Promise<{ requeued: number }> {
   return request(`/api/jobs/${encodeURIComponent(jobId)}/nl/confirm-api-outcomes`, { method: "POST", body: JSON.stringify({ confirmed: true }) });
 }
+export type ManualNlSelector = { sampleId: number; issueId?: never } | { issueId: string; sampleId?: never };
+
+export function manualNlRetry(jobId: string, body: ManualNlSelector): Promise<{ jobId: string; parentJobId: string; targetCount: number; started: boolean }> {
+  return request(`/api/jobs/${encodeURIComponent(jobId)}/nl/manual-retry`, {
+    method: "POST", body: JSON.stringify({ ...body, confirmed: true }),
+  });
+}
+export function manualNlWrite(jobId: string, body: ManualNlSelector & { nl: string }): Promise<{ jobId: string; parentJobId: string; targetCount: number; started: boolean }> {
+  return request(`/api/jobs/${encodeURIComponent(jobId)}/nl/manual-write`, {
+    method: "POST", body: JSON.stringify({ ...body, confirmed: true }),
+  });
+}
 export function preflightJob(body: CreateJobRequest): Promise<PreflightSummary> { return request("/api/jobs/preflight", { method: "POST", body: JSON.stringify(body) }); }
 export function confirmWorkspace(jobId: string, confirmedRebuild: boolean): Promise<{ jobId: string; status: string; datasetRoot: string; overlayRoot: string }> {
   return request(`/api/jobs/${encodeURIComponent(jobId)}/confirm-workspace`, { method: "POST", body: JSON.stringify({ confirmed: true, confirmedRebuild }) });

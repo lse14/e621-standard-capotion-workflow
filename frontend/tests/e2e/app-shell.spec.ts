@@ -3,11 +3,56 @@ import {
   expect,
   failRoute,
   holdRoute,
+  makeSnapshot,
   openApp,
+  setJobSnapshot,
   test,
 } from "./mockApi";
 
+function prepareManualNlIssue(api: Parameters<typeof setJobSnapshot>[0], jobId: string) {
+  const snapshot = makeSnapshot({ jobId, status: "reviewing", currentModuleId: "nl" });
+  snapshot.issues = [{
+    issue_id: "nl-manual-issue", sample_id: 17, module_id: "nl", code: "nl_image_missing",
+    severity: "error", message: "Image is unavailable.", retriable: 0, attempt: 1,
+  }];
+  setJobSnapshot(api, snapshot);
+}
+
 test.describe("application shell characterization", () => {
+  test("sends exactly one issue selector for manual NL retry and write", async ({ page, api }) => {
+    const retryJobId = "job-manual-retry";
+    prepareManualNlIssue(api, retryJobId);
+    await openApp(page, { jobId: retryJobId, language: "en" });
+
+    page.once("dialog", (dialog) => dialog.accept());
+    await page.getByRole("button", { name: "Retry NL API" }).click();
+    await expect.poll(() => api.mutations.find((mutation) => mutation.path.endsWith("/nl/manual-retry"))?.body).toEqual({
+      issueId: "nl-manual-issue", confirmed: true,
+    });
+
+    const writeJobId = "job-manual-write";
+    prepareManualNlIssue(api, writeJobId);
+    await openApp(page, { jobId: writeJobId, language: "en" });
+    await page.getByPlaceholder("Manual NL text").fill("Manual caption.");
+    page.once("dialog", (dialog) => dialog.accept());
+    await page.getByRole("button", { name: "Write NL" }).click();
+    await expect.poll(() => api.mutations.find((mutation) => mutation.path.endsWith("/nl/manual-write"))?.body).toEqual({
+      issueId: "nl-manual-issue", nl: "Manual caption.", confirmed: true,
+    });
+  });
+
+  test("shows the E621 anthro replacement note in Classify settings", async ({ page }) => {
+    await openApp(page, { language: "en" });
+    await page.locator(".workflow-rail").getByRole("button", { name: /Classify/ }).click();
+
+    await expect(page.locator('[data-config-surface="classify"]')).toContainText(
+      "After E621 Replace, each resulting tag containing anthro has a 50% chance of being replaced entirely with furry.",
+    );
+
+    await page.getByRole("button", { name: "Danbooru", exact: true }).click();
+    await expect(page.locator('[data-config-surface="classify"]')).not.toContainText("anthro");
+  });
+
   test("shows local resource loading before the selectable E621 tagger", async ({ page, api }) => {
     const releaseResources = holdRoute(api, "GET /api/resources");
 

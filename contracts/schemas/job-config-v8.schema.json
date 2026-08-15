@@ -179,7 +179,7 @@
         "apiPolicy": {"$ref": "#/$defs/nlApiPolicy"}
       },
       "allOf": [
-        {"if": {"properties": {"apiEnabled": {"const": true}}, "required": ["apiEnabled"]}, "then": {"anyOf": [{"properties": {"useImage": {"const": true}}, "required": ["useImage"]}, {"properties": {"useFullJson": {"const": true}}, "required": ["useFullJson"]}]}}
+        {"if": {"properties": {"apiEnabled": {"const": true}}, "required": ["apiEnabled"]}, "then": {"properties": {"useImage": {"const": true}}, "required": ["useImage"]}}
       ],
       "additionalProperties": false
     },
