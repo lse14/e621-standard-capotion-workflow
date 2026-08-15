@@ -783,6 +783,49 @@ class PipelineTests(unittest.TestCase):
                 pipeline.close()
                 preparation.close()
 
+    def test_pause_persists_running_worker_module_state(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            job_id = "job-pause"
+            database = StateDatabase.open(root / "state.db")
+            try:
+                database.insert_job({
+                    "job_id": job_id, "config_schema_version": 5, "config_json": "{}", "config_hash": "a" * 64,
+                    "profile": "e621", "work_mode": "in_place", "overwrite_mode": "incremental", "source_root": str(root),
+                    "output_root": None, "dataset_root": str(root), "dataset_root_key": str(root), "manifest_schema_version": 1,
+                    "recursive": 0, "sample_count": 1, "manifest_generated_at": "now", "status": "running",
+                    "current_module_id": "dropout", "last_event_id": 0, "pinned": 0, "api_budget_extra": 0,
+                    "api_budget_revision": 0, "overlay_root": None, "commit_journal_path": None, "resume_status": None,
+                    "created_at": "now", "started_at": "now", "cancel_requested_at": None, "finished_at": None,
+                })
+                database.initialize_module_summary(job_id, "dropout", total=1, status="running")
+            finally:
+                database.close()
+            pipeline = PipelineService(root / "state.db", install_root=ROOT / ".runtime-build")
+            pipeline._threads[job_id] = SimpleNamespace()  # type: ignore[assignment]
+            try:
+                self.assertTrue(pipeline.pause(job_id))
+                database = StateDatabase.open(root / "state.db")
+                try:
+                    job = database.get_job(job_id)
+                    summary = database.module_summary(job_id, "dropout")
+                    self.assertEqual(("paused", "paused", "dropout", "running"), (
+                        job["status"], summary["status"], job["current_module_id"], job["resume_status"],
+                    ))
+                finally:
+                    database.close()
+            finally:
+                pipeline._threads.pop(job_id, None)
+
+    def test_pause_rejects_a_job_without_a_live_pipeline_thread(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            pipeline = PipelineService(Path(temporary) / "state.db", install_root=ROOT / ".runtime-build")
+            try:
+                with self.assertRaisesRegex(PipelineError, "running worker"):
+                    pipeline.pause("job-pause")
+            finally:
+                pipeline.close()
+
     def test_resume_rejects_settling_thread_before_persisted_state_changes(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

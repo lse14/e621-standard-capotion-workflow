@@ -84,6 +84,26 @@ class PipelineService(PipelineRecoveryMixin, PipelineDispatchMixin):
         with self._lock:
             return job_id in self._threads
 
+    def pause(self, job_id: str) -> bool:
+        """Persist a cooperative pause for the active worker module."""
+        with self._lock:
+            if job_id not in self._threads:
+                raise PipelineError("only a running worker module can pause")
+            database = StateDatabase.open(self.database_path)
+            try:
+                job = database.get_job(job_id)
+                module_id = job["current_module_id"]
+                if job["status"] != "running" or module_id not in _RUNTIMES:
+                    raise PipelineError("only a running worker module can pause")
+                summary = database.module_summary(job_id, str(module_id))
+                if summary["status"] != "running":
+                    raise PipelineError("running task has no running current module")
+                database.set_module_summary(job_id, str(module_id), status="paused")
+                database.set_job_status(job_id, "paused", current_module_id=str(module_id), resume_status="running")
+            finally:
+                database.close()
+            return True
+
     def resume(self, job_id: str) -> bool:
         """Resume a paused current module, starting a thread only when needed."""
         with self._lock:
