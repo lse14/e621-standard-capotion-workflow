@@ -1,13 +1,16 @@
 @echo off
 setlocal
-if not exist "%~dp0.runtime-build\manifests\install-state.json" (
-    echo Installation state is missing; resuming source bootstrap.
-    call "%~dp0Install-WebUI.bat"
-    set "exitCode=%ERRORLEVEL%"
-    if "%exitCode%"=="0" exit /b 0
-    goto :failed
-)
+if not exist "%~dp0.runtime-build\manifests\install-state.json" goto :bootstrap
+
+:start
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0packaging\scripts\desktop_control.ps1" -Action Start %*
+set "exitCode=%ERRORLEVEL%"
+if "%exitCode%"=="0" exit /b 0
+goto :failed
+
+:bootstrap
+echo Installation state is missing; resuming source bootstrap.
+call "%~dp0Install-WebUI.bat"
 set "exitCode=%ERRORLEVEL%"
 if "%exitCode%"=="0" exit /b 0
 

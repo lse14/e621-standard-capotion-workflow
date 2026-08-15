@@ -186,9 +186,34 @@ class SourceBootstrapPowerShellTests(unittest.TestCase):
     def test_start_batch_recovers_missing_installation_state_through_the_bootstrap(self) -> None:
         batch = (ROOT / "Start-WebUI.bat").read_text(encoding="ascii")
 
-        self.assertIn('if not exist "%~dp0.runtime-build\\manifests\\install-state.json" (', batch)
+        self.assertIn('if not exist "%~dp0.runtime-build\\manifests\\install-state.json" goto :bootstrap', batch)
+        self.assertIn(":bootstrap", batch)
         self.assertIn('call "%~dp0Install-WebUI.bat"', batch)
         self.assertIn("resuming source bootstrap", batch)
+
+    def test_start_batch_propagates_bootstrap_failure_when_installation_state_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_name:
+            project_root = Path(temporary_name)
+            start = project_root / "Start-WebUI.bat"
+            start.write_bytes((ROOT / "Start-WebUI.bat").read_bytes())
+            (project_root / "Install-WebUI.bat").write_text(
+                "@echo off\r\nexit /b 7\r\n", encoding="ascii",
+            )
+
+            completed = subprocess.run(
+                ["cmd.exe", "/d", "/c", str(start)],
+                cwd=project_root,
+                input="\n",
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding="cp936",
+                errors="replace",
+                check=False,
+                timeout=10,
+            )
+
+            self.assertEqual(7, completed.returncode, completed.stdout + completed.stderr)
 
     def test_bootstrap_parses_in_windows_powershell(self) -> None:
         self.assertTrue(BOOTSTRAP.is_file(), "source bootstrap PowerShell script must exist")
