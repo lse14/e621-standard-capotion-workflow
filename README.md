@@ -8,7 +8,7 @@
 
 - E621 标注工作流：Caption、Classify、Replace、OCR、NL、Count Review、Policy、Token Budget 和 Export。
 - 原地处理或完整副本两种工作模式，支持增量、重建、暂停、恢复、取消、问题复核和修复任务。
-- 支持 `.jpg`、`.jpeg`、`.png`、`.webp`、`.bmp`，以及标准 JSON、扁平 TXT 和原始 E621 分组 JSON。
+- 支持 `.jpg`、`.jpeg`、`.png`、`.webp`、`.bmp`，以及标准 JSON、扁平 TXT 和原始 E621 分组 JSON；Export 可输出 JSON、扁平 TXT，或两者同时输出。
 - 本地 API 与 React WebUI；任务快照、凭据、资源和生成结果分离保存。
 - Caption、Policy 和 OCR 资源在发布前进行版本、路径、大小、SHA-256 和离线探测校验。
 
