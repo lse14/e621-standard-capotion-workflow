@@ -133,6 +133,7 @@ NL 预设提供 `general`, `style`, and `character`，以及 stable short/medium
 资源、第三方许可证和 OCR 手动下载边界见：
 
 - [OCR 模型下载说明](OCR_MODEL_DOWNLOAD.md)
+- [Source bootstrap 验收说明](docs/SOURCE_BOOTSTRAP_ACCEPTANCE.md)
 - [第三方声明](docs/THIRD_PARTY_NOTICES.md)
 
 ## 安全
