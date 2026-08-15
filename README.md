@@ -1,70 +1,51 @@
-# e621-standard-capotion-workflow
+# Anima IDG 标准标注处理
 
-e621-standard-capotion-workflow 是一个面向 Windows 的本地图片数据集标注工具。它通过本地 WebUI
-把图片、已有 TXT/JSON 标注、OCR 与自然语言生成组织成可复核、可恢复的
-标准化处理流程。
+面向 Windows 10/11 x64 的本地图片数据集标注工具。它通过本地 WebUI 组织图片、已有 TXT/JSON 标注、Caption、分类、替换、OCR、自然语言生成、质量策略和导出流程，所有中间结果先写入隔离 overlay，确认后再提交到原数据集或完整副本。
 
-> 本仓库是源码发布，不包含数据集、模型权重、浏览器二进制、Python/Node
-> 运行时。发布源码包含已构建的 `frontend/dist`、固定的 E621 分类/Count 索引和
-> 替换索引；
-> 其余运行时和模型只由安装器写入项目目录。当前开发快照未附带经过核对的生产安装
-> 清单，安装器会明确 fail-closed，不能替代已通过发布门禁的源码版本。
+项目针对约 10 万张图片的数据集，采用单项有界处理、可恢复任务状态、SQLite 分页和原子提交，避免把整批业务数据一次性载入内存。
 
-## 主要功能
+## 功能
 
-- 本地 WebUI，支持中文和英文界面。
-- 支持原地标注和完整副本两种工作模式。
-- 支持增量处理、完全重建、预检、工作区确认、暂停、恢复和问题复核。
-- 支持 E621 端到端标注流程；Danbooru 流程已接入，但正式模型和分类资源不随
-  本仓库分发，需要从上游来源手动安装。
-- 支持图片无标注、TXT 标注、标准 JSON 和原始 E621 分组 JSON 混合导入。
-- 支持 OCR、OpenAI-compatible NL API、Count Review、Dropout、Token
-  Budget Review 和 JSON/扁平 TXT 导出。
-- API 凭据与任务快照分离，模型、数据和生成结果保持在本机。
+- E621 标注工作流：Caption、Classify、Replace、OCR、NL、Count Review、Policy、Token Budget 和 Export。
+- 原地处理或完整副本两种工作模式，支持增量、重建、暂停、恢复、取消、问题复核和修复任务。
+- 支持 `.jpg`、`.jpeg`、`.png`、`.webp`、`.bmp`，以及标准 JSON、扁平 TXT 和原始 E621 分组 JSON。
+- 本地 API 与 React WebUI；任务快照、凭据、资源和生成结果分离保存。
+- Caption、Policy 和 OCR 资源在发布前进行版本、路径、大小、SHA-256 和离线探测校验。
 
-## 处理流程
+Danbooru 代码边界已保留，但首发安装范围是 E621；不会在缺少正式 Danbooru 资源时回退到 E621。
+
+## 快速开始
+
+1. 从源码 ZIP 或 GitHub clone 获取项目。
+2. 双击根目录的 `Install-WebUI.bat`。
+3. 安装完成后打开 `http://127.0.0.1:8765/`。
+4. 再次使用时双击 `Start-WebUI.bat`，结束后双击 `Stop-WebUI.bat`。
+
+安装器使用项目内运行时和工具链，不要求用户预装 Python、Node、CUDA Toolkit、Visual Studio 或 Windows SDK，也不会修改系统 `PATH`、注册表或系统 Python/Node。
+
+源码不包含大型运行时、模型权重、浏览器二进制或数据集。安装器只把依赖写入项目目录；已提交的资源仅包括必要的 E621 分类/Count 与替换索引。
+
+## OCR 和可选资源
+
+OCR runtime 属于基础安装，但 OCR 模型权重必须由用户从官方来源手动下载。将三个原始归档放入 `ocr-model-archives`，再双击 `Install-WebUI.bat`；文件名、官方 URL、大小和 SHA-256 见 [OCR_MODEL_DOWNLOAD.md](OCR_MODEL_DOWNLOAD.md)。
+
+缺少或校验失败的 OCR 模型只会阻止启用 OCR 的任务，不会阻止基础 WebUI 启动。
+
+OCR is disabled by default。OCR sidecar 使用
+`ocr_annotations/<relative-image-path-with-extension>.ocr.json`；only OCR-enabled jobs are blocked when the model is unavailable。导入流程会执行 offline CPU OCR probe，失败时不会发布 OCR 资源。
+
+需要单独导入可选资源时，可使用：
 
 ```text
-Caption -> Classify -> Replace -> OCR -> NL
-        -> Count Review -> Dropout/Policy -> Token Budget -> Export
+Import-OcrResource.bat -Apply
+Import-TokenizerResources.bat -Apply
 ```
 
-每个阶段通过版本化 JSON contract 与 Core 通信。任务先写入隔离 overlay，完成
-复核后再提交到源数据集或完整副本。
+这些入口会先预览目标和校验范围，只有显式带 `-Apply` 才会写入项目目录。
 
-## 输入数据
+## 数据与输出
 
-默认支持 `.jpg`、`.jpeg`、`.png`、`.webp` 和 `.bmp`。同一个数据集可以按图片
-混合以下状态：
-
-| 单张图片旁的标注 | 默认行为 |
-| --- | --- |
-| 无 TXT、无 JSON | Caption 使用已安装 Tagger 生成标签，然后继续分类 |
-| 非空 TXT，TXT 模式为 `Tag` | 把 TXT 解析为标签并跳过该图片的 Tagger |
-| 缺失或空 TXT，TXT 模式为 `Tag` | 默认启用 Tagger 补全；关闭 fallback 时记录问题且不导出该样本 |
-| 非空 TXT，TXT 模式为 `NL` | 把 TXT 写入标准 JSON 的 `nl`；Tagger 仍生成分类标签，且不会接收 TXT 内容 |
-| 标准 JSON | 增量模式保留已有字段；是否覆盖由对应开关决定 |
-| 原始 E621 分组 JSON | 严格转换为标准字段并跳过 Caption；格式错误时不会退回 Tagger |
-
-`NL` TXT 必须是 UTF-8，不能包含 NUL，且最大为 16 KiB。详细布局和边界见
-[data/README.md](data/README.md)。
-
-## 目录名写入 artist
-
-这个功能位于 WebUI 的 `Dropout/Policy` 步骤：
-
-- 新任务默认关闭整个 Policy；开启 Policy 后，`将目录名追加到 JSON artist`
-  子开关默认开启，画师丢弃率默认是 `0`。
-- 从图片的一级目录读取 `数字_名称` 中的名称，并以 `@名称` 追加到 JSON
-  `artist`。
-- 例如 `001_角色名/image.png` 会得到 `"artist": "@角色名"`。
-- 它与 NL 的 `Character` 预设无关；无论目录内容代表画师还是角色，目录映射
-  始终写入 `artist`，不会写入 `character`。
-- 已有 `artist` 会保留并去重。要保证目录值不被丢弃，请保持画师丢弃率为 `0`。
-
-## 标准 JSON
-
-Export 使用固定的九字段结构：
+标准 JSON 使用固定字段：
 
 ```json
 {
@@ -72,7 +53,7 @@ Export 使用固定的九字段结构：
   "count": "solo",
   "character": "",
   "series": "",
-  "artist": "@角色名",
+  "artist": "",
   "appearance": [],
   "tags": [],
   "environment": [],
@@ -80,80 +61,32 @@ Export 使用固定的九字段结构：
 }
 ```
 
-`quality`、`appearance`、`tags`、`environment` 是字符串数组；其余字段是
-字符串。`count` 的规范值为 `""`、`solo`、`duo`、`trio` 或 `group`。
+`quality`、`appearance`、`tags`、`environment` 是字符串数组，其余字段是字符串；`count` 可为 `""`、`solo`、`duo`、`trio` 或 `group`。NL 文本必须是严格 UTF-8、不能包含 NUL，最大 16 KiB。
 
-## 安装与运行 WebUI
+每个任务都使用独立 overlay。只有 Export 和提交阶段通过身份、指纹、JSON/TXT 格式及路径安全校验后，才会修改目标数据集。
 
-从通过发布门禁的源码 ZIP 解压或 clone 对应版本后，唯一的用户安装入口是双击项目
-根目录的 `Install-WebUI.bat`。不要传入 OCR 模式，也不需要运行 Python、npm、CUDA
-Toolkit、Visual Studio 或 Windows SDK。
+## 项目结构
 
-安装器会检测现有 NVIDIA 驱动：NVIDIA 可用时安装 Caption/Policy CUDA、OCR CPU 和
-OCR GPU，并默认使用 GPU、保留 CPU 回退；其他机器只安装 CPU 变体。E621 Tagger、
-Qwen3 0.6B tokenizer 和 LSE14/JTP-3/Waifu/CLIP 质量栈是基础安装必装项。OCR runtime
-也是基础安装项，但 OCR model weights 不会被自动下载或重新分发。
+| 路径 | 作用 |
+| --- | --- |
+| `core/src/anima_core/` | 本地 API、任务状态、调度、恢复、资源目录和提交事务 |
+| `workers/` | 各处理模块的隔离 worker |
+| `frontend/` | React/Vite WebUI 与 Playwright 测试 |
+| `contracts/schemas/` | 版本化 worker 和任务 JSON Schema |
+| `profiles/` | E621 与 Danbooru profile 声明 |
+| `resource-library/` | 已验证的轻量资源索引和资源清单 |
+| `packaging/` | 安装、运行时组装、资源导入和发布校验脚本 |
+| `tests/` | unit、contract、integration 和 stress 测试 |
 
-OCR is disabled by default。将三个官方 Paddle 归档原样放入项目根
-`ocr-model-archives` 后，再双击 `Install-WebUI.bat`；归档名称、官方 URL、大小和
-SHA-256 见 [OCR_MODEL_DOWNLOAD.md](OCR_MODEL_DOWNLOAD.md)。基础 WebUI 可以在没有
-OCR 模型时启动，only OCR-enabled jobs are blocked，直到安装器验证归档并完成 offline
-CPU OCR probe。该入口没有 `-OcrMode` 参数。
+## 维护入口
 
-`Install-WebUI.bat` 成功后会自动启动 WebUI；之后可双击 `Start-WebUI.bat` 再次启动，
-使用完毕后双击 `Stop-WebUI.bat`。默认端口为 `8765`，
-启动成功后会打开 `http://127.0.0.1:8765/`。日志位于 `.runtime-build\logs`；下载失败时
-安装窗口会打印官方直链、目标文件名、大小和 SHA-256，用户放入指定缓存后可再次双击继续。
-
-源码克隆不包含以下本地依赖；安装器只会把它们写入项目目录：
-
-```text
-.runtime-build/runtimes/core/python.exe
-.toolchains/Python-3.11.15/PCbuild/amd64/python.exe
-.toolchains/node-v24.18.0-win-x64/node.exe
-resource-library/（已提交的 E621 分类/Count 与替换索引除外）
-```
-
-所有依赖安装、同步和验证脚本都只应操作项目目录内的运行时。不要用系统 Python
-替代项目内嵌环境。
-
-## 资源与发布门禁
-
-- 模型和 tokenizer：见 [models/README.md](models/README.md)。
-- 数据集布局：见 [data/README.md](data/README.md)。
-- 第三方代码与上游资源说明：见
-  [docs/THIRD_PARTY_NOTICES.md](docs/THIRD_PARTY_NOTICES.md)。
-- 真实 CPU/NVIDIA 干净机验收：见
-  [docs/SOURCE_BOOTSTRAP_ACCEPTANCE.md](docs/SOURCE_BOOTSTRAP_ACCEPTANCE.md)。
-
-一键安装只从冻结清单中的上游 HTTPS URL 下载并校验自动安装的模型，不把模型权重提交
-到 Git。OCR model weights 是例外：它们只按 `OCR_MODEL_DOWNLOAD.md` 由用户本地下载，
-安装器不自动下载或镜像。
-源码目标电脑不会运行 npm，`frontend/dist` 已随源码提供。发布前必须通过
-`Validate-SourceBootstrapRelease.ps1`：生产清单、基础 Python Release 身份、前端产物和
-第三方许可证任一缺失或未核对都会阻止发布。Danbooru 不在首发支持范围，也不会回退到
-E621 资源。
+日常用户只需要 `Install-WebUI.bat`、`Start-WebUI.bat` 和 `Stop-WebUI.bat`。OCR GPU、Token Budget 和清理/重置 BAT 是维护入口，供资源导入失败或需要清理项目内缓存时使用；它们不会操作系统级环境。
 
 ## 验证
 
-验证入口只使用项目内解释器和工具链：
+维护者应使用项目内嵌 Python 和 Node 运行测试，不要改用系统环境。完整验证覆盖 Core unit、integration、contract、前端构建、Playwright 和 10 万样本容量回归。
 
-```powershell
-& .\packaging\scripts\Verify-Project.ps1 -Level Fast
-& .\packaging\scripts\Verify-Project.ps1 -Level Full
-& .\packaging\scripts\Verify-Project.ps1 -Level Release
-```
-
-- `Fast`：Core/contract/worker 快速检查和前端 typecheck。
-- `Full`：在 Fast 基础上增加前端构建及已安装 OCR 的集成检查。
-- `Release`：增加发布树漂移、Playwright E2E 和资源校验。
-
-缺少项目内 Playwright Chromium、正式资源，或 OCR-enabled job 所需的已验证 OCR 模型时，对应检查不能视为
-已经验证。
-
-### 项目内工具链
-
-源码验证只使用项目内工具链：
+项目内工具链路径如下：
 
 ```text
 .runtime-build\runtimes\core\python.exe
@@ -162,83 +95,50 @@ E621 资源。
 .toolchains\node-v24.18.0-win-x64\npm.cmd
 ```
 
-运行时同步、缓存清理和浏览器准备都默认只预览；只有显式使用 `-Apply` 才会写入，
-`-Reset` 也只作用于项目内浏览器缓存。端到端测试使用 `ANIMA_E2E_PORT` 指定
-临时回环端口：
+维护者可运行以下预览/验证入口；只有带 `-Apply` 的命令才会写入项目目录：
 
-```powershell
+```text
+.\packaging\scripts\Verify-Project.ps1 -Level Fast
+.\packaging\scripts\Verify-Project.ps1 -Level Full
+.\packaging\scripts\Verify-Project.ps1 -Level Release
 .\packaging\scripts\Sync-CoreRuntime.ps1
 .\packaging\scripts\Sync-CoreRuntime.ps1 -Apply
 .\packaging\scripts\Clean-LocalArtifacts.ps1
 .\packaging\scripts\Clean-LocalArtifacts.ps1 -Apply
 .\packaging\scripts\Install-FrontendBrowser.ps1
 .\packaging\scripts\Install-FrontendBrowser.ps1 -Apply
-.\packaging\scripts\Install-FrontendBrowser.ps1 -Reset
+-Reset
 ```
 
-## OCR 资源边界
+端到端测试使用 `ANIMA_E2E_PORT` 指定临时回环端口。核心入口包括
+`core/src/anima_core/api.py`、`core/src/anima_core/db.py`、`core/src/anima_core/db_schema.py`、
+`core/src/anima_core/pipeline.py`、`core/src/anima_core/pipeline_dispatch.py`、
+`core/src/anima_core/resource_catalog.py`、`core/src/anima_core/resource_catalog_package.py`、
+`core/src/anima_core/count_review_service.py`、`workers/caption/src/anima_caption_worker/` 和
+`frontend/src/App.tsx`。
 
-OCR CPU runtime 始终属于基础安装；检测到可用 NVIDIA 驱动时还会安装 GPU runtime，默认
-执行 GPU 并保留 CPU 回退。OCR is disabled by default，OCR 结果位于
-`ocr_annotations/<relative-image-path-with-extension>.ocr.json`。
+当前限制：formal Danbooru CL/WD resources and real model acceptance remain unavailable。发布前仍需在隔离环境完成对应验收。
 
-模型归档不是源码、缓存或 Release 负载。请使用
-[OCR_MODEL_DOWNLOAD.md](OCR_MODEL_DOWNLOAD.md) 中不变的三个官方 URL、文件名、大小和
-SHA-256，将原始归档放到 `ocr-model-archives`，再双击 `Install-WebUI.bat`。归档缺失、
-损坏或 SHA-256 不符时，基础 WebUI 仍可用，但 only OCR-enabled jobs are blocked；安装器
-会在项目内安全 staging、运行 offline CPU OCR probe 后才发布资源。当前模型许可证仍是
-公开 Release 门禁；在许可证未核对前，安装器不会把任何开发快照描述为可公开发布的一键
-安装版本。
+## Token Budget
 
-## Token Budget 边界
+Tokenizer 导入 preview by default。支持 `Qwen/Qwen3-0.6B` 和 `Qwen/Qwen3-VL-4B-Instruct`。Token Budget validation is enabled by default；`maxTokens defaults to `512`，范围为 `1..selected resource.contextLimit`，not linked to `nl.apiPolicy.maxTokens`。Disabling Token Budget validation does not guarantee the training token limit。
 
-Tokenizer 导入 preview by default。Anima 使用 `Qwen/Qwen3-0.6B`，Krea 2 使用
-`Qwen/Qwen3-VL-4B-Instruct`。Token Budget validation is enabled by default；
-maxTokens defaults to `512`，范围为 `1..selected resource.contextLimit`，且
-not linked to `nl.apiPolicy.maxTokens`。Disabling Token Budget validation does not guarantee the training token limit。
-NL 预设提供 `general`, `style`, and `character` 和 stable short/medium/long
-selection，分别对应 `2-3`、`4-5`、`6-8` sentences。超限时进入 overflow review page，
-由用户执行 edit, recount, `rewrite-short`, and `apply`；这些都是 explicit user action，
-may incur NL API usage。proposal does not change the final JSON until `apply`，也 never
-automatically loops rewrites。
+NL 预设提供 `general`, `style`, and `character`，以及 stable short/medium/long selection，对应 `2-3`, `4-5`, and `6-8` sentences。超限时进入 overflow review page，由用户执行 edit, recount, `rewrite-short`, and `apply`；这些是 explicit user action，may incur NL API usage。proposal does not change the final JSON until `apply`，并 never automatically loops rewrites。
 
-The preset contract keeps stable short/medium/long selection and uses `2-3`, `4-5`, and `6-8` sentences.
-The proposal does not change the final JSON until `apply` and never automatically loops rewrites.
-
-```powershell
+```text
 .\Import-TokenizerResources.bat
 .\Import-TokenizerResources.bat -Apply
 ```
 
-## 项目结构
+资源、第三方许可证和 OCR 手动下载边界见：
 
-| 路径 | 内容 |
-| --- | --- |
-| `core/src/anima_core/` | 本地 HTTP API、任务状态、调度、恢复和提交 |
-| `workers/` | Caption、Classify、Replace、OCR、NL、Policy、Token Budget 和 Export worker |
-| `frontend/` | React/Vite WebUI 与 Playwright 测试 |
-| `contracts/schemas/` | 版本化 JSON Schema |
-| `profiles/` | E621 与 Danbooru profile 声明 |
-| `shared/anima_caption_format/` | 标准 JSON 与扁平 TXT 规范化 |
-| `packaging/` | 项目内运行时、资源导入、组装和验证脚本 |
-| `tests/` | unit、contract、integration 和 stress 测试 |
+- [OCR 模型下载说明](OCR_MODEL_DOWNLOAD.md)
+- [第三方声明](docs/THIRD_PARTY_NOTICES.md)
 
-核心入口也可按职责直接定位：`core/src/anima_core/api.py`、`core/src/anima_core/db.py`、
-`core/src/anima_core/db_schema.py`、`core/src/anima_core/pipeline.py`、
-`core/src/anima_core/pipeline_dispatch.py`、`core/src/anima_core/resource_catalog.py`、
-`core/src/anima_core/resource_catalog_package.py`、`core/src/anima_core/count_review_service.py`、
-`workers/caption/src/anima_caption_worker/` 和 `frontend/src/App.tsx`。当前
-formal Danbooru CL/WD resources and real model acceptance remain unavailable。
+## 安全
 
-## 安全与隐私
-
-- 不要提交 API key、PAT、`.env`、私钥、数据集或模型权重。
-- NL 诊断使用的临时 API key 不写入任务快照；正式凭据使用本地引用。
-- 运行第三方兼容 API 前，请确认 endpoint 属于你信任的服务。
-- 发布 fork 前应检查暂存文件列表并重新运行敏感信息扫描。
+不要提交 GitHub token、API key、`.env`、私钥、数据集或模型权重。运行第三方兼容 API 前确认 endpoint 属于可信服务；发布前检查暂存文件列表并执行敏感信息扫描。
 
 ## License
 
-此公开源码快照不附带项目许可证，未授予复制、修改或再分发本项目源码的许可。
-第三方组件和资源适用各自的许可证与使用条款，详见
-[第三方声明](docs/THIRD_PARTY_NOTICES.md)。
+本源码快照未附带项目许可证，未授予复制、修改或再分发本项目源码的许可。第三方组件和资源遵循各自许可证与使用条款，详见 [第三方声明](docs/THIRD_PARTY_NOTICES.md)。

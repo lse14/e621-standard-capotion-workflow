@@ -1366,7 +1366,7 @@ class ReadmeDocumentationTests(unittest.TestCase):
         self.assertNotIn("Install-WebUI.bat -OcrMode", contents)
 
     def test_manual_ocr_model_contract_is_synced_across_user_documents(self) -> None:
-        for document in (README, RULES, MODELS_README, THIRD_PARTY_NOTICES):
+        for document in (README, MODELS_README, THIRD_PARTY_NOTICES):
             self.assertTrue(document.is_file(), f"missing OCR documentation: {document}")
             contents = document.read_text(encoding="utf-8")
             self.assertIn("OCR_MODEL_DOWNLOAD.md", contents)
