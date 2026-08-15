@@ -183,6 +183,13 @@ class SourceBootstrapPowerShellTests(unittest.TestCase):
         self.assertIn("--bootstrap-runtime", script)
         self.assertNotIn("LOCALAPPDATA", script)
 
+    def test_start_batch_recovers_missing_installation_state_through_the_bootstrap(self) -> None:
+        batch = (ROOT / "Start-WebUI.bat").read_text(encoding="ascii")
+
+        self.assertIn('if not exist "%~dp0.runtime-build\\manifests\\install-state.json" (', batch)
+        self.assertIn('call "%~dp0Install-WebUI.bat"', batch)
+        self.assertIn("resuming source bootstrap", batch)
+
     def test_bootstrap_parses_in_windows_powershell(self) -> None:
         self.assertTrue(BOOTSTRAP.is_file(), "source bootstrap PowerShell script must exist")
         command = (
