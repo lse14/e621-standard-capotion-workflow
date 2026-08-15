@@ -545,16 +545,21 @@ class PipelineTests(unittest.TestCase):
                 pipeline.close()
 
     def test_cancelled_recovery_to_review_does_not_start_a_thread(self) -> None:
-        for module_id in ("count_review", "token_budget"):
-            with self.subTest(module_id=module_id), tempfile.TemporaryDirectory() as temporary:
+        for module_id, resume_status in (
+            ("count_review", "reviewing"),
+            ("count_review", "running"),
+            ("token_budget", "reviewing"),
+            ("token_budget", "running"),
+        ):
+            with self.subTest(module_id=module_id, resume_status=resume_status), tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary)
                 job_id, _dataset = self._cancelled_caption_job(root)
                 database = StateDatabase.open(root / "state.db")
                 try:
                     database.connection.execute(
-                        """UPDATE jobs SET current_module_id=?,resume_status='reviewing'
+                        """UPDATE jobs SET current_module_id=?,resume_status=?
                            WHERE job_id=?""",
-                        (module_id, job_id),
+                        (module_id, resume_status, job_id),
                     )
                     database.connection.execute(
                         """UPDATE sample_state SET current_module_id=?,status='completed',lease_id=NULL,

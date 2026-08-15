@@ -259,7 +259,12 @@ class PipelineRecoveryMixin:
                 target_status = self._recovery_target_status(module_id)
                 if not isinstance(resume_status, str):
                     raise PipelineError("interrupted job has no recoverable worker state")
-                if resume_status != target_status:
+                allowed_resume_statuses = (
+                    {"running", "reviewing"}
+                    if module_id in {"count_review", "token_budget"}
+                    else {target_status}
+                )
+                if resume_status not in allowed_resume_statuses:
                     raise PipelineError("persisted recovery target is incompatible with current module")
                 if not isinstance(job["overlay_root"], str) or not job["overlay_root"]:
                     raise PipelineError("interrupted job has no annotation overlay")
