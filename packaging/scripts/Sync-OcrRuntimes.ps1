@@ -69,8 +69,7 @@ function Test-CompleteGpuRuntime([string]$Root) {
         @{ Path = (Join-Path $Root '.runtime-build\runtimes\ocr-paddle-gpu'); Directory = $true; Label = 'GPU OCR runtime' },
         @{ Path = (Join-Path $Root '.runtime-build\manifests\runtimes\ocr-paddle-gpu.json'); Directory = $false; Label = 'GPU OCR manifest' },
         @{ Path = (Join-Path $Root '.runtime-build\manifests\requirements\ocr-paddle-gpu.lock'); Directory = $false; Label = 'GPU OCR manifest lock' },
-        @{ Path = (Join-Path $Root 'packaging\requirements\ocr-paddle-gpu.lock'); Directory = $false; Label = 'GPU OCR lock' },
-        @{ Path = (Join-Path $Root 'packaging\wheelhouse\ocr-paddle-gpu'); Directory = $true; Label = 'GPU OCR wheelhouse' }
+        @{ Path = (Join-Path $Root 'packaging\requirements\ocr-paddle-gpu.lock'); Directory = $false; Label = 'GPU OCR lock' }
     )
     $present = @($artifacts | Where-Object { Test-Path -LiteralPath $_.Path })
     if ($present.Count -eq 0) { return $false }

@@ -665,6 +665,24 @@ class SyncOcrRuntimesScriptTests(unittest.TestCase):
         self.assertIn("GPU runtime artifacts are partial", source)
         self.assertNotIn("Remove-Item -LiteralPath $targetPackage", source)
 
+    def test_complete_gpu_artifacts_without_transient_wheelhouse_sync_gpu_preview(self) -> None:
+        gpu_runtime = self.root / ".runtime-build" / "runtimes" / "ocr-paddle-gpu"
+        gpu_runtime.mkdir(parents=True)
+        for artifact in (
+            self.root / ".runtime-build" / "manifests" / "runtimes" / "ocr-paddle-gpu.json",
+            self.root / ".runtime-build" / "manifests" / "requirements" / "ocr-paddle-gpu.lock",
+            self.root / "packaging" / "requirements" / "ocr-paddle-gpu.lock",
+        ):
+            artifact.parent.mkdir(parents=True, exist_ok=True)
+            artifact.write_text("fixture\n", encoding="ascii")
+        self.assertFalse((self.root / "packaging" / "wheelhouse" / "ocr-paddle-gpu").exists())
+
+        preview = self._invoke()
+
+        self.assertEqual(0, preview.returncode, preview.stdout + preview.stderr)
+        records = json.loads(preview.stdout)
+        self.assertTrue(any(str(gpu_runtime) in record["Target"] for record in records))
+
     def test_missing_gpu_artifacts_keep_sync_preview_cpu_only_without_creating_a_target(self) -> None:
         preview = self._invoke()
         self.assertEqual(0, preview.returncode, preview.stdout + preview.stderr)
