@@ -30,6 +30,9 @@ class CredentialStoreTests(unittest.TestCase):
             with self.assertRaises(CredentialStoreError):
                 store.save("../escape", "secret")
             with self.assertRaises(CredentialStoreError):
+                store.save("nl-profile:default", "secret")
+            self.assertEqual([], list(Path(temporary).iterdir()))
+            with self.assertRaises(CredentialStoreError):
                 store.save("valid", "")
 
 

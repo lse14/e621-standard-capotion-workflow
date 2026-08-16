@@ -179,6 +179,7 @@ class NlWorkerTests(unittest.TestCase):
         self.assertEqual("https://example.test/v1/chat/completions", normalize_endpoint("https://example.test/v1"))
         self.assertEqual("http://localhost:8080/chat/completions", normalize_endpoint("http://localhost:8080"))
         self.assertEqual("http://provider.example/v1/chat/completions", normalize_endpoint("http://provider.example/v1"))
+        self.assertEqual("https://example.test/v1/chat/completions", normalize_endpoint("https://example.test/v1/models"))
         with self.assertRaises(NlValidationError):
             normalize_endpoint("http://user:pass@provider.example/v1")
         with self.assertRaises(NlValidationError):
@@ -451,6 +452,7 @@ class NlWorkerTests(unittest.TestCase):
         self.assertEqual(("nl_result", "req-1"), (result["payloadType"], result["requestId"]))
         request = recorded.calls[0]
         self.assertEqual("Bearer secret", request["headers"]["Authorization"])
+        self.assertEqual("Anima-Dataset-Tool/1.0", request["headers"]["User-Agent"])
         messages = request["json"]["messages"]
         self.assertEqual("system", messages[0]["role"])
         self.assertNotIn("secret", json.dumps(result))

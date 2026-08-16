@@ -275,6 +275,9 @@ class ControlPlaneApiTests(unittest.TestCase):
         save_profile = _endpoint(self.app, "/api/nl/profiles/{profile_id}", "PUT")
         profiles = _endpoint(self.app, "/api/nl/profiles", "GET")
         self.assertEqual({"stored": True}, save_credential("key-a", _SecretBody(secret="top-secret")))
+        with self.assertRaises(HTTPException) as rejected:
+            save_credential("nl-profile:default", _SecretBody(secret="top-secret"))
+        self.assertEqual(400, rejected.exception.status_code)
         body = _ProfileBody(endpoint="https://example.test/v1", model="main", backupModel=None, apiCredentialRef="key-a", systemPrompt="describe", apiPolicy={"maxRequestsPerMinute": 60})
         saved = save_profile("profile-a", body)
         self.assertTrue(saved["hasCredential"])

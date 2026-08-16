@@ -132,7 +132,7 @@ test.describe("NL API tools", () => {
   });
 
   test("saves selected models without the transient key and derives an internal reference", async ({ page, api }) => {
-    api.profiles[0].apiCredentialRef = "legacy/ref";
+    api.profiles[0].apiCredentialRef = "nl-profile:default";
     await openNl(page);
     await page.getByLabel("Endpoint URL", { exact: true }).fill("http://provider.example/v1");
     await page.getByLabel("API key", { exact: true }).fill("temporary-key");
@@ -145,9 +145,9 @@ test.describe("NL API tools", () => {
 
     await expect.poll(() => mutationsFor(api, "PUT", "/api/nl/profiles/default").length).toBe(1);
     const profileBody = mutationsFor(api, "PUT", "/api/nl/profiles/default")[0].body as Record<string, unknown>;
-    expect(profileBody).toMatchObject({ endpoint: "http://provider.example/v1", model: "provider-model-2", backupModel: "provider-model-1", apiCredentialRef: "nl-profile:default" });
+    expect(profileBody).toMatchObject({ endpoint: "http://provider.example/v1", model: "provider-model-2", backupModel: "provider-model-1", apiCredentialRef: "nl-profile-default" });
     expect(profileBody).not.toHaveProperty("apiKey");
-    await expect.poll(() => mutationsFor(api, "PUT", "/api/nl/credentials/nl-profile%3Adefault").length).toBe(1);
+    await expect.poll(() => mutationsFor(api, "PUT", "/api/nl/credentials/nl-profile-default").length).toBe(1);
     await expect(page.getByLabel("API key", { exact: true })).toHaveAttribute("type", "password");
     await expect(page.getByLabel("API key", { exact: true })).toHaveValue("");
   });

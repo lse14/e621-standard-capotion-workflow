@@ -78,9 +78,37 @@ class NlDiagnosticClientTests(unittest.TestCase):
         self.assertEqual("https://example.test/v1/models", fake.request.full_url)
         self.assertEqual("GET", fake.request.get_method())
         self.assertEqual("Bearer secret-value", fake.request.get_header("Authorization"))
+        self.assertEqual("Anima-Dataset-Tool/1.0", fake.request.get_header("User-agent"))
         self.assertEqual(["alpha", "Beta"], result["models"])
         self.assertEqual((True, 0, None, None), (result["ok"], result["latencyMs"], result["errorCode"], result["errorReason"]))
         self.assertEqual(1, len(fake.requests))
+
+    def test_terminal_provider_resource_routes_are_replaced_for_each_diagnostic_request(self) -> None:
+        for endpoint in (
+            "https://example.test/v1",
+            "https://example.test/v1/models",
+            "https://example.test/v1/chat/completions",
+        ):
+            with self.subTest(endpoint=endpoint):
+                discover_fake = FakeOpener(FakeResponse(_models(["model-a"])))
+                discovered = NlDiagnosticClient(opener=discover_fake).discover_models(
+                    endpoint=endpoint,
+                    api_key="secret-value",
+                )
+                self.assertTrue(discovered["ok"])
+                self.assertEqual("https://example.test/v1/models", discover_fake.request.full_url)
+                self.assertEqual("Anima-Dataset-Tool/1.0", discover_fake.request.get_header("User-agent"))
+
+                message_fake = FakeOpener(FakeResponse(_completion()))
+                message = NlDiagnosticClient(opener=message_fake).test_message(
+                    endpoint=endpoint,
+                    model="model-a",
+                    api_key="secret-value",
+                    base_prompt="Base rules",
+                )
+                self.assertTrue(message["ok"])
+                self.assertEqual("https://example.test/v1/chat/completions", message_fake.request.full_url)
+                self.assertEqual("Anima-Dataset-Tool/1.0", message_fake.request.get_header("User-agent"))
 
     def test_remote_http_normalizes_and_issues_models_request(self) -> None:
         fake = FakeOpener(FakeResponse(_models(["remote-model"])))
