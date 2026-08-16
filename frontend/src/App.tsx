@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   addNlBudget, cancelJob, confirmNlOutcomes, confirmWorkspace, deleteNlSecret, discardJob, listNlProfiles, manualNlRetry, manualNlWrite,
-  pauseNl, pausePolicy, preflightJob, recoverJob, restoreOriginalAnnotations, resumeNl, resumePolicy, saveNlProfile,
+  pauseJob, preflightJob, recoverJob, restoreOriginalAnnotations, resumeJob, saveNlProfile,
   setJobPin, repairJob, saveNlSecret, startPipeline, type NlProfile, type OcrExecutionRequest, type PreflightSummary,
   type AnnotationProfile, type PipelineModuleId, type ResourceCatalogResponse, type ResourceKind,
 } from "./api";
@@ -31,8 +31,8 @@ import "./styles.css";
 type StepId = "setup" | PipelineModuleId;
 type PendingAction =
   | "preflight" | "confirm_workspace" | "start" | "repair" | "recover"
-  | "cancel" | "pin" | "discard" | "restore" | "nl_pause" | "nl_resume" | "nl_manual_retry" | "nl_manual_write"
-  | "nl_budget" | "nl_confirm_outcomes" | "policy_pause" | "policy_resume"
+  | "terminate" | "pause" | "resume" | "pin" | "discard" | "restore" | "nl_manual_retry" | "nl_manual_write"
+  | "nl_budget" | "nl_confirm_outcomes"
   | "profile_save" | "credential_delete"
   | null;
 type ActionName = Exclude<PendingAction, null>;
@@ -301,6 +301,11 @@ export function App() {
     await refreshSnapshot();
     return result;
   });
+  const lifecycleControl = <T,>(name: ActionName, operation: () => Promise<T>) => runAction(name, async () => {
+    const result = await operation();
+    await Promise.all([refreshJobs(), refreshSnapshot(undefined, true)]);
+    return result;
+  });
   const runPreflight = async () => {
     const distribution = draft.nl.lengthDistribution;
     const distributionValues = Object.values(distribution);
@@ -384,14 +389,10 @@ export function App() {
       : id === "token_budget" ? draft.tokenBudget.enabled : Boolean(draft[id].enabled)))
     .map((id) => moduleLabel(language, id)).join(" / ");
   const workspaceReady = snapshot?.job.status === "preparing_workspace";
-  const nlRunning = snapshot?.job.currentModuleId === "nl" && snapshot.job.status === "running";
-  const nlPaused = snapshot?.job.currentModuleId === "nl" && snapshot.job.status === "paused";
   // F28: the backend accepts the confirmation while paused or interrupted (scheduler.py:335).
   const pendingApiDecisions = snapshot?.nlPendingApiDecisions ?? 0;
   const rawE621Converted = snapshot?.captionDiagnostics.find((item) => item.code === "e621_raw_json_converted")?.count ?? 0;
   const nlAwaitsDecision = snapshot?.job.currentModuleId === "nl" && ["paused", "interrupted"].includes(snapshot.job.status) && pendingApiDecisions > 0;
-  const policyRunning = snapshot?.job.currentModuleId === "dropout" && snapshot.job.status === "running";
-  const policyPaused = snapshot?.job.currentModuleId === "dropout" && snapshot.job.status === "paused";
   const retriableCount = snapshot?.repairPreview?.eligibleTargetCount ?? 0;
   const latestEvent = snapshot?.events.length ? snapshot.events[snapshot.events.length - 1] : null;
   const currentStep = steps[activeStep] ?? steps[steps.length - 1];
@@ -490,11 +491,9 @@ export function App() {
     currentModule: t("currentModule"),
     currentBatch: t("currentBatch"),
     taskActions: copy.taskActions,
-    pauseNl: t("pauseNl"),
-    resumeNl: t("resumeNl"),
-    pausePolicy: t("pausePolicy"),
-    resumePolicy: t("resumePolicy"),
-    cancelTask: t("cancelTask"),
+    pauseTask: t("pauseTask"),
+    resumeTask: t("resumeTask"),
+    terminateTask: t("terminateTask"),
     recoverTask: t("recoverTask"),
     pinTask: t("pinTask"),
     unpinTask: t("unpinTask"),
@@ -814,23 +813,15 @@ export function App() {
         rawE621ConvertedMessage={rawE621Converted > 0 ? t("rawE621Converted", { count: rawE621Converted }) : null}
         modules={taskMonitorModules}
         labels={taskMonitorLabels}
-        nlRunning={nlRunning}
-        nlPaused={nlPaused}
-        policyRunning={policyRunning}
-        policyPaused={policyPaused}
-        canCancel={Boolean(snapshot && isActiveJobStatus(snapshot.job.status))}
-        canRecover={snapshot?.job.status === "interrupted"}
         canDiscard={Boolean(snapshot && ["ready", "interrupted", "reviewing", "cancelled_recoverable", "failed"].includes(snapshot.job.status))}
         budget={budget}
         pendingApiDecisions={pendingApiDecisions}
         nlAwaitsDecision={nlAwaitsDecision}
         pendingActions={pendingActions}
-        onPauseNl={() => void control("nl_pause", () => pauseNl(jobId))}
-        onResumeNl={() => void control("nl_resume", () => resumeNl(jobId))}
-        onPausePolicy={() => void control("policy_pause", () => pausePolicy(jobId))}
-        onResumePolicy={() => void control("policy_resume", () => resumePolicy(jobId))}
-        onCancel={() => { if (window.confirm(t("confirmCancel"))) void control("cancel", () => cancelJob(jobId)); }}
-        onRecover={() => { if (window.confirm(t("confirmRecover"))) void control("recover", () => recoverJob(jobId)); }}
+        onPause={() => void lifecycleControl("pause", () => pauseJob(jobId))}
+        onResume={() => void lifecycleControl("resume", () => resumeJob(jobId))}
+        onTerminate={() => { if (window.confirm(t("confirmTerminate"))) void lifecycleControl("terminate", () => cancelJob(jobId)); }}
+        onRecover={() => { if (window.confirm(t("confirmRecover"))) void lifecycleControl("recover", () => recoverJob(jobId)); }}
         onPin={() => { if (snapshot) void control("pin", () => setJobPin(jobId, !snapshot.job.pinned)); }}
         onDiscard={() => { if (window.confirm(t("confirmDiscard"))) void control("discard", () => discardJob(jobId)); }}
         onBudgetChange={setBudget}

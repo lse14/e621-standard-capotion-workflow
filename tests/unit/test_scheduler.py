@@ -223,6 +223,79 @@ class SchedulerTests(unittest.TestCase):
             finally:
                 database.close()
 
+    def test_begin_cancellation_preserves_the_normalized_resume_target(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            database = self._database(Path(temporary), count=1)
+            try:
+                cases = (
+                    ("preparing_workspace", None, "preparing_workspace"),
+                    ("running", "caption", "running"),
+                    ("paused", "caption", "running"),
+                    ("reviewing", "count_review", "reviewing"),
+                    ("exporting", "export", "exporting"),
+                )
+                for status, module_id, expected_resume_status in cases:
+                    with self.subTest(status=status):
+                        database.connection.execute(
+                            "UPDATE jobs SET status=?,current_module_id=?,resume_status=NULL WHERE job_id='job-1'",
+                            (status, module_id),
+                        )
+                        database.begin_cancellation("job-1")
+                        self.assertEqual(
+                            ("cancelling", expected_resume_status),
+                            tuple(database.get_job("job-1")[key] for key in ("status", "resume_status")),
+                        )
+                        database.begin_cancellation("job-1")
+                        self.assertEqual(expected_resume_status, database.get_job("job-1")["resume_status"])
+            finally:
+                database.close()
+
+    def test_startup_interruption_preserves_a_paused_tasks_resume_target(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            database = self._database(Path(temporary), count=1)
+            try:
+                for module_id, resume_status in (
+                    ("caption", "running"),
+                    ("count_review", "running"),
+                    ("export", "exporting"),
+                ):
+                    with self.subTest(module_id=module_id):
+                        database.connection.execute(
+                            "UPDATE jobs SET status='paused',current_module_id=?,resume_status=? WHERE job_id='job-1'",
+                            (module_id, resume_status),
+                        )
+                        database.mark_interrupted("job-1")
+                        job = database.get_job("job-1")
+                        self.assertEqual(("interrupted", resume_status), (job["status"], job["resume_status"]))
+            finally:
+                database.close()
+
+    def test_atomic_pause_and_resume_reject_stale_module_state(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            database = self._database(Path(temporary), count=1)
+            try:
+                scheduler = BoundedScheduler(database)
+                scheduler.start_module("job-1", "caption", enabled=True, profile="e621")
+                database.set_module_summary("job-1", "caption", status="completed", finished=True)
+                with self.assertRaisesRegex(ValueError, "state changed"):
+                    database.pause_active_module("job-1", "caption", active_status="running")
+                self.assertEqual("running", database.get_job("job-1")["status"])
+                self.assertEqual("completed", database.module_summary("job-1", "caption")["status"])
+
+                database.connection.execute(
+                    "UPDATE module_summary SET status='paused' WHERE job_id='job-1' AND module_id='caption'"
+                )
+                database.connection.execute(
+                    "UPDATE jobs SET status='paused',resume_status='running' WHERE job_id='job-1'"
+                )
+                database.begin_cancellation("job-1")
+                with self.assertRaisesRegex(ValueError, "state changed"):
+                    database.resume_paused_module("job-1", "caption", target_status="running")
+                self.assertEqual("cancelling", database.get_job("job-1")["status"])
+                self.assertEqual("paused", database.module_summary("job-1", "caption")["status"])
+            finally:
+                database.close()
+
     def test_module_cannot_finish_until_all_work_is_settled(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             database = self._database(Path(temporary), count=1)
@@ -270,6 +343,68 @@ class SchedulerTests(unittest.TestCase):
                 self.assertEqual("completed", database.get_sample_state("job-1", first.sampleId)["status"])
                 self.assertEqual("pending", database.get_sample_state("job-1", second.sampleId)["status"])
                 self.assertEqual("request_started", database.get_sample_state("job-1", third.sampleId)["status"])
+            finally:
+                database.close()
+
+    def test_cancelled_recoverable_recovery_requires_confirmation_and_settles_safe_work(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            database = self._database(Path(temporary), count=2)
+            try:
+                scheduler = BoundedScheduler(database, lease_id_factory=iter(("lease-prepared", "lease-returned")).__next__)
+                scheduler.start_module("job-1", "caption", enabled=True, profile="e621")
+                config_hash = str(database.get_job("job-1")["config_hash"])
+                prepared, leased = scheduler.claim_batch("job-1", "caption", "worker-1", config_hash, limit=2)
+                scheduler.stage_prepared(prepared, relative_path="prepared\\caption\\lease-prepared.txt", sha256="a" * 64)
+                database.connection.execute(
+                    "UPDATE jobs SET status='cancelled_recoverable',resume_status='running' WHERE job_id='job-1'"
+                )
+                committed: list[tuple[str, int, str, str]] = []
+
+                def commit_prepared(job_id: str, sample_id: int, relative: str, digest: str) -> bool:
+                    committed.append((job_id, sample_id, relative, digest))
+                    return True
+
+                with self.assertRaisesRegex(SchedulerError, "manual confirmation is required"):
+                    scheduler.recover(
+                        "job-1", confirmed=False, expected_config_hash=config_hash, manifest_schema_version=1,
+                        protocol_version="1.0", verify_source_fingerprints=lambda: True, commit_prepared=commit_prepared,
+                    )
+                report = scheduler.recover(
+                    "job-1", confirmed=True, expected_config_hash=config_hash, manifest_schema_version=1,
+                    protocol_version="1.0", verify_source_fingerprints=lambda: True, commit_prepared=commit_prepared,
+                )
+                self.assertEqual((1, 1, 0), (report.returnedLeases, report.committedPrepared, report.repeatedPrepared))
+                self.assertEqual(
+                    [("job-1", prepared.sampleId, "prepared\\caption\\lease-prepared.txt", "a" * 64)],
+                    committed,
+                )
+                self.assertEqual("completed", database.get_sample_state("job-1", prepared.sampleId)["status"])
+                self.assertEqual("pending", database.get_sample_state("job-1", leased.sampleId)["status"])
+            finally:
+                database.close()
+
+    def test_cancelled_recoverable_unknown_api_decision_can_transition_to_interrupted(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            database = self._database(Path(temporary), count=1)
+            try:
+                scheduler = BoundedScheduler(database)
+                scheduler.start_module("job-1", "caption", enabled=True, profile="e621")
+                scheduler.begin_cancellation("job-1")
+                scheduler.settle_cancellation("job-1")
+                database.set_job_status("job-1", "interrupted", current_module_id="nl", resume_status="running")
+                database.set_sample_state(
+                    "job-1", 1,
+                    SampleRunState(
+                        sampleId=1, currentModuleId="nl", status="request_started", attempt=1,
+                        leaseId="unknown-api", workerInstanceId="nl-worker", leaseExpiresAt="2030-01-01T00:00:00Z",
+                    ),
+                )
+                self.assertEqual(1, scheduler.confirm_nl_api_outcome_unknown("job-1", confirmed=True))
+                self.assertEqual("pending", database.get_sample_state("job-1", 1)["status"])
+                job = database.get_job("job-1")
+                self.assertEqual(("interrupted", "nl", "running"), (
+                    job["status"], job["current_module_id"], job["resume_status"],
+                ))
             finally:
                 database.close()
 

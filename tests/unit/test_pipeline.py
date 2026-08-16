@@ -22,6 +22,7 @@ from anima_core.contracts import JobConfig
 from anima_core.db import StateDatabase
 from anima_core.job_preflight import JobPreparationService
 from anima_core.overlay import BaselineView, OverlayLayout, WorkingAnnotationView
+from anima_core.path_safety import file_fingerprint, windows_key
 from anima_core.pipeline import PipelineService
 from anima_core.pipeline_dispatch import PipelineError
 from anima_core.ocr_runtime_binding import OcrRuntimeBindingV1, read_runtime_binding, write_runtime_binding
@@ -117,6 +118,55 @@ class PipelineTests(unittest.TestCase):
         finally:
             database.close()
         return preparation, job_id, dataset
+
+    def _cancelled_caption_job(self, root: Path) -> tuple[str, Path]:
+        dataset = root / "dataset"
+        dataset.mkdir()
+        image = dataset / "image.png"
+        Image.new("RGB", (3, 3), "white").save(image)
+        config = JobConfig(
+            schemaVersion=2, profile="e621", workMode="in_place",
+            overwriteMode="incremental", sourceRoot=str(dataset),
+        )
+        config.nl["promptVersion"] = "nl-default-prompt-v1"
+        config.nl["apiEnabled"] = False
+        job_id = "cancelled-caption-job"
+        layout = OverlayLayout.create(dataset, job_id)
+        fingerprint = file_fingerprint(image)
+        database = StateDatabase.open(root / "state.db")
+        try:
+            database.insert_job({
+                "job_id": job_id, "config_schema_version": 2, "config_json": json.dumps(config.to_dict()),
+                "config_hash": config.config_hash, "profile": "e621", "work_mode": "in_place",
+                "overwrite_mode": "incremental", "source_root": str(dataset), "output_root": None,
+                "dataset_root": str(dataset), "dataset_root_key": windows_key(dataset),
+                "manifest_schema_version": 1, "recursive": 0, "sample_count": 1,
+                "manifest_generated_at": "2026-08-16T00:00:00Z", "status": "cancelled_recoverable",
+                "current_module_id": "caption", "last_event_id": 0, "pinned": 0,
+                "api_budget_extra": 0, "api_budget_revision": 0, "overlay_root": str(layout.root),
+                "commit_journal_path": None, "resume_status": "running", "created_at": "2026-08-16T00:00:00Z",
+                "started_at": "2026-08-16T00:00:00Z", "cancel_requested_at": "2026-08-16T00:00:00Z",
+                "finished_at": "2026-08-16T00:01:00Z",
+            })
+            database.insert_samples(job_id, [{
+                "sample_id": 1, "relative_image_path": "image.png", "annotation_key": "image", "source": "e621",
+                "in_processing_scope": True, "image_format": "png", "image_frame_count": 1,
+                "original_txt_state": "missing_or_blank", "original_json_state": "missing_or_blank",
+                "image_file_id": fingerprint["file_id"], "image_size": fingerprint["size"],
+                "image_mtime_ns": fingerprint["mtime_ns"],
+            }])
+            prepared, digest = layout.write_prepared("caption", "cancelled-caption-lease", ".txt", b"tag_a")
+            database.set_sample_state(job_id, 1, SampleRunState(
+                sampleId=1, currentModuleId="caption", status="prepared", attempt=1,
+                leaseId="cancelled-caption-lease", workerInstanceId="caption-worker",
+                leaseExpiresAt="2030-01-01T00:00:00Z",
+                preparedArtifactRelativePath=str(prepared.relative_to(layout.root)).replace("/", "\\\\"),
+                preparedArtifactSha256=digest,
+            ))
+            database.initialize_module_summary(job_id, "caption", total=1, status="running")
+        finally:
+            database.close()
+        return job_id, dataset
 
     @staticmethod
     def _dropout_only_job(root: Path) -> tuple[JobPreparationService, str]:
@@ -348,10 +398,36 @@ class PipelineTests(unittest.TestCase):
                 pipeline.close()
                 preparation.close()
 
+    def test_recovery_target_status_is_derived_from_the_persisted_current_module(self) -> None:
+        for module_id, expected_status in (
+            ("caption", "running"),
+            ("export", "exporting"),
+            ("count_review", "reviewing"),
+            ("token_budget", "reviewing"),
+            (None, "preparing_workspace"),
+        ):
+            with self.subTest(module_id=module_id):
+                self.assertEqual(expected_status, PipelineService._recovery_target_status(module_id))
+
+    def test_recovery_does_not_replace_an_existing_pipeline_thread(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            pipeline = PipelineService(root / "state.db", install_root=ROOT / ".runtime-build")
+            existing_thread = SimpleNamespace()
+            job_id = "job-already-running"
+            pipeline._threads[job_id] = existing_thread  # type: ignore[assignment]
+            try:
+                with self.assertRaisesRegex(PipelineError, "already running"):
+                    pipeline.recover_job(job_id, confirmed=True)
+                self.assertEqual({job_id: existing_thread}, pipeline._threads)
+            finally:
+                pipeline._threads.pop(job_id, None)
+                pipeline.close()
+
     def test_recovery_start_failure_restores_interrupted_resume_state(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            preparation, job_id, _dataset = self._interrupted_caption_job(root)
+            job_id, _dataset = self._cancelled_caption_job(root)
             pipeline = PipelineService(root / "state.db", install_root=ROOT / ".runtime-build")
             try:
                 with patch("anima_core.pipeline_recovery.threading.Thread.start", side_effect=RuntimeError("thread start failed")):
@@ -368,7 +444,145 @@ class PipelineTests(unittest.TestCase):
                     database.close()
             finally:
                 pipeline._threads.pop(job_id, None)
-                preparation.close()
+
+    def test_cancelled_recovery_retains_metadata_until_validation_then_clears_it(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            job_id, dataset = self._cancelled_caption_job(root)
+            Image.new("RGB", (4, 4), "black").save(dataset / "image.png")
+            pipeline = PipelineService(root / "state.db", install_root=ROOT / ".runtime-build")
+            try:
+                with self.assertRaisesRegex(Exception, "fingerprints"):
+                    pipeline.recover_job(job_id, confirmed=True)
+                database = StateDatabase.open(root / "state.db")
+                try:
+                    job = database.get_job(job_id)
+                    self.assertEqual(
+                        ("cancelled_recoverable", "2026-08-16T00:00:00Z", "2026-08-16T00:01:00Z"),
+                        (job["status"], job["cancel_requested_at"], job["finished_at"]),
+                    )
+                    self.assertEqual("prepared", database.get_sample_state(job_id, 1)["status"])
+                finally:
+                    database.close()
+            finally:
+                pipeline.close()
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            job_id, _dataset = self._cancelled_caption_job(root)
+            pipeline = PipelineService(root / "state.db", install_root=ROOT / ".runtime-build")
+            pipeline._run = lambda *_args, **_kwargs: None  # type: ignore[method-assign]
+            try:
+                result = pipeline.recover_job(job_id, confirmed=True)
+                self.assertEqual((True, "running"), (result["started"], result["status"]))
+                database = StateDatabase.open(root / "state.db")
+                try:
+                    job = database.get_job(job_id)
+                    self.assertEqual((None, None), (job["cancel_requested_at"], job["finished_at"]))
+                finally:
+                    database.close()
+            finally:
+                pipeline.close()
+
+    def test_cancelled_recovery_with_pending_api_decision_returns_to_interrupted(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            job_id, _dataset = self._cancelled_caption_job(root)
+            database = StateDatabase.open(root / "state.db")
+            try:
+                database.set_sample_state(job_id, 1, SampleRunState(
+                    sampleId=1, currentModuleId="nl", status="request_started", attempt=1,
+                    leaseId="unknown-api", workerInstanceId="nl-worker", leaseExpiresAt="2030-01-01T00:00:00Z",
+                ))
+                database.connection.execute(
+                    "UPDATE jobs SET current_module_id='nl',resume_status='running' WHERE job_id=?", (job_id,)
+                )
+            finally:
+                database.close()
+            pipeline = PipelineService(root / "state.db", install_root=ROOT / ".runtime-build")
+            try:
+                result = pipeline.recover_job(job_id, confirmed=True)
+                self.assertEqual((1, False, "interrupted"), (
+                    result["pendingApiDecisions"], result["started"], result["status"],
+                ))
+                self.assertFalse(pipeline.is_running(job_id))
+                database = StateDatabase.open(root / "state.db")
+                try:
+                    job = database.get_job(job_id)
+                    self.assertEqual(
+                        ("interrupted", "running", "2026-08-16T00:00:00Z", "2026-08-16T00:01:00Z"),
+                        (job["status"], job["resume_status"], job["cancel_requested_at"], job["finished_at"]),
+                    )
+                finally:
+                    database.close()
+            finally:
+                pipeline.close()
+
+    def test_cancelled_recovery_rejects_incompatible_target_without_touching_work(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            job_id, _dataset = self._cancelled_caption_job(root)
+            database = StateDatabase.open(root / "state.db")
+            try:
+                database.connection.execute("UPDATE jobs SET resume_status='exporting' WHERE job_id=?", (job_id,))
+            finally:
+                database.close()
+            pipeline = PipelineService(root / "state.db", install_root=ROOT / ".runtime-build")
+            try:
+                with self.assertRaisesRegex(PipelineError, "incompatible"):
+                    pipeline.recover_job(job_id, confirmed=True)
+                database = StateDatabase.open(root / "state.db")
+                try:
+                    job = database.get_job(job_id)
+                    self.assertEqual(
+                        ("cancelled_recoverable", "exporting", "2026-08-16T00:00:00Z", "2026-08-16T00:01:00Z"),
+                        (job["status"], job["resume_status"], job["cancel_requested_at"], job["finished_at"]),
+                    )
+                    self.assertEqual("prepared", database.get_sample_state(job_id, 1)["status"])
+                finally:
+                    database.close()
+            finally:
+                pipeline.close()
+
+    def test_cancelled_recovery_to_review_does_not_start_a_thread(self) -> None:
+        for module_id, resume_status in (
+            ("count_review", "reviewing"),
+            ("count_review", "running"),
+            ("token_budget", "reviewing"),
+            ("token_budget", "running"),
+        ):
+            with self.subTest(module_id=module_id, resume_status=resume_status), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                job_id, _dataset = self._cancelled_caption_job(root)
+                database = StateDatabase.open(root / "state.db")
+                try:
+                    database.connection.execute(
+                        """UPDATE jobs SET current_module_id=?,resume_status=?
+                           WHERE job_id=?""",
+                        (module_id, resume_status, job_id),
+                    )
+                    database.connection.execute(
+                        """UPDATE sample_state SET current_module_id=?,status='completed',lease_id=NULL,
+                           worker_instance_id=NULL,lease_expires_at=NULL WHERE job_id=?""",
+                        (module_id, job_id),
+                    )
+                finally:
+                    database.close()
+                pipeline = PipelineService(root / "state.db", install_root=ROOT / ".runtime-build")
+                try:
+                    result = pipeline.recover_job(job_id, confirmed=True)
+                    self.assertEqual((False, "reviewing"), (result["started"], result["status"]))
+                    self.assertFalse(pipeline.is_running(job_id))
+                    database = StateDatabase.open(root / "state.db")
+                    try:
+                        job = database.get_job(job_id)
+                        self.assertEqual(("reviewing", None, None), (
+                            job["status"], job["cancel_requested_at"], job["finished_at"],
+                        ))
+                    finally:
+                        database.close()
+                finally:
+                    pipeline.close()
 
     def test_recovery_commits_or_reuses_prepared_ocr_sidecar_before_resuming(self) -> None:
         for already_committed in (False, True):
@@ -756,6 +970,237 @@ class PipelineTests(unittest.TestCase):
             finally:
                 pipeline.close()
                 preparation.close()
+
+    def test_pause_persists_running_worker_module_state(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            job_id = "job-pause"
+            database = StateDatabase.open(root / "state.db")
+            try:
+                database.insert_job({
+                    "job_id": job_id, "config_schema_version": 5, "config_json": "{}", "config_hash": "a" * 64,
+                    "profile": "e621", "work_mode": "in_place", "overwrite_mode": "incremental", "source_root": str(root),
+                    "output_root": None, "dataset_root": str(root), "dataset_root_key": str(root), "manifest_schema_version": 1,
+                    "recursive": 0, "sample_count": 1, "manifest_generated_at": "now", "status": "running",
+                    "current_module_id": "dropout", "last_event_id": 0, "pinned": 0, "api_budget_extra": 0,
+                    "api_budget_revision": 0, "overlay_root": None, "commit_journal_path": None, "resume_status": None,
+                    "created_at": "now", "started_at": "now", "cancel_requested_at": None, "finished_at": None,
+                })
+                database.initialize_module_summary(job_id, "dropout", total=1, status="running")
+            finally:
+                database.close()
+            pipeline = PipelineService(root / "state.db", install_root=ROOT / ".runtime-build")
+            pipeline._threads[job_id] = SimpleNamespace()  # type: ignore[assignment]
+            try:
+                self.assertTrue(pipeline.pause(job_id))
+                database = StateDatabase.open(root / "state.db")
+                try:
+                    job = database.get_job(job_id)
+                    summary = database.module_summary(job_id, "dropout")
+                    self.assertEqual(("paused", "paused", "dropout", "running"), (
+                        job["status"], summary["status"], job["current_module_id"], job["resume_status"],
+                    ))
+                finally:
+                    database.close()
+                pipeline._threads.pop(job_id)
+                with self.assertRaisesRegex(PipelineError, "running worker"):
+                    pipeline.pause(job_id)
+            finally:
+                pipeline._threads.pop(job_id, None)
+
+    def test_pause_preserves_the_missing_job_error(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            pipeline = PipelineService(Path(temporary) / "state.db", install_root=ROOT / ".runtime-build")
+            try:
+                with self.assertRaises(KeyError):
+                    pipeline.pause("missing-job")
+            finally:
+                pipeline.close()
+
+    def test_pause_and_resume_cover_count_review_and_export(self) -> None:
+        class DeferredThread:
+            def __init__(self, *, target, args, daemon, name) -> None:
+                self.target = target
+                self.args = args
+                self.daemon = daemon
+                self.name = name
+                self.started = False
+
+            def start(self) -> None:
+                self.started = True
+
+            def join(self, timeout=None) -> None:
+                return None
+
+        for module_id, active_status in (("count_review", "running"), ("export", "exporting")):
+            with self.subTest(module_id=module_id), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                job_id = f"job-pause-{module_id}"
+                database = StateDatabase.open(root / "state.db")
+                try:
+                    database.insert_job({
+                        "job_id": job_id, "config_schema_version": 5, "config_json": "{}", "config_hash": "a" * 64,
+                        "profile": "e621", "work_mode": "in_place", "overwrite_mode": "incremental", "source_root": str(root),
+                        "output_root": None, "dataset_root": str(root), "dataset_root_key": str(root), "manifest_schema_version": 1,
+                        "recursive": 0, "sample_count": 1, "manifest_generated_at": "now", "status": active_status,
+                        "current_module_id": module_id, "last_event_id": 0, "pinned": 0, "api_budget_extra": 0,
+                        "api_budget_revision": 0, "overlay_root": None, "commit_journal_path": None, "resume_status": None,
+                        "created_at": "now", "started_at": "now", "cancel_requested_at": None, "finished_at": None,
+                    })
+                    database.initialize_module_summary(job_id, module_id, total=1, status="running")
+                finally:
+                    database.close()
+                pipeline = PipelineService(root / "state.db", install_root=ROOT / ".runtime-build")
+                pipeline._threads[job_id] = SimpleNamespace()  # type: ignore[assignment]
+                try:
+                    self.assertTrue(pipeline.pause(job_id))
+                    database = StateDatabase.open(root / "state.db")
+                    try:
+                        job = database.get_job(job_id)
+                        self.assertEqual(("paused", active_status), (job["status"], job["resume_status"]))
+                        self.assertEqual("paused", database.module_summary(job_id, module_id)["status"])
+                    finally:
+                        database.close()
+                    pipeline._threads.pop(job_id)
+                    with patch("anima_core.pipeline.threading.Thread", DeferredThread):
+                        self.assertTrue(pipeline.resume(job_id))
+                    database = StateDatabase.open(root / "state.db")
+                    try:
+                        self.assertEqual(active_status, database.get_job(job_id)["status"])
+                        self.assertEqual("running", database.module_summary(job_id, module_id)["status"])
+                    finally:
+                        database.close()
+                finally:
+                    pipeline._threads.pop(job_id, None)
+                    pipeline.close()
+
+    def test_paused_resume_start_failure_preserves_concurrent_cancellation(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            job_id = "job-paused-start-failure"
+            database = StateDatabase.open(root / "state.db")
+            try:
+                database.insert_job({
+                    "job_id": job_id, "config_schema_version": 5, "config_json": "{}", "config_hash": "a" * 64,
+                    "profile": "e621", "work_mode": "in_place", "overwrite_mode": "incremental", "source_root": str(root),
+                    "output_root": None, "dataset_root": str(root), "dataset_root_key": str(root), "manifest_schema_version": 1,
+                    "recursive": 0, "sample_count": 0, "manifest_generated_at": "now", "status": "paused",
+                    "current_module_id": "dropout", "last_event_id": 0, "pinned": 0, "api_budget_extra": 0,
+                    "api_budget_revision": 0, "overlay_root": None, "commit_journal_path": None, "resume_status": "running",
+                    "created_at": "now", "started_at": "now", "cancel_requested_at": None, "finished_at": None,
+                })
+                database.initialize_module_summary(job_id, "dropout", total=0, status="paused")
+            finally:
+                database.close()
+
+            def fail_start(*_args: object, **_kwargs: object) -> None:
+                concurrent = StateDatabase.open(root / "state.db")
+                try:
+                    concurrent.begin_cancellation(job_id)
+                    concurrent.settle_cancellation(job_id)
+                finally:
+                    concurrent.close()
+                raise RuntimeError("thread start failed")
+
+            pipeline = PipelineService(root / "state.db", install_root=ROOT / ".runtime-build")
+            try:
+                with patch("anima_core.pipeline.threading.Thread.start", side_effect=fail_start):
+                    with self.assertRaisesRegex(RuntimeError, "thread start failed"):
+                        pipeline.resume(job_id)
+                self.assertFalse(pipeline.is_running(job_id))
+                database = StateDatabase.open(root / "state.db")
+                try:
+                    self.assertEqual("cancelled_recoverable", database.get_job(job_id)["status"])
+                    self.assertEqual("running", database.module_summary(job_id, "dropout")["status"])
+                finally:
+                    database.close()
+            finally:
+                pipeline.close()
+
+    def test_token_budget_resume_start_failure_preserves_concurrent_cancellation(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            job_id = "job-token-budget-start-failure"
+            database = StateDatabase.open(root / "state.db")
+            try:
+                database.insert_job({
+                    "job_id": job_id, "config_schema_version": 6, "config_json": json.dumps({"schemaVersion": 6}), "config_hash": "a" * 64,
+                    "profile": "e621", "work_mode": "in_place", "overwrite_mode": "incremental", "source_root": str(root),
+                    "output_root": None, "dataset_root": str(root), "dataset_root_key": str(root), "manifest_schema_version": 1,
+                    "recursive": 0, "sample_count": 0, "manifest_generated_at": "now", "status": "reviewing",
+                    "current_module_id": "token_budget", "last_event_id": 0, "pinned": 0, "api_budget_extra": 0,
+                    "api_budget_revision": 0, "overlay_root": None, "commit_journal_path": None, "resume_status": None,
+                    "created_at": "now", "started_at": "now", "cancel_requested_at": None, "finished_at": None,
+                })
+            finally:
+                database.close()
+
+            def fail_start(*_args: object, **_kwargs: object) -> None:
+                concurrent = StateDatabase.open(root / "state.db")
+                try:
+                    concurrent.begin_cancellation(job_id)
+                finally:
+                    concurrent.close()
+                raise RuntimeError("thread start failed")
+
+            pipeline = PipelineService(root / "state.db", install_root=ROOT / ".runtime-build")
+            pipeline._token_budget_export_gate = lambda *_: True  # type: ignore[method-assign]
+            try:
+                with patch("anima_core.pipeline.threading.Thread.start", side_effect=fail_start):
+                    with self.assertRaisesRegex(RuntimeError, "thread start failed"):
+                        pipeline.resume(job_id)
+                self.assertFalse(pipeline.is_running(job_id))
+                database = StateDatabase.open(root / "state.db")
+                try:
+                    self.assertEqual(("cancelling", "export"), (
+                        database.get_job(job_id)["status"], database.get_job(job_id)["current_module_id"],
+                    ))
+                finally:
+                    database.close()
+            finally:
+                pipeline.close()
+
+    def test_token_budget_gate_does_not_block_concurrent_cancellation(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            job_id = "job-token-budget-gate-cancellation"
+            database = StateDatabase.open(root / "state.db")
+            try:
+                database.insert_job({
+                    "job_id": job_id, "config_schema_version": 6, "config_json": json.dumps({"schemaVersion": 6}), "config_hash": "a" * 64,
+                    "profile": "e621", "work_mode": "in_place", "overwrite_mode": "incremental", "source_root": str(root),
+                    "output_root": None, "dataset_root": str(root), "dataset_root_key": str(root), "manifest_schema_version": 1,
+                    "recursive": 0, "sample_count": 0, "manifest_generated_at": "now", "status": "reviewing",
+                    "current_module_id": "token_budget", "last_event_id": 0, "pinned": 0, "api_budget_extra": 0,
+                    "api_budget_revision": 0, "overlay_root": None, "commit_journal_path": None, "resume_status": None,
+                    "created_at": "now", "started_at": "now", "cancel_requested_at": None, "finished_at": None,
+                })
+            finally:
+                database.close()
+
+            def gate_and_cancel(*_args: object) -> bool:
+                concurrent = StateDatabase.open(root / "state.db")
+                try:
+                    concurrent.begin_cancellation(job_id)
+                    concurrent.settle_cancellation(job_id)
+                finally:
+                    concurrent.close()
+                return True
+
+            pipeline = PipelineService(root / "state.db", install_root=ROOT / ".runtime-build")
+            pipeline._token_budget_export_gate = gate_and_cancel  # type: ignore[method-assign]
+            try:
+                self.assertFalse(pipeline.resume(job_id))
+                self.assertFalse(pipeline.is_running(job_id))
+                database = StateDatabase.open(root / "state.db")
+                try:
+                    self.assertEqual(("cancelled_recoverable", "token_budget"), (
+                        database.get_job(job_id)["status"], database.get_job(job_id)["current_module_id"],
+                    ))
+                finally:
+                    database.close()
+            finally:
+                pipeline.close()
 
     def test_resume_rejects_settling_thread_before_persisted_state_changes(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

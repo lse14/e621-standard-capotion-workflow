@@ -120,7 +120,8 @@ def set_job_status(
     resume_status: str | None = None,
 ) -> None:
     """Persist one validated job transition and its lifecycle timestamps."""
-    current = str(get_job_row(connection, job_id)["status"])
+    row = get_job_row(connection, job_id)
+    current = str(row["status"])
     if status != current:
         transition_job(current, status)
     connection.execute(
@@ -131,7 +132,9 @@ def set_job_status(
             status, current_module_id, resume_status,
             utc_now() if status in STARTED_JOB_STATUSES else None,
             utc_now() if status == "cancelling" else None,
-            utc_now() if status in FINISHED_JOB_STATUSES else None,
+            utc_now() if status in FINISHED_JOB_STATUSES else (
+                row["finished_at"] if current == "cancelled_recoverable" and status == "interrupted" else None
+            ),
             job_id,
         ),
     )

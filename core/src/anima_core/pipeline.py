@@ -84,12 +84,41 @@ class PipelineService(PipelineRecoveryMixin, PipelineDispatchMixin):
         with self._lock:
             return job_id in self._threads
 
+    @staticmethod
+    def _active_module_status(module_id: object) -> str:
+        if module_id == "export":
+            return "exporting"
+        if module_id == "count_review" or module_id in _RUNTIMES:
+            return "running"
+        raise PipelineError("only an active worker module can change pause state")
+
+    def pause(self, job_id: str) -> bool:
+        """Persist a cooperative pause for the active worker module."""
+        with self._lock:
+            database = StateDatabase.open(self.database_path)
+            try:
+                job = database.get_job(job_id)
+                if job_id not in self._threads:
+                    raise PipelineError("only a running worker module can pause")
+                module_id = job["current_module_id"]
+                active_status = self._active_module_status(module_id)
+                if job["status"] != active_status:
+                    raise PipelineError("only a running worker module can pause")
+                try:
+                    database.pause_active_module(job_id, str(module_id), active_status=active_status)
+                except ValueError as exc:
+                    raise PipelineError(str(exc)) from exc
+            finally:
+                database.close()
+            return True
+
     def resume(self, job_id: str) -> bool:
         """Resume a paused current module, starting a thread only when needed."""
         with self._lock:
             if job_id in self._threads:
                 raise PipelineError("task pipeline is still settling; retry resume")
             resuming_token_budget_review = False
+            resume_target_status: str | None = None
             database = StateDatabase.open(self.database_path)
             try:
                 job = database.get_job(job_id)
@@ -104,23 +133,32 @@ class PipelineService(PipelineRecoveryMixin, PipelineDispatchMixin):
                         raise PipelineError("only a Token Budget-capable review can continue to Export")
                     if database.count_unresolved_blocking_issues(job_id):
                         return False
-                    # Re-run the shared formatter gate before this public resume entry
-                    # makes Export eligible; no API route reaches the private thread loop.
+                    # The gate pages issues/samples and reads overlay files.  It must
+                    # run before taking SQLite's write lock so cancellation remains
+                    # available while this potentially slow verification runs.
                     if not self._token_budget_export_gate(database, job_id, config):
                         return False
-                    database.set_job_status(job_id, "exporting", current_module_id="export", resume_status=None)
+                    with database.transaction(immediate=True):
+                        current = database.get_job(job_id)
+                        if current["status"] in {"cancelling", "cancelled_recoverable"}:
+                            return False
+                        if current["status"] != "reviewing" or current["current_module_id"] != "token_budget":
+                            raise PipelineError("Token Budget review state changed before resume")
+                        database.set_job_status(job_id, "exporting", current_module_id="export", resume_status=None)
                     thread = threading.Thread(
                         target=self._thread_main, args=(job_id, True), daemon=True, name=f"anima-{job_id[:12]}",
                     )
                     self._threads[job_id] = thread
                 else:
-                    if job["status"] != "paused" or module_id not in _RUNTIMES:
+                    resume_target_status = self._active_module_status(module_id)
+                    if job["status"] != "paused" or job["resume_status"] != resume_target_status:
                         raise PipelineError("only a paused worker module can resume")
-                    summary = database.module_summary(job_id, str(module_id))
-                    if summary["status"] != "paused":
-                        raise PipelineError("paused task has no paused current module")
-                    database.set_module_summary(job_id, str(module_id), status="running")
-                    database.set_job_status(job_id, "running", current_module_id=str(module_id), resume_status=None)
+                    try:
+                        database.resume_paused_module(
+                            job_id, str(module_id), target_status=resume_target_status
+                        )
+                    except ValueError as exc:
+                        raise PipelineError(str(exc)) from exc
                     thread = threading.Thread(
                         target=self._thread_main, args=(job_id, True), daemon=True, name=f"anima-{job_id[:12]}",
                     )
@@ -134,10 +172,22 @@ class PipelineService(PipelineRecoveryMixin, PipelineDispatchMixin):
                 database = StateDatabase.open(self.database_path)
                 try:
                     if resuming_token_budget_review:
-                        database.set_job_status(job_id, "reviewing", current_module_id="token_budget", resume_status=None)
+                        with database.transaction(immediate=True):
+                            current = database.get_job(job_id)
+                            if current["status"] == "exporting" and current["current_module_id"] == "export":
+                                database.set_job_status(job_id, "reviewing", current_module_id="token_budget", resume_status=None)
                     else:
-                        database.set_module_summary(job_id, str(module_id), status="paused")
-                        database.set_job_status(job_id, "paused", current_module_id=str(module_id), resume_status="running")
+                        assert resume_target_status is not None
+                        try:
+                            database.pause_active_module(
+                                job_id, str(module_id), active_status=resume_target_status
+                            )
+                        except (KeyError, ValueError):
+                            pass
+                except Exception:
+                    # Preserve the thread start failure even if its best-effort
+                    # rollback cannot observe a compatible persisted state.
+                    pass
                 finally:
                     database.close()
                 raise
@@ -294,7 +344,12 @@ class PipelineService(PipelineRecoveryMixin, PipelineDispatchMixin):
                         repairStartModule="token_budget",
                     ))
         if failed:
-            database.set_job_status(job_id, "reviewing", current_module_id="token_budget")
+            with database.transaction(immediate=True):
+                current = database.get_job(job_id)
+                if current["status"] == "running" and current["current_module_id"] == "token_budget":
+                    database.set_job_status(job_id, "reviewing", current_module_id="token_budget")
+                elif current["status"] == "exporting" and current["current_module_id"] == "export":
+                    database.set_job_status(job_id, "reviewing", current_module_id="token_budget")
             return False
         return True
 

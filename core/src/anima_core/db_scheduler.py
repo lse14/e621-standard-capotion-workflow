@@ -20,6 +20,7 @@ from .db_primitives import (
     validate_page_limit,
 )
 from .db_schema import MAX_PAGE_SIZE, NON_INTERRUPTIBLE_JOB_STATUSES
+from .state_machine import transition_job, transition_module
 
 
 def _complete_leased_sample_with_issue(
@@ -648,13 +649,82 @@ class SchedulerDatabaseMixin:
         """
         placeholders = ",".join("?" for _ in NON_INTERRUPTIBLE_JOB_STATUSES)
         self.connection.execute(
-            f"UPDATE jobs SET resume_status=status,status='interrupted' WHERE job_id=? AND status NOT IN ({placeholders})",
+            f"""UPDATE jobs SET resume_status=CASE
+                    WHEN status='paused' THEN COALESCE(resume_status,'running')
+                    ELSE status
+                END,status='interrupted'
+                WHERE job_id=? AND status NOT IN ({placeholders})""",
             (job_id, *NON_INTERRUPTIBLE_JOB_STATUSES),
         )
 
+    def pause_active_module(self, job_id: str, module_id: str, *, active_status: str) -> None:
+        """Atomically pause the exact active job and module pair."""
+        if active_status not in {"running", "exporting"}:
+            raise ValueError("active module status is invalid")
+        transition_job(active_status, "paused")
+        transition_module("running", "paused", module_id=module_id)
+        with self.transaction(immediate=True):
+            job = self.connection.execute(
+                "SELECT status,current_module_id FROM jobs WHERE job_id=?", (job_id,)
+            ).fetchone()
+            if job is None:
+                raise KeyError(f"job does not exist: {job_id}")
+            if job["status"] != active_status or job["current_module_id"] != module_id:
+                raise ValueError("active module state changed before pause")
+            summary = self.connection.execute(
+                "UPDATE module_summary SET status='paused' WHERE job_id=? AND module_id=? AND status='running'",
+                (job_id, module_id),
+            )
+            if summary.rowcount != 1:
+                raise ValueError("active module state changed before pause")
+            result = self.connection.execute(
+                """UPDATE jobs SET status='paused',resume_status=?
+                   WHERE job_id=? AND status=? AND current_module_id=?""",
+                (active_status, job_id, active_status, module_id),
+            )
+            if result.rowcount != 1:
+                raise ValueError("active module state changed before pause")
+
+    def resume_paused_module(self, job_id: str, module_id: str, *, target_status: str) -> None:
+        """Atomically resume the exact paused job and module pair."""
+        if target_status not in {"running", "exporting"}:
+            raise ValueError("resume target status is invalid")
+        transition_job("paused", target_status)
+        transition_module("paused", "running", module_id=module_id)
+        with self.transaction(immediate=True):
+            job = self.connection.execute(
+                "SELECT status,current_module_id,resume_status FROM jobs WHERE job_id=?", (job_id,)
+            ).fetchone()
+            if job is None:
+                raise KeyError(f"job does not exist: {job_id}")
+            if (
+                job["status"] != "paused"
+                or job["current_module_id"] != module_id
+                or job["resume_status"] != target_status
+            ):
+                raise ValueError("paused module state changed before resume")
+            summary = self.connection.execute(
+                "UPDATE module_summary SET status='running' WHERE job_id=? AND module_id=? AND status='paused'",
+                (job_id, module_id),
+            )
+            if summary.rowcount != 1:
+                raise ValueError("paused module state changed before resume")
+            result = self.connection.execute(
+                """UPDATE jobs SET status=?,resume_status=NULL
+                   WHERE job_id=? AND status='paused' AND current_module_id=? AND resume_status=?""",
+                (target_status, job_id, module_id, target_status),
+            )
+            if result.rowcount != 1:
+                raise ValueError("paused module state changed before resume")
+
     def begin_cancellation(self, job_id: str) -> None:
         result = self.connection.execute(
-            """UPDATE jobs SET status='cancelling',cancel_requested_at=COALESCE(cancel_requested_at,?)
+            """UPDATE jobs SET resume_status=CASE
+                    WHEN status='cancelling' THEN resume_status
+                    WHEN status='paused' THEN COALESCE(resume_status,'running')
+                    ELSE status
+                END,
+                status='cancelling',cancel_requested_at=COALESCE(cancel_requested_at,?)
                WHERE job_id=? AND status IN ('preparing_workspace','running','paused','reviewing','exporting','cancelling')""",
             (utc_now(), job_id),
         )
