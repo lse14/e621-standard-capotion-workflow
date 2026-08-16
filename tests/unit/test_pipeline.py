@@ -428,6 +428,39 @@ class PipelineTests(unittest.TestCase):
                 pipeline._threads.pop(job_id, None)
                 preparation.close()
 
+    def test_forced_cuda_start_gate_rejects_a_tampered_frozen_config_before_probing(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            preparation, job_id = self._prepared_ocr_job(root)
+            pipeline = PipelineService(root / "state.db", install_root=ROOT / ".runtime-build")
+            try:
+                database = StateDatabase.open(root / "state.db")
+                try:
+                    frozen = json.loads(str(database.get_job(job_id)["config_json"]))
+                    frozen["ocr"]["textBatchSize"] = {"mode": "manual", "value": 2}
+                    database.connection.execute(
+                        "UPDATE jobs SET config_json=? WHERE job_id=?",
+                        (json.dumps(frozen, separators=(",", ":")), job_id),
+                    )
+                finally:
+                    database.close()
+                with patch.object(pipeline, "_resolve_ocr_runtime", side_effect=self.fail) as resolve:
+                    with patch.object(pipeline, "_probe_ocr_gpu_runtime", side_effect=self.fail) as probe:
+                        with patch("anima_core.pipeline.threading.Thread.start") as thread_start:
+                            with self.assertRaisesRegex(PipelineError, "hash does not match"):
+                                pipeline.start(job_id)
+                resolve.assert_not_called()
+                probe.assert_not_called()
+                thread_start.assert_not_called()
+                database = StateDatabase.open(root / "state.db")
+                try:
+                    self.assertEqual("preparing_workspace", database.get_job(job_id)["status"])
+                finally:
+                    database.close()
+            finally:
+                pipeline._threads.pop(job_id, None)
+                preparation.close()
+
     def test_forced_cuda_start_gate_skips_an_existing_ocr_binding(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
