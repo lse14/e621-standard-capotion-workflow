@@ -57,8 +57,11 @@ def normalize_endpoint(value: object) -> str:
     if hostname is None:
         raise NlValidationError("API endpoint hostname is invalid")
     path = parsed.path.rstrip("/")
-    if not path.endswith("/chat/completions"):
-        path += "/chat/completions"
+    for suffix in ("/chat/completions", "/models"):
+        if path.endswith(suffix):
+            path = path[: -len(suffix)]
+            break
+    path += "/chat/completions"
     return urlunsplit((parsed.scheme, parsed.netloc, path, "", ""))
 
 

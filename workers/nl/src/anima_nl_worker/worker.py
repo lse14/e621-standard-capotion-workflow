@@ -18,6 +18,7 @@ from .validation import NL_IMAGE_NOT_RECEIVED, NlValidationError, validate_compl
 
 
 RETRIABLE_STATUSES = frozenset({408, 429, 500, 502, 503, 504})
+USER_AGENT = "Anima-Dataset-Tool/1.0"
 PROTOCOL_PROMPT_V2 = """Return exactly one JSON object with exactly these keys: nl, count, layout, sameCharacterRepeated.
 nl must be one non-empty natural-language caption string.
 count must be exactly one of solo, duo, trio, group, unknown and must count independent visible entities, including non-human entities.
@@ -197,7 +198,7 @@ class NlWorker:
                     return process_issue(item, "nl_budget_exhausted", "HTTP attempt budget is exhausted", retriable=True, http_attempts=attempts_used)
                 attempts_used += 1
                 try:
-                    response = await self.client.post(self.hello.endpoint, headers={"Authorization": f"Bearer {self.hello.apiKey}"}, json={"model": model, "temperature": self.hello.policy.temperature, "top_p": self.hello.policy.topP, "max_tokens": self.hello.policy.maxTokens, "messages": messages})
+                    response = await self.client.post(self.hello.endpoint, headers={"Authorization": f"Bearer {self.hello.apiKey}", "User-Agent": USER_AGENT}, json={"model": model, "temperature": self.hello.policy.temperature, "top_p": self.hello.policy.topP, "max_tokens": self.hello.policy.maxTokens, "messages": messages})
                     if response.status_code in {401, 403}:
                         return process_issue(item, "nl_auth_failed", f"API returned HTTP {response.status_code}", retriable=False, http_attempts=attempts_used)
                     if response.status_code not in RETRIABLE_STATUSES and response.status_code >= 400:
