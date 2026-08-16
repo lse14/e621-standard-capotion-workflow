@@ -23,7 +23,8 @@ class DesktopControlTests(unittest.TestCase):
     def test_start_batch_keeps_a_double_click_failure_visible_with_log_guidance(self) -> None:
         contents = (ROOT / "Start-WebUI.bat").read_text(encoding="ascii")
         self.assertIn("set \"exitCode=%ERRORLEVEL%\"", contents)
-        self.assertIn("if not \"%exitCode%\"==\"0\"", contents)
+        self.assertIn('if "%exitCode%"=="0" exit /b 0', contents)
+        self.assertIn("goto :failed", contents)
         self.assertIn(".runtime-build\\launcher", contents)
         self.assertIn("pause", contents.lower())
         self.assertIn("exit /b %exitCode%", contents)
