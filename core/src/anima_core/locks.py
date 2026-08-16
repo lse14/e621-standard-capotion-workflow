@@ -16,6 +16,12 @@ class DatasetLockError(RuntimeError):
     pass
 
 
+class DatasetClaimConflict(DatasetLockError):
+    def __init__(self, claiming_job_id: str) -> None:
+        self.claiming_job_id = claiming_job_id
+        super().__init__(f"dataset is claimed by task {claiming_job_id}")
+
+
 GENERIC_READ = 0x80000000
 GENERIC_WRITE = 0x40000000
 OPEN_ALWAYS = 4
@@ -112,7 +118,7 @@ class DatasetLock:
                     "SELECT job_id FROM dataset_claims WHERE dataset_root=?", (str(dataset),)
                 ).fetchone()
                 if existing is not None and existing["job_id"] != job_id:
-                    raise DatasetLockError(f"dataset is claimed by job {existing['job_id']}")
+                    raise DatasetClaimConflict(str(existing["job_id"]))
                 if existing is None:
                     database.connection.execute(
                         """INSERT INTO dataset_claims(

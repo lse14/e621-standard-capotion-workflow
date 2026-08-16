@@ -6,7 +6,7 @@ from pathlib import Path
 from fastapi import APIRouter, Query
 
 from .annotation_restore import AnnotationRestoreCoordinator, AnnotationRestoreError
-from .api_context import ControlPlaneContext, bad_request, not_found
+from .api_context import ControlPlaneContext, bad_request, conflict, not_found
 from .api_models import _ConfirmBody, _PinBody, _PreflightBody, _WorkspaceBody, parse_create_job_body
 from .commit_journal import CommitJournalError, load as load_journal
 from .contracts import pipeline_module_ids
@@ -14,6 +14,7 @@ from .db import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, StateDatabase
 from .export_summary import build_export_summary
 from .job_preflight import JobPreflightError
 from .lifecycle import JobLifecycle, JobLifecycleError
+from .locks import DatasetClaimConflict, DatasetLockError
 from .nl_runner import pending_api_decisions
 from .ocr_runtime_binding import OcrExecutionError, read_runtime_binding
 from .overlay import OverlayError, OverlayLayout
@@ -222,6 +223,14 @@ def build_jobs_router(context: ControlPlaneContext) -> APIRouter:
             )
         except KeyError as exc:
             raise not_found(exc) from exc
+        except DatasetClaimConflict as exc:
+            raise conflict(ValueError(
+                f"Dataset is claimed by task {exc.claiming_job_id}. Select it under Recent tasks: "
+                "Recover keeps its progress and continues to hold the dataset; "
+                "Discard deletes its overlay and releases the dataset."
+            )) from exc
+        except DatasetLockError as exc:
+            raise conflict(exc) from exc
         except JobPreflightError as exc:
             raise bad_request(exc) from exc
 

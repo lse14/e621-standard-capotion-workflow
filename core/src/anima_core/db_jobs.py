@@ -22,7 +22,6 @@ from .db_schema import (
     MAX_EVENT_RING,
     MAX_PAGE_SIZE,
     NON_INTERRUPTIBLE_JOB_STATUSES,
-    TERMINAL_JOB_STATUSES,
 )
 
 
@@ -468,12 +467,10 @@ class JobDatabaseMixin:
         ))
 
     def clear_stale_dataset_claims(self) -> int:
-        """Drop dataset claims a crashed process left behind for finished jobs."""
-        placeholders = ",".join("?" for _ in TERMINAL_JOB_STATUSES)
+        """Drop claims left by successful jobs; recoverable tasks retain ownership."""
         result = self.connection.execute(
-            f"""DELETE FROM dataset_claims WHERE job_id IN (
-                    SELECT job_id FROM jobs WHERE status IN ({placeholders}))""",
-            TERMINAL_JOB_STATUSES,
+            """DELETE FROM dataset_claims WHERE job_id IN (
+                    SELECT job_id FROM jobs WHERE status='succeeded')""",
         )
         return result.rowcount
 

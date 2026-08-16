@@ -20,7 +20,7 @@ from .contracts import (
 )
 from .custom_replace_index import CustomReplaceIndex, CustomReplaceIndexError, inspect_custom_replace_index
 from .db import StateDatabase, assert_database_outside_datasets
-from .locks import DatasetLock
+from .locks import DatasetLock, DatasetLockError
 from .manifest import ManifestBuilder, ManifestError
 from .nl_runner import nl_http_attempt_budget
 from .nl_length import character_name
@@ -522,6 +522,7 @@ class JobPreparationService:
             raise JobPreflightError("workspace preparation requires explicit confirmation")
         database = StateDatabase.open(self.database_path)
         acquired: DatasetLock | None = None
+        first_lock_acquired = False
         retain_database = False
         try:
             job = database.get_job(job_id)
@@ -547,7 +548,9 @@ class JobPreparationService:
             if config.overwriteMode == "rebuild" and not confirmed_rebuild:
                 raise JobPreflightError("rebuild workspace preparation requires second confirmation")
             source, _ = validate_source_output(config.sourceRoot, config.outputRoot, config.workMode)
+            self._release_succeeded_dataset_claim(database, source.value)
             acquired = DatasetLock.acquire(database, source.value, job_id)
+            first_lock_acquired = True
             dataset = prepare_dataset(source.value, config.outputRoot, config.workMode, job_id).datasetRoot
             if config.workMode == "full_copy":
                 acquired.release(recovery_complete=True)
@@ -569,6 +572,13 @@ class JobPreparationService:
             acquired = None
             retain_database = True
             return {"jobId": job_id, "status": "preparing_workspace", "datasetRoot": str(dataset), "overlayRoot": str(layout.root)}
+        except DatasetLockError:
+            if not first_lock_acquired:
+                raise
+            if acquired is not None:
+                acquired.release(recovery_complete=True)
+            database.set_job_status(job_id, "failed", current_module_id="workspace")
+            raise
         except Exception:
             if acquired is not None:
                 acquired.release(recovery_complete=True)
@@ -577,6 +587,33 @@ class JobPreparationService:
         finally:
             if not retain_database:
                 database.close()
+
+    def _release_succeeded_dataset_claim(self, database: StateDatabase, dataset: Path) -> None:
+        owner = database.connection.execute(
+            """SELECT c.job_id,j.status FROM dataset_claims AS c
+               JOIN jobs AS j ON j.job_id=c.job_id WHERE c.dataset_root=?""",
+            (str(dataset),),
+        ).fetchone()
+        if owner is None or owner["status"] != "succeeded":
+            return
+        claiming_job_id = str(owner["job_id"])
+        lock = self._locks.get(claiming_job_id)
+        if lock is not None:
+            lock.release(recovery_complete=True)
+            lock.database.close()
+            del self._locks[claiming_job_id]
+            return
+        with database.transaction(immediate=True):
+            current = database.connection.execute(
+                """SELECT c.job_id,j.status FROM dataset_claims AS c
+                   JOIN jobs AS j ON j.job_id=c.job_id WHERE c.dataset_root=?""",
+                (str(dataset),),
+            ).fetchone()
+            if current is not None and current["status"] == "succeeded":
+                database.connection.execute(
+                    "DELETE FROM dataset_claims WHERE dataset_root=? AND job_id=?",
+                    (str(dataset), str(current["job_id"])),
+                )
 
     def close(self) -> None:
         for lock in tuple(self._locks.values()):
