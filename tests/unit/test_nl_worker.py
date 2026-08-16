@@ -179,7 +179,12 @@ class NlWorkerTests(unittest.TestCase):
         self.assertEqual("https://example.test/v1/chat/completions", normalize_endpoint("https://example.test/v1"))
         self.assertEqual("http://localhost:8080/chat/completions", normalize_endpoint("http://localhost:8080"))
         self.assertEqual("http://provider.example/v1/chat/completions", normalize_endpoint("http://provider.example/v1"))
-        self.assertEqual("https://example.test/v1/chat/completions", normalize_endpoint("https://example.test/v1/models"))
+        for endpoint in (
+            "https://example.test/v1/models",
+            "https://example.test/v1/chat/completions",
+        ):
+            with self.subTest(endpoint=endpoint):
+                self.assertEqual("https://example.test/v1/chat/completions", normalize_endpoint(endpoint))
         with self.assertRaises(NlValidationError):
             normalize_endpoint("http://user:pass@provider.example/v1")
         with self.assertRaises(NlValidationError):
