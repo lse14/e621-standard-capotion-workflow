@@ -23,8 +23,8 @@ ROOT_ENTRYPOINTS = {
     "clean": ROOT / "Clean-OcrGpuArtifacts.bat",
 }
 OFFICIAL_WHEEL_URL = (
-    "https://paddle-whl.bj.bcebos.com/stable/cu126/paddlepaddle-gpu/"
-    "paddlepaddle_gpu-3.2.2-cp311-cp311-win_amd64.whl"
+    "https://paddle-whl.bj.bcebos.com/stable/cu129/paddlepaddle-gpu/"
+    "paddlepaddle_gpu-3.3.0-cp311-cp311-win_amd64.whl"
 )
 
 

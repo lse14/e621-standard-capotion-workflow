@@ -16,8 +16,8 @@ from typing import Callable
 
 
 OFFICIAL_WHEEL_URL = (
-    "https://paddle-whl.bj.bcebos.com/stable/cu126/paddlepaddle-gpu/"
-    "paddlepaddle_gpu-3.2.2-cp311-cp311-win_amd64.whl"
+    "https://paddle-whl.bj.bcebos.com/stable/cu129/paddlepaddle-gpu/"
+    "paddlepaddle_gpu-3.3.0-cp311-cp311-win_amd64.whl"
 )
 GPU_PADDLE_VERSION = "3.3.0"
 GPU_CACHE_TARGETS = (
@@ -32,7 +32,7 @@ GPU_FORMAL_TARGETS = (
     "packaging/requirements/ocr-paddle-gpu.lock",
 )
 APPLY_GATES = (
-    "fixed cu126 wheel URL and observed size/SHA-256 inventory lock",
+    "fixed cu129 wheel URL and observed size/SHA-256 inventory lock",
     "offline install from the unique build-environment/downloads/staging tree",
     "reject CPU paddlepaddle and multiple Paddle distributions",
     "read existing OCR models without copy or download",
