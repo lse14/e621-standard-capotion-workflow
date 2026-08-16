@@ -15,6 +15,7 @@
 **Files:**
 - Modify: `tests/unit/test_job_preflight.py`
 - Modify: `tests/unit/test_api.py`
+- Modify: `tests/unit/test_lifecycle_retention.py`
 
 - [ ] **Step 1: Add a real interrupted-claim regression**
 
@@ -52,7 +53,11 @@ self.assertEqual(
 
 The interrupted case must remain a conflict; no test may delete its overlay or claim.
 
-- [ ] **Step 3: Add the API 409 contract and exact explanation**
+- [ ] **Step 3: Keep startup cleanup limited to succeeded claims**
+
+Extend the existing lifecycle claim sweep regression with `failed` and `cancelled_recoverable` owners. Assert the sweep deletes only the `succeeded` claim and preserves both recoverable claims.
+
+- [ ] **Step 4: Add the API 409 contract and exact explanation**
 
 Use the real preparation service and seed an interrupted owner claim for task `3bc585`, then call the real `confirm-workspace` endpoint for the second task. Capture any raised exception into a value before asserting its type, so current `DatasetLockError` behavior produces a normal RED assertion failure:
 
@@ -74,7 +79,7 @@ self.assertEqual(
 )
 ```
 
-- [ ] **Step 4: Run RED tests and record the expected failures**
+- [ ] **Step 5: Run RED tests and record the expected failures**
 
 Run:
 
@@ -83,11 +88,12 @@ Run:
 .runtime-build\runtimes\core\python.exe -B -I tests\unit\test_job_preflight.py JobPreflightTests.test_succeeded_dataset_claim_is_released_before_confirmation
 .runtime-build\runtimes\core\python.exe -B -I tests\unit\test_job_preflight.py JobPreflightTests.test_succeeded_live_dataset_lock_is_released_before_confirmation
 .runtime-build\runtimes\core\python.exe -B -I tests\unit\test_api.py ControlPlaneApiTests.test_confirm_workspace_maps_dataset_claim_conflict_to_actionable_409
+.runtime-build\runtimes\core\python.exe -B -I tests\unit\test_lifecycle_retention.py LifecycleAndRetentionTests.test_discard_and_startup_sweep_release_dataset_claims
 ```
 
 Expected: the blocked task becomes `failed`, succeeded owners still block, and the API assertion observes `DatasetLockError` instead of an HTTP 409. All failures must be assertion failures caused by the missing behavior, not import or fixture errors.
 
-- [ ] **Step 5: Commit the RED tests**
+- [ ] **Step 6: Commit the RED tests**
 
 ```text
 git add tests/unit/test_job_preflight.py tests/unit/test_api.py
@@ -100,8 +106,10 @@ git commit -m test:dataset-claim-conflict-red
 - Modify: `core/src/anima_core/locks.py`
 - Modify: `core/src/anima_core/job_preflight.py`
 - Modify: `core/src/anima_core/api_jobs.py`
+- Modify: `core/src/anima_core/db_jobs.py`
 - Test: `tests/unit/test_job_preflight.py`
 - Test: `tests/unit/test_api.py`
+- Test: `tests/unit/test_lifecycle_retention.py`
 
 - [ ] **Step 1: Add a typed persisted-claim conflict**
 
@@ -141,6 +149,8 @@ else:
 
 Call this helper immediately before `DatasetLock.acquire`. Never release `interrupted`, `failed`, `cancelled_recoverable`, or unknown owners.
 
+Keep startup recovery aligned with the same boundary: `clear_stale_dataset_claims` must delete only claims owned by `succeeded` jobs. `discarded` jobs are already released by the discard transaction; `failed` and `cancelled_recoverable` remain recoverable and must retain their claims.
+
 - [ ] **Step 3: Preserve retryability for initial acquisition errors**
 
 Import `DatasetLockError`. Track whether the first lock acquisition returned successfully. Add a dedicated `except DatasetLockError` before the generic handler: an initial acquisition failure re-raises without changing the job from `ready` or creating an overlay; a later lock failure retains the existing cleanup and `failed` behavior.
@@ -165,7 +175,7 @@ Expected: all pass; the interrupted startup test continues to assert that its cl
 - [ ] **Step 6: Commit the backend fix**
 
 ```text
-git add core/src/anima_core/locks.py core/src/anima_core/job_preflight.py core/src/anima_core/api_jobs.py
+git add core/src/anima_core/locks.py core/src/anima_core/job_preflight.py core/src/anima_core/api_jobs.py core/src/anima_core/db_jobs.py
 git commit -m fix:dataset-claim-conflict
 ```
 

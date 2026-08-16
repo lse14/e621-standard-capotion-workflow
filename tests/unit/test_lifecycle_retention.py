@@ -68,7 +68,18 @@ class LifecycleAndRetentionTests(unittest.TestCase):
             try:
                 database.insert_job(_job("job-discard", dataset))
                 database.insert_job(_job("job-done", other, status="succeeded"))
-                for job_id, path in (("job-discard", dataset), ("job-done", other)):
+                failed = root / "failed"
+                cancelled = root / "cancelled"
+                failed.mkdir()
+                cancelled.mkdir()
+                database.insert_job(_job("job-failed", failed, status="failed"))
+                database.insert_job(_job("job-cancelled", cancelled, status="cancelled_recoverable"))
+                for job_id, path in (
+                    ("job-discard", dataset),
+                    ("job-done", other),
+                    ("job-failed", failed),
+                    ("job-cancelled", cancelled),
+                ):
                     database.connection.execute(
                         """INSERT INTO dataset_claims(dataset_root,dataset_root_key,job_id,lock_path,acquired_at)
                            VALUES (?,?,?,?,?)""",
@@ -78,11 +89,20 @@ class LifecycleAndRetentionTests(unittest.TestCase):
                 # dataset forever, so no later job could ever acquire it.
                 JobLifecycle(database).discard("job-discard", confirmed=True)
                 self.assertEqual(
-                    ["job-done"],
-                    [str(row["job_id"]) for row in database.connection.execute("SELECT job_id FROM dataset_claims")],
+                    ["job-cancelled", "job-done", "job-failed"],
+                    [
+                        str(row["job_id"])
+                        for row in database.connection.execute("SELECT job_id FROM dataset_claims ORDER BY job_id")
+                    ],
                 )
                 self.assertEqual(1, database.clear_stale_dataset_claims())
-                self.assertEqual([], list(database.connection.execute("SELECT job_id FROM dataset_claims")))
+                self.assertEqual(
+                    ["job-cancelled", "job-failed"],
+                    [
+                        str(row["job_id"])
+                        for row in database.connection.execute("SELECT job_id FROM dataset_claims ORDER BY job_id")
+                    ],
+                )
             finally:
                 database.close()
 

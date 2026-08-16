@@ -290,53 +290,53 @@ class JobPreflightTests(unittest.TestCase):
         return config.to_dict()
 
     def test_dataset_claim_conflict_keeps_new_job_ready(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            dataset = root / "dataset"
-            dataset.mkdir()
-            Image.new("RGB", (3, 3), "white").save(dataset / "image.png")
-            catalog, _ = _write_test_resource_library(root, include_ocr=False)
-            service = JobPreparationService(root / "state.db", resource_catalog=catalog)
-            try:
-                owner = service.preflight(self._ocr_config(dataset, enabled=False))
-                contender = service.preflight(self._ocr_config(dataset, enabled=False))
-                database = StateDatabase.open(root / "state.db")
+        transitions = {
+            "interrupted": ("preparing_workspace", "interrupted"),
+            "failed": ("preparing_workspace", "failed"),
+            "cancelled_recoverable": ("preparing_workspace", "cancelling", "cancelled_recoverable"),
+        }
+        for owner_status, owner_transitions in transitions.items():
+            with self.subTest(owner_status=owner_status), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                dataset = root / "dataset"
+                dataset.mkdir()
+                Image.new("RGB", (3, 3), "white").save(dataset / "image.png")
+                catalog, _ = _write_test_resource_library(root, include_ocr=False)
+                service = JobPreparationService(root / "state.db", resource_catalog=catalog)
                 try:
-                    overlay = OverlayLayout.create(dataset, owner.jobId)
-                    database.set_workspace_metadata(
-                        owner.jobId,
-                        dataset_root=str(dataset),
-                        dataset_root_key=windows_key(dataset),
-                        overlay_root=str(overlay.root),
-                    )
-                    for status in (
-                        "preparing_workspace",
-                        "interrupted",
-                        "failed",
-                        "preparing_workspace",
-                        "cancelling",
-                        "cancelled_recoverable",
-                    ):
-                        database.set_job_status(owner.jobId, status, current_module_id="workspace")
-                    database.connection.execute(
-                        """INSERT INTO dataset_claims(dataset_root,dataset_root_key,job_id,lock_path,acquired_at)
-                           VALUES (?,?,?,?,?)""",
-                        (str(dataset), windows_key(dataset), owner.jobId, str(root / ".restart.lock"), "2026-08-17T00:00:00Z"),
-                    )
+                    owner = service.preflight(self._ocr_config(dataset, enabled=False))
+                    contender = service.preflight(self._ocr_config(dataset, enabled=False))
+                    database = StateDatabase.open(root / "state.db")
+                    try:
+                        overlay = OverlayLayout.create(dataset, owner.jobId)
+                        database.set_workspace_metadata(
+                            owner.jobId,
+                            dataset_root=str(dataset),
+                            dataset_root_key=windows_key(dataset),
+                            overlay_root=str(overlay.root),
+                        )
+                        for status in owner_transitions:
+                            database.set_job_status(owner.jobId, status, current_module_id="workspace")
+                        database.connection.execute(
+                            """INSERT INTO dataset_claims(dataset_root,dataset_root_key,job_id,lock_path,acquired_at)
+                               VALUES (?,?,?,?,?)""",
+                            (str(dataset), windows_key(dataset), owner.jobId, str(root / ".restart.lock"), "2026-08-17T00:00:00Z"),
+                        )
 
-                    with self.assertRaises(DatasetLockError):
-                        service.confirm_workspace(contender.jobId, confirmed=True, confirmed_rebuild=False)
+                        with self.assertRaises(DatasetLockError):
+                            service.confirm_workspace(contender.jobId, confirmed=True, confirmed_rebuild=False)
 
-                    self.assertEqual("ready", database.get_job(contender.jobId)["status"])
-                    claim = database.connection.execute(
-                        "SELECT job_id FROM dataset_claims WHERE dataset_root=?", (str(dataset),)
-                    ).fetchone()
-                    self.assertEqual(owner.jobId, claim["job_id"] if claim is not None else None)
-                    self.assertTrue(overlay.root.is_dir())
+                        self.assertEqual(owner_status, database.get_job(owner.jobId)["status"])
+                        self.assertEqual("ready", database.get_job(contender.jobId)["status"])
+                        claim = database.connection.execute(
+                            "SELECT job_id FROM dataset_claims WHERE dataset_root=?", (str(dataset),)
+                        ).fetchone()
+                        self.assertEqual(owner.jobId, claim["job_id"] if claim is not None else None)
+                        self.assertTrue(overlay.root.is_dir())
+                    finally:
+                        database.close()
                 finally:
-                    database.close()
-            finally:
-                service.close()
+                    service.close()
 
     def test_succeeded_dataset_claim_is_released_before_confirmation(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
