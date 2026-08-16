@@ -19,6 +19,7 @@ _MAX_MODEL_BYTES = 512
 _MAX_BASE_PROMPT_BYTES = 65_536
 _MAX_REASON_CHARS = 512
 _REQUEST_TIMEOUT_SECONDS = 15.0
+_USER_AGENT = "Anima-Dataset-Tool/1.0"
 _CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f-\x9f]+")
 _WHITESPACE = re.compile(r"\s+")
 _AUTHORIZATION = re.compile(r"(?i)authorization\s*:\s*bearer\s+\S+")
@@ -64,8 +65,11 @@ def _normalize_chat_endpoint(value: object) -> str | None:
     ):
         return None
     path = parsed.path.rstrip("/")
-    if not path.endswith("/chat/completions"):
-        path += "/chat/completions"
+    for suffix in ("/chat/completions", "/models"):
+        if path.endswith(suffix):
+            path = path[: -len(suffix)]
+            break
+    path += "/chat/completions"
     return urlunsplit((parsed.scheme, parsed.netloc, path, "", ""))
 
 
@@ -243,7 +247,7 @@ class NlDiagnosticClient:
             return self._discovery_failure(latency_ms=_latency_ms(start, self._clock()), code="invalid_endpoint")
         if not _valid_text(api_key, limit=MAX_RESPONSE_BYTES):
             return self._discovery_failure(latency_ms=_latency_ms(start, self._clock()), code="credential_unavailable")
-        request = Request(_models_endpoint(chat_endpoint), method="GET", headers={"Authorization": f"Bearer {api_key}"})
+        request = Request(_models_endpoint(chat_endpoint), method="GET", headers={"Authorization": f"Bearer {api_key}", "User-Agent": _USER_AGENT})
         body, error_code, error_reason = self._request(request, api_key=api_key, endpoint=chat_endpoint)
         latency_ms = _latency_ms(start, self._clock())
         if error_code is not None:
@@ -281,7 +285,7 @@ class NlDiagnosticClient:
             chat_endpoint,
             data=payload,
             method="POST",
-            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json; charset=utf-8"},
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json; charset=utf-8", "User-Agent": _USER_AGENT},
         )
         body, error_code, error_reason = self._request(request, api_key=api_key, endpoint=chat_endpoint)
         latency_ms = _latency_ms(start, self._clock())

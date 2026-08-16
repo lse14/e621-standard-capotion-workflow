@@ -7,7 +7,7 @@ from ctypes import wintypes
 from pathlib import Path
 
 
-REFERENCE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
+REFERENCE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 
 
 class CredentialStoreError(RuntimeError):
