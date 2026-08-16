@@ -19,6 +19,7 @@ OFFICIAL_WHEEL_URL = (
     "https://paddle-whl.bj.bcebos.com/stable/cu126/paddlepaddle-gpu/"
     "paddlepaddle_gpu-3.2.2-cp311-cp311-win_amd64.whl"
 )
+GPU_PADDLE_VERSION = "3.3.0"
 GPU_CACHE_TARGETS = (
     ".runtime-build/ocr-gpu/v1/build-environment",
     ".runtime-build/ocr-gpu/v1/downloads",
@@ -327,7 +328,7 @@ def _validate_wheel_inventory(wheelhouse: Path) -> list[dict[str, object]]:
             raise ValueError("GPU wheel inventory is incompatible or duplicated")
         packages[name] = version
         records.append({"filename": wheel.name, "name": name, "version": version, "sizeBytes": wheel.stat().st_size, "sha256": _sha256(wheel)})
-    if "paddlepaddle" in packages or packages.get("paddlepaddle-gpu") != "3.2.2" or packages.get("paddleocr") != "3.7.0" or packages.get("paddlex") != "3.7.2":
+    if "paddlepaddle" in packages or packages.get("paddlepaddle-gpu") != GPU_PADDLE_VERSION or packages.get("paddleocr") != "3.7.0" or packages.get("paddlex") != "3.7.2":
         raise ValueError("GPU wheel inventory has invalid Paddle/OCR dependencies")
     return records
 
@@ -428,7 +429,7 @@ def _probe_real_gpu_runtime(paths: GpuInstallPaths) -> dict[str, object]:
     if len(responses) != 3:
         raise RuntimeError("offline GPU OCR probe protocol failed")
     evidence = responses[0].get("payload")
-    required = {"requestedDevice": "cuda", "observedDevice": "cuda", "runtimeId": "ocr-paddle-gpu", "runtimeFingerprint": manifest_fingerprint, "paddleVersion": "3.2.2", "compiledWithCuda": True}
+    required = {"requestedDevice": "cuda", "observedDevice": "cuda", "runtimeId": "ocr-paddle-gpu", "runtimeFingerprint": manifest_fingerprint, "paddleVersion": GPU_PADDLE_VERSION, "compiledWithCuda": True}
     if not isinstance(evidence, dict) or any(evidence.get(name) != value for name, value in required.items()) or not isinstance(evidence.get("cudaVersion"), str) or not evidence["cudaVersion"].strip() or not isinstance(evidence.get("gpuName"), str) or not evidence["gpuName"].strip():
         raise RuntimeError("offline GPU OCR device evidence is invalid")
     outcomes = responses[1].get("payload", {}).get("items")

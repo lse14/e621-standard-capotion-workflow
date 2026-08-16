@@ -239,6 +239,53 @@ class _FakeFactory:
 
 
 class OcrWorkerTests(unittest.TestCase):
+    def test_runtime_evidence_uses_runtime_specific_paddle_versions(self) -> None:
+        cases = (
+            ("ocr-paddle", "paddlepaddle", "3.2.2", False),
+            ("ocr-paddle-gpu", "paddlepaddle-gpu", "3.3.0", True),
+        )
+        for runtime_id, distribution, paddle_version, compiled_with_cuda in cases:
+            with self.subTest(runtime_id=runtime_id), tempfile.TemporaryDirectory() as temporary_name:
+                install_root = Path(temporary_name)
+                executable = install_root / "runtimes" / runtime_id / "python.exe"
+                executable.parent.mkdir(parents=True)
+                executable.write_bytes(b"")
+                manifest = install_root / "manifests" / "runtimes" / f"{runtime_id}.json"
+                manifest.parent.mkdir(parents=True)
+                manifest.write_text(json.dumps({
+                    "runtime": {
+                        "runtimeId": runtime_id,
+                        "owner": "ocr",
+                        "interpreterRelativePath": f"runtimes/{runtime_id}/python.exe",
+                    },
+                }), encoding="utf-8")
+                fake_cuda = types.SimpleNamespace(
+                    device_count=lambda: 1,
+                    get_device_name=lambda: "fixture GPU",
+                    get_device_properties=lambda _index: types.SimpleNamespace(total_memory=8589934592),
+                )
+                fake_paddle = types.ModuleType("paddle")
+                fake_paddle.device = types.SimpleNamespace(  # type: ignore[attr-defined]
+                    is_compiled_with_cuda=lambda: compiled_with_cuda,
+                    cuda=fake_cuda,
+                )
+                fake_paddle.version = types.SimpleNamespace(cuda=lambda: "12.9")  # type: ignore[attr-defined]
+                versions = {
+                    distribution: paddle_version,
+                    "paddleocr": "3.7.0",
+                    "paddlex": "3.7.2",
+                }
+                with mock.patch.object(worker_module.sys, "executable", str(executable)), mock.patch.dict(
+                    sys.modules, {"paddle": fake_paddle}
+                ), mock.patch.object(worker_module.metadata, "version", side_effect=versions.__getitem__) as version:
+                    evidence = worker_module._runtime_evidence()
+
+                self.assertEqual(paddle_version, evidence["paddleVersion"])
+                self.assertEqual(
+                    [distribution, "paddleocr", "paddlex"],
+                    [call.args[0] for call in version.call_args_list],
+                )
+
     @unittest.skipIf(_WORKER_IMPORT_ERROR is not None, "OCR worker source is not implemented")
     def test_paddle_engine_passes_tuning_only_to_detection_and_textline_batches(self) -> None:
         required = {"text_det_limit_side_len", "text_batch_size"}

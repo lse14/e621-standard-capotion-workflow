@@ -430,7 +430,7 @@ class OcrGpuResourceScriptTests(unittest.TestCase):
             # The platform-specific tags were read from the preserved failed
             # GPU download cache. CPython 3.11 accepts these older abi3 wheels.
             for name, version, tags in (
-                ("paddlepaddle-gpu", "3.2.2", ("cp311-cp311-win_amd64",)),
+                ("paddlepaddle-gpu", "3.3.0", ("cp311-cp311-win_amd64",)),
                 ("paddleocr", "3.7.0", ("py2-none-any", "py3-none-any")),
                 ("paddlex", "3.7.2", ("py3-none-win_amd64",)),
                 ("protobuf", "7.35.1", ("cp310-abi3-win_amd64",)),
@@ -485,7 +485,7 @@ class OcrGpuResourceScriptTests(unittest.TestCase):
         driver = _load_driver()
         invalid_cases = (
             ("CPU paddlepaddle", (("paddlepaddle", "3.2.2"),)),
-            ("wrong Paddle version", (("paddlepaddle-gpu", "3.2.1"),)),
+            ("wrong Paddle version", (("paddlepaddle-gpu", "3.2.2"),)),
             ("wrong PaddleOCR version", (("paddleocr", "3.7.1"),)),
             ("wrong PaddleX version", (("paddlex", "3.7.1"),)),
         )
@@ -575,7 +575,7 @@ class OcrGpuResourceScriptTests(unittest.TestCase):
                     "observedDevice": "cuda",
                     "runtimeId": "ocr-paddle-gpu",
                     "runtimeFingerprint": manifest_fingerprint,
-                    "paddleVersion": "3.2.2",
+                    "paddleVersion": "3.3.0",
                     "compiledWithCuda": True,
                     "cudaVersion": "13.3",
                     "gpuName": "fixture GPU",
@@ -701,7 +701,7 @@ class OcrGpuResourceScriptTests(unittest.TestCase):
         replacements: tuple[tuple[str, str], ...] = (),
     ) -> None:
         versions = {
-            "paddlepaddle-gpu": "3.2.2",
+            "paddlepaddle-gpu": "3.3.0",
             "paddleocr": "3.7.0",
             "paddlex": "3.7.2",
         }

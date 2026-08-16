@@ -71,7 +71,8 @@ def _runtime_evidence() -> dict[str, object]:
         import paddle
 
         paddle_version = metadata.version("paddlepaddle-gpu" if runtime_id == "ocr-paddle-gpu" else "paddlepaddle")
-        if paddle_version != "3.2.2" or metadata.version("paddleocr") != "3.7.0" or metadata.version("paddlex") != "3.7.2":
+        expected_paddle_version = "3.3.0" if runtime_id == "ocr-paddle-gpu" else "3.2.2"
+        if paddle_version != expected_paddle_version or metadata.version("paddleocr") != "3.7.0" or metadata.version("paddlex") != "3.7.2":
             raise OcrModelError("OCR runtime dependency versions are invalid")
         compiled = paddle.device.is_compiled_with_cuda()
     except OcrModelError:
