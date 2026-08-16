@@ -270,4 +270,24 @@ test.describe("workflow characterization", () => {
 
     await expect(page.locator(".action-feedback").getByRole("alert")).toHaveText("preflight unavailable");
   });
+
+  test("renders actionable dataset claim guidance after workspace confirmation conflicts", async ({ page, api }) => {
+    const detail = "Dataset is claimed by task 3bc585. Select it under Recent tasks: Recover keeps its progress and continues to hold the dataset; Discard deletes its overlay and releases the dataset.";
+    failRoute(api, "POST /api/jobs/job-e621-characterization/confirm-workspace", detail, 409);
+    await openApp(page, { language: "en" });
+    await page.getByRole("textbox", { name: "Source dataset", exact: true }).fill("E:\\datasets\\claimed");
+    await page.getByRole("button", { name: "Preflight", exact: true }).click();
+
+    page.once("dialog", (dialog) => dialog.accept());
+    await page.getByRole("button", { name: "Confirm workspace" }).click();
+
+    const alert = page.locator(".action-feedback").getByRole("alert");
+    await expect(alert).toHaveText(detail);
+    await expect(alert).toContainText("task 3bc585");
+    await expect(alert).toContainText("Recent tasks");
+    await expect(alert).toContainText("Recover keeps its progress and continues to hold the dataset");
+    await expect(alert).toContainText("Discard deletes its overlay and releases the dataset");
+    await expect(alert).not.toContainText("request failed: 409");
+    await expect(alert).not.toContainText("request failed: 500");
+  });
 });

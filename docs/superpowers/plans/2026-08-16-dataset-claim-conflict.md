@@ -17,7 +17,7 @@
 - Modify: `tests/unit/test_api.py`
 - Modify: `tests/unit/test_lifecycle_retention.py`
 
-- [ ] **Step 1: Add a real interrupted-claim regression**
+- [x] **Step 1: Add a real interrupted-claim regression**
 
 Import the existing `DatasetLockError` and `OverlayLayout`. Create two preflight tasks for one temporary dataset, seed the first task as `interrupted` with an overlay and a `dataset_claims` row, then confirm the second task:
 
@@ -33,7 +33,7 @@ self.assertTrue(layout.root.is_dir())
 
 The setup must use `database.set_workspace_metadata`, valid state transitions through `preparing_workspace`, `database.mark_interrupted`, and the production `dataset_claims` columns. It must not open a Windows lock handle, matching a backend restart. Repeat the ownership assertion for `interrupted`, `failed`, and `cancelled_recoverable`; each must keep its claim and make the new task remain `ready`.
 
-- [ ] **Step 2: Add succeeded-claim cleanup regressions**
+- [x] **Step 2: Add succeeded-claim cleanup regressions**
 
 Add one DB-only case by changing the seeded owner from `interrupted` to `succeeded`, then assert confirming the second task succeeds and owns the single remaining claim. Add one live-lock case by confirming the first task through `JobPreparationService`, moving it through valid transitions to `succeeded`, and confirming the second task through the same service. Capture the current `DatasetLockError` and convert it into an assertion value so RED fails as an assertion rather than a test error:
 
@@ -53,11 +53,11 @@ self.assertEqual(
 
 The interrupted case must remain a conflict; no test may delete its overlay or claim.
 
-- [ ] **Step 3: Keep startup cleanup limited to succeeded claims**
+- [x] **Step 3: Keep startup cleanup limited to succeeded claims**
 
 Extend the existing lifecycle claim sweep regression with `failed` and `cancelled_recoverable` owners. Assert the sweep deletes only the `succeeded` claim and preserves both recoverable claims.
 
-- [ ] **Step 4: Add the API 409 contract and exact explanation**
+- [x] **Step 4: Add the API 409 contract and exact explanation**
 
 Use the real preparation service and seed an interrupted owner claim for task `3bc585`, then call the real `confirm-workspace` endpoint for the second task. Capture any raised exception into a value before asserting its type, so current `DatasetLockError` behavior produces a normal RED assertion failure:
 
@@ -79,7 +79,7 @@ self.assertEqual(
 )
 ```
 
-- [ ] **Step 5: Run RED tests and record the expected failures**
+- [x] **Step 5: Run RED tests and record the expected failures**
 
 Run:
 
@@ -93,7 +93,7 @@ Run:
 
 Expected: the blocked task becomes `failed`, succeeded owners still block, and the API assertion observes `DatasetLockError` instead of an HTTP 409. All failures must be assertion failures caused by the missing behavior, not import or fixture errors.
 
-- [ ] **Step 6: Commit the RED tests**
+- [x] **Step 6: Commit the RED tests**
 
 ```text
 git add tests/unit/test_job_preflight.py tests/unit/test_api.py
@@ -111,7 +111,7 @@ git commit -m test:dataset-claim-conflict-red
 - Test: `tests/unit/test_api.py`
 - Test: `tests/unit/test_lifecycle_retention.py`
 
-- [ ] **Step 1: Add a typed persisted-claim conflict**
+- [x] **Step 1: Add a typed persisted-claim conflict**
 
 In `locks.py`, keep `DatasetLockError` as the base for all lock failures and add:
 
@@ -124,7 +124,7 @@ class DatasetClaimConflict(DatasetLockError):
 
 Raise `DatasetClaimConflict(str(existing["job_id"]))` only when the SQLite claim belongs to another task. Do not alter Windows lock failure handling or integrity checks.
 
-- [ ] **Step 2: Clean only a succeeded owner before first acquisition**
+- [x] **Step 2: Clean only a succeeded owner before first acquisition**
 
 In `JobPreparationService`, add a private helper that queries the exact canonical dataset root. If and only if the claim owner has persisted status `succeeded`, release its live `DatasetLock` from `self._locks` (including its retained database connection) or delete the DB-only claim. Re-read the owner/status inside the deleting transaction for the DB-only path:
 
@@ -151,15 +151,15 @@ Call this helper immediately before `DatasetLock.acquire`. Never release `interr
 
 Keep startup recovery aligned with the same boundary: `clear_stale_dataset_claims` must delete only claims owned by `succeeded` jobs. `discarded` jobs are already released by the discard transaction; `failed` and `cancelled_recoverable` remain recoverable and must retain their claims.
 
-- [ ] **Step 3: Preserve retryability for initial acquisition errors**
+- [x] **Step 3: Preserve retryability for initial acquisition errors**
 
 Import `DatasetLockError`. Track whether the first lock acquisition returned successfully. Add a dedicated `except DatasetLockError` before the generic handler: an initial acquisition failure re-raises without changing the job from `ready` or creating an overlay; a later lock failure retains the existing cleanup and `failed` behavior.
 
-- [ ] **Step 4: Map the typed conflict to actionable HTTP 409**
+- [x] **Step 4: Map the typed conflict to actionable HTTP 409**
 
 Import `conflict`, `DatasetClaimConflict`, and `DatasetLockError` in `api_jobs.py`. Catch the typed error first and return the exact explanation from Task 1; catch other `DatasetLockError` values as 409 with their existing bounded detail. Keep KeyError as 404 and `JobPreflightError` as 400.
 
-- [ ] **Step 5: Run GREEN tests and focused regressions**
+- [x] **Step 5: Run GREEN tests and focused regressions**
 
 Run the four Task 1 commands, followed by:
 
@@ -172,7 +172,7 @@ Run the four Task 1 commands, followed by:
 
 Expected: all pass; the interrupted startup test continues to assert that its claim remains.
 
-- [ ] **Step 6: Commit the backend fix**
+- [x] **Step 6: Commit the backend fix**
 
 ```text
 git add core/src/anima_core/locks.py core/src/anima_core/job_preflight.py core/src/anima_core/api_jobs.py core/src/anima_core/db_jobs.py
@@ -190,11 +190,11 @@ git commit -m fix:dataset-claim-conflict
 - Modify: `ROADMAP.md`
 - Modify: `MEMORY.md`
 
-- [ ] **Step 1: Add the browser explanation regression**
+- [x] **Step 1: Add the browser explanation regression**
 
 Use existing `failRoute` with status 409 for the task's `confirm-workspace` route, accept the confirmation dialog, and assert `.action-feedback [role=alert]` contains the full owner ID plus all four instructions: Recent tasks, Recover, progress/hold, and Discard/overlay/release.
 
-- [ ] **Step 2: Run the browser regression**
+- [x] **Step 2: Run the browser regression**
 
 Run from `frontend` with the project toolchain:
 
@@ -204,7 +204,7 @@ node_modules\.bin\playwright.cmd test workflow.spec.ts --project=chromium
 
 Expected: the action feedback displays the supplied 409 detail and never displays `request failed: 409` or `request failed: 500`.
 
-- [ ] **Step 3: Sync Core runtime and prove zero drift**
+- [x] **Step 3: Sync Core runtime and prove zero drift**
 
 Run via CMD:
 
@@ -216,7 +216,7 @@ C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionP
 
 Expected: apply copies only the changed Core modules, the second preview reports 0 add / 0 update / 0 remove, and drift tests pass.
 
-- [ ] **Step 4: Rebuild and verify the frontend**
+- [x] **Step 4: Rebuild and verify the frontend**
 
 Run from `frontend`:
 
@@ -227,11 +227,11 @@ npm.cmd run build
 
 Expected: both exit 0; no frontend source change is required because the existing API error region renders the backend detail.
 
-- [ ] **Step 5: Run project and packaging gates**
+- [x] **Step 5: Run project and packaging gates**
 
 Run the focused backend suites again from the synchronized runtime, `git diff --check`, Core runtime drift, source-bootstrap install/manifest tests, and the relevant Playwright file. Do not claim full-suite success unless every invoked suite exits 0.
 
-- [ ] **Step 6: Update project records and commit generated evidence**
+- [x] **Step 6: Update project records and commit generated evidence**
 
 Mark the ROADMAP items complete only after the commands pass, record exact counts and any unverified full-suite areas in `MEMORY.md`, then commit tracked Core runtime, browser regression, deterministic frontend output if changed, and the design clarification:
 
