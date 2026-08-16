@@ -75,7 +75,7 @@ export function TaskMonitor({
   onBudgetChange, onAddBudget, onConfirmUnknown, onRetry,
 }: TaskMonitorProps) {
   const isPending = (action: string) => pendingActions.has(action);
-  const canPause = snapshot?.status === "running";
+  const canPause = snapshot?.status === "running" || snapshot?.status === "exporting";
   const canResume = snapshot?.status === "paused";
   const canRecover = snapshot?.status === "interrupted" || snapshot?.status === "cancelled_recoverable";
   const canTerminate = Boolean(snapshot && ["preparing_workspace", "running", "paused", "reviewing", "exporting"].includes(snapshot.status));

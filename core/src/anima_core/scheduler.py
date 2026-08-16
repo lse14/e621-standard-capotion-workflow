@@ -318,15 +318,21 @@ class BoundedScheduler:
             self.database.increment_module_counts(lease.jobId, lease.moduleId, failed=1)
 
     def finish_module(self, job_id: str, module_id: ModuleId, *, with_issues: bool = False) -> str:
-        job = self.database.get_job(job_id)
-        if job["current_module_id"] != module_id:
-            raise SchedulerError("only the current module can be finished")
-        if self.database.count_module_unsettled(job_id, module_id):
-            raise SchedulerError("module still has pending or in-flight samples")
-        summary = self.database.module_summary(job_id, module_id)
-        target = "completed_with_issues" if with_issues else "completed"
-        transition_module(summary["status"], target, module_id=module_id)
-        self.database.set_module_summary(job_id, module_id, status=target, finished=True)
+        with self.database.transaction(immediate=True):
+            job = self.database.get_job(job_id)
+            if job["current_module_id"] != module_id:
+                raise SchedulerError("only the current module can be finished")
+            if job["status"] in {"paused", "cancelling"}:
+                return str(job["status"])
+            expected_status = "exporting" if module_id == "export" else "running"
+            if job["status"] != expected_status:
+                raise SchedulerError("only an active module can be finished")
+            if self.database.count_module_unsettled(job_id, module_id):
+                raise SchedulerError("module still has pending or in-flight samples")
+            summary = self.database.module_summary(job_id, module_id)
+            target = "completed_with_issues" if with_issues else "completed"
+            transition_module(summary["status"], target, module_id=module_id)
+            self.database.set_module_summary(job_id, module_id, status=target, finished=True)
         self.database.checkpoint()
         return target
 

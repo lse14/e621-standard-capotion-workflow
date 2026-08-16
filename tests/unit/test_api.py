@@ -625,6 +625,31 @@ class ControlPlaneApiTests(unittest.TestCase):
         self.assertEqual({"status": "running"}, resume("job-api"))
         self.assertEqual(["job-api"], pipeline.resumed)
 
+    def test_policy_pause_maps_an_atomic_state_conflict_to_bad_request(self) -> None:
+        database = StateDatabase.open(self.database_path)
+        try:
+            database.initialize_module_summary("job-api", "dropout", total=0, status="running")
+            database.set_job_status("job-api", "running", current_module_id="dropout")
+        finally:
+            database.close()
+        pause = _endpoint(self.app, "/api/jobs/{job_id}/policy/pause", "POST")
+        pause_active_module = StateDatabase.pause_active_module
+
+        def finish_before_pause(database: StateDatabase, job_id: str, module_id: str, *, active_status: str) -> None:
+            concurrent = StateDatabase.open(self.database_path)
+            try:
+                BoundedScheduler(concurrent).finish_module(job_id, "dropout")
+            finally:
+                concurrent.close()
+            pause_active_module(database, job_id, module_id, active_status=active_status)
+
+        with patch.object(StateDatabase, "pause_active_module", new=finish_before_pause):
+            with self.assertRaises(HTTPException) as raised:
+                pause("job-api")
+        self.assertEqual((400, "active module state changed before pause"), (
+            raised.exception.status_code, raised.exception.detail,
+        ))
+
     def test_token_budget_routes_use_the_review_service_and_public_resume_only(self) -> None:
         class ResumePipeline:
             def __init__(self) -> None:

@@ -53,7 +53,7 @@ const lifecycleStateMatrix = [
   { status: "paused", statusLabel: "paused", enabled: ["Resume task", "Terminate task"] },
   { status: "preparing_workspace", statusLabel: "preparing workspace", enabled: ["Terminate task"] },
   { status: "reviewing", statusLabel: "reviewing", enabled: ["Terminate task"] },
-  { status: "exporting", statusLabel: "exporting", enabled: ["Terminate task"] },
+  { status: "exporting", statusLabel: "exporting", enabled: ["Pause task", "Terminate task"] },
   { status: "interrupted", statusLabel: "interrupted", enabled: ["Recover task"] },
   { status: "cancelled_recoverable", statusLabel: "cancelled, recoverable", enabled: ["Recover task"] },
   { status: "committing", statusLabel: "committing", enabled: [] },
@@ -203,6 +203,7 @@ test.describe("task status and issue characterization", () => {
     const taskB = "job-selected-after-pause";
     setJobSnapshot(api, makeSnapshot({ jobId: taskA, status: "running", currentModuleId: "caption" }));
     setJobSnapshot(api, makeSnapshot({ jobId: taskB, status: "succeeded", currentModuleId: "export" }));
+    await installSnapshotFetchProbe(page, taskB);
     await openApp(page, { jobId: taskA, language: "en" });
     await expect(page.locator(".task-monitor > .monitor-heading > .status")).toHaveText("running");
 
@@ -213,6 +214,10 @@ test.describe("task status and issue characterization", () => {
 
       await page.getByLabel("Task ID").fill(taskB);
       await expect(page.locator(".task-monitor > .monitor-heading > .status")).toHaveText("succeeded");
+      const selectedTaskRequests = (await snapshotFetchProbe(page)).started;
+      expect(selectedTaskRequests).toBeGreaterThan(0);
+      releasePause();
+      await expect.poll(async () => (await snapshotFetchProbe(page)).started).toBeGreaterThan(selectedTaskRequests);
     } finally {
       releasePause();
     }

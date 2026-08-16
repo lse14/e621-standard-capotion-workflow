@@ -30,12 +30,14 @@ class CountReviewRunner:
         job = self.database.get_job(self.job_id)
         if int(job["config_schema_version"]) not in COUNT_REVIEW_SCHEMA_VERSIONS or job["current_module_id"] != "count_review":
             raise CountReviewError("count review runner requires an active v3/v4 module")
+        if job["status"] in {"cancelling", "paused"}:
+            return str(job["status"])
         initialized = CountReviewService(self.database, self.job_id).initialize()
         job = self.database.get_job(self.job_id)
         if job["status"] == "reviewing":
             return "reviewing"
-        if job["status"] == "cancelling":
-            return "cancelling"
+        if job["status"] in {"cancelling", "paused"}:
+            return str(job["status"])
         if job["status"] != "running":
             raise CountReviewError("count review task is not runnable")
         if initialized.pending:
@@ -47,8 +49,8 @@ class CountReviewRunner:
         config_hash = str(job["config_hash"])
         while True:
             job = self.database.get_job(self.job_id)
-            if job["status"] == "cancelling":
-                return "cancelling"
+            if job["status"] in {"cancelling", "paused"}:
+                return str(job["status"])
             if job["status"] != "running" or job["current_module_id"] != "count_review":
                 raise CountReviewError("count review application is no longer active")
             leases = self.scheduler.claim_batch(

@@ -257,8 +257,7 @@ def build_nl_router(context: ControlPlaneContext) -> APIRouter:
                 if action == "pause":
                     if job["status"] != "running" or job["current_module_id"] != "nl" or summary["status"] != "running":
                         raise SchedulerError("only a running NL module can be paused")
-                    database.set_module_summary(job_id, "nl", status="paused")
-                    database.set_job_status(job_id, "paused", current_module_id="nl", resume_status="running")
+                    database.pause_active_module(job_id, "nl", active_status="running")
                     return {"status": "paused"}
                 if action == "resume":
                     if job["status"] != "paused" or job["current_module_id"] != "nl" or summary["status"] != "paused":

@@ -250,6 +250,52 @@ class SchedulerTests(unittest.TestCase):
             finally:
                 database.close()
 
+    def test_startup_interruption_preserves_a_paused_tasks_resume_target(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            database = self._database(Path(temporary), count=1)
+            try:
+                for module_id, resume_status in (
+                    ("caption", "running"),
+                    ("count_review", "running"),
+                    ("export", "exporting"),
+                ):
+                    with self.subTest(module_id=module_id):
+                        database.connection.execute(
+                            "UPDATE jobs SET status='paused',current_module_id=?,resume_status=? WHERE job_id='job-1'",
+                            (module_id, resume_status),
+                        )
+                        database.mark_interrupted("job-1")
+                        job = database.get_job("job-1")
+                        self.assertEqual(("interrupted", resume_status), (job["status"], job["resume_status"]))
+            finally:
+                database.close()
+
+    def test_atomic_pause_and_resume_reject_stale_module_state(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            database = self._database(Path(temporary), count=1)
+            try:
+                scheduler = BoundedScheduler(database)
+                scheduler.start_module("job-1", "caption", enabled=True, profile="e621")
+                database.set_module_summary("job-1", "caption", status="completed", finished=True)
+                with self.assertRaisesRegex(ValueError, "state changed"):
+                    database.pause_active_module("job-1", "caption", active_status="running")
+                self.assertEqual("running", database.get_job("job-1")["status"])
+                self.assertEqual("completed", database.module_summary("job-1", "caption")["status"])
+
+                database.connection.execute(
+                    "UPDATE module_summary SET status='paused' WHERE job_id='job-1' AND module_id='caption'"
+                )
+                database.connection.execute(
+                    "UPDATE jobs SET status='paused',resume_status='running' WHERE job_id='job-1'"
+                )
+                database.begin_cancellation("job-1")
+                with self.assertRaisesRegex(ValueError, "state changed"):
+                    database.resume_paused_module("job-1", "caption", target_status="running")
+                self.assertEqual("cancelling", database.get_job("job-1")["status"])
+                self.assertEqual("paused", database.module_summary("job-1", "caption")["status"])
+            finally:
+                database.close()
+
     def test_module_cannot_finish_until_all_work_is_settled(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             database = self._database(Path(temporary), count=1)

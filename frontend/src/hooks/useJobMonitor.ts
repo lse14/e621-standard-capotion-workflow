@@ -101,7 +101,7 @@ export function useJobMonitor({
     snapshotInFlightRequestIdRef.current = null;
   }, []);
 
-  const refreshSnapshot = useCallback(async (requestedJobId = jobId, force = false) => {
+  const refreshSnapshot = useCallback(async (requestedJobId = selectedJobIdRef.current, force = false) => {
     if (!requestedJobId || requestedJobId !== selectedJobIdRef.current) return;
     if (snapshotInFlightRequestIdRef.current !== null) {
       if (!force) return;
@@ -128,7 +128,7 @@ export function useJobMonitor({
       if (snapshotAbortControllerRef.current === abortController) snapshotAbortControllerRef.current = null;
       if (mountedRef.current && requestId === snapshotRequestIdRef.current) setSnapshotLoading(false);
     }
-  }, [invalidateSnapshotRequest, issueCursor.issueId, issueCursor.sampleId, jobId]);
+  }, [invalidateSnapshotRequest, issueCursor.issueId, issueCursor.sampleId]);
 
   const selectJob = useCallback((nextJobId: string) => {
     invalidateSnapshotRequest();

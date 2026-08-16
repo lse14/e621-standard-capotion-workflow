@@ -363,6 +363,18 @@ class CountReviewTests(unittest.TestCase):
             finally:
                 fixture.close()
 
+    def test_runner_returns_paused_at_the_batch_boundary(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = CountReviewFixture(Path(temporary), MATRIX[:1])
+            try:
+                fixture.database.set_module_summary("job-review", "count_review", status="paused")
+                fixture.database.set_job_status(
+                    "job-review", "paused", current_module_id="count_review", resume_status="running"
+                )
+                self.assertEqual("paused", fixture.runner().run())
+            finally:
+                fixture.close()
+
     def test_prepared_recovery_commits_and_marks_decision_applied(self) -> None:
         for target_already_committed in (False, True):
             with self.subTest(target_already_committed=target_already_committed), tempfile.TemporaryDirectory() as temporary:

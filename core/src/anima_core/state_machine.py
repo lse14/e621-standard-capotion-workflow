@@ -17,11 +17,11 @@ JOB_TRANSITIONS: dict[str, frozenset[str]] = {
     "ready": frozenset({"preparing_workspace", "running", "cancelling", "failed", "discarded"}),
     "preparing_workspace": frozenset({"running", "cancelling", "failed", "interrupted"}),
     "running": frozenset({"paused", "reviewing", "exporting", "cancelling", "failed", "interrupted"}),
-    "paused": frozenset({"running", "cancelling", "interrupted", "failed"}),
+    "paused": frozenset({"running", "exporting", "cancelling", "interrupted", "failed"}),
     # Startup journal recovery can find an interrupted commit already committed.
     "interrupted": frozenset({"preparing_workspace", "running", "reviewing", "exporting", "cancelling", "succeeded", "failed", "discarded"}),
     "reviewing": frozenset({"running", "exporting", "cancelling", "failed", "discarded", "interrupted"}),
-    "exporting": frozenset({"committing", "reviewing", "cancelling", "failed", "interrupted"}),
+    "exporting": frozenset({"paused", "committing", "reviewing", "cancelling", "failed", "interrupted"}),
     "committing": frozenset({"succeeded", "cancelled_recoverable", "failed", "interrupted"}),
     "cancelling": frozenset({"cancelled_recoverable", "succeeded", "failed", "interrupted"}),
     "cancelled_recoverable": frozenset({"preparing_workspace", "running", "reviewing", "exporting", "interrupted", "discarded"}),

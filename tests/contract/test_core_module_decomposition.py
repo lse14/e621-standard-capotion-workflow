@@ -30,7 +30,7 @@ import anima_core.resource_catalog_validation  # noqa: F401
 STATE_DATABASE_API = frozenset({
     "_count_limit", "_insert_count_observation_consistent", "_insert_sample_batch", "_limit",
     "_repair_target_clause", "_resolve_count_review_decision_in_transaction", "add_api_budget_extra",
-    "append_event", "begin_cancellation", "checkpoint", "claim_leases", "clear_manifest_rows",
+    "append_event", "begin_cancellation", "checkpoint", "claim_leases", "clear_cancellation_metadata", "clear_manifest_rows",
     "clear_stale_dataset_claims", "clear_workspace_metadata", "close", "complete_leased_sample",
     "complete_leased_sample_and_count", "confirm_count_review", "confirm_nl_unknown_requests", "count",
     "count_current_review_decisions", "count_current_review_targets", "count_in_flight",
@@ -46,6 +46,7 @@ STATE_DATABASE_API = frozenset({
     "page_count_evidence", "page_count_observations", "page_count_review_decisions",
     "page_count_review_inputs", "page_count_review_items", "page_export_artifact_groups",
     "page_export_artifacts", "page_issues", "page_overlay_jobs", "page_samples",
+    "pause_active_module",
     "preflight_projection_counts", "record_count_observation_not_requested", "record_migration",
     "record_nl_disabled_observations_page", "record_nl_outcome", "recovery_state_page",
     "release_dataset_claim", "repair_candidate_summary", "repair_parent_cursor", "repair_parent_job_id",
@@ -55,14 +56,14 @@ STATE_DATABASE_API = frozenset({
     "set_workspace_metadata", "settle_cancellation", "skip_disabled_caption_page",
     "skip_failed_samples_for_export_page", "skip_leased_caption_sample", "stage_classify_prepared_artifact",
     "stage_export_artifacts", "stage_nl_response", "stage_prepared_artifact", "stage_repair_target_page",
-    "staged_nl", "transaction", "update_count_review_decision", "update_count_review_decisions",
+    "resume_paused_module", "staged_nl", "transaction", "update_count_review_decision", "update_count_review_decisions",
     "update_preflight_config", "upsert_issue",
 })
 
 PIPELINE_SERVICE_API = frozenset({
-    "_nl_credentials", "_ocr_binding_path", "_probe_ocr_gpu_runtime", "_recover_policy_prepared", "_resolve_ocr_runtime", "_run", "_run_active_module",
+    "_active_module_status", "_nl_credentials", "_ocr_binding_path", "_probe_ocr_gpu_runtime", "_recover_policy_prepared", "_recovery_target_status", "_resolve_ocr_runtime", "_run", "_run_active_module",
     "_run_module_with_restarts", "_selected_resource", "_spawn_transport", "_thread_main",
-    "_spawn_ocr_transport", "_select_ocr_runtime", "_token_budget_export_gate", "_verify_source_fingerprints", "close", "confirm_count_review", "is_running", "recover_job",
+    "_spawn_ocr_transport", "_select_ocr_runtime", "_token_budget_export_gate", "_verify_source_fingerprints", "close", "confirm_count_review", "is_running", "pause", "recover_job",
     "recover_pending_commits", "resume", "shutdown", "start", "startup_recovery",
 })
 
@@ -112,6 +113,8 @@ API_JOB_ROUTES = frozenset({
     ("POST", "/api/jobs/preflight"),
     ("POST", "/api/jobs/{job_id}/confirm-workspace"),
     ("POST", "/api/jobs/{job_id}/start"),
+    ("POST", "/api/jobs/{job_id}/pause"),
+    ("POST", "/api/jobs/{job_id}/resume"),
     ("POST", "/api/jobs/{job_id}/repair"),
     ("POST", "/api/jobs/{job_id}/recover"),
     ("POST", "/api/jobs/{job_id}/cancel"),

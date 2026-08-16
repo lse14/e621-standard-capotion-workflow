@@ -301,9 +301,9 @@ export function App() {
     await refreshSnapshot();
     return result;
   });
-  const lifecycleControl = <T,>(name: ActionName, selectedJobId: string, operation: () => Promise<T>) => runAction(name, async () => {
+  const lifecycleControl = <T,>(name: ActionName, operation: () => Promise<T>) => runAction(name, async () => {
     const result = await operation();
-    await Promise.all([refreshJobs(), refreshSnapshot(selectedJobId, true)]);
+    await Promise.all([refreshJobs(), refreshSnapshot(undefined, true)]);
     return result;
   });
   const runPreflight = async () => {
@@ -818,10 +818,10 @@ export function App() {
         pendingApiDecisions={pendingApiDecisions}
         nlAwaitsDecision={nlAwaitsDecision}
         pendingActions={pendingActions}
-        onPause={() => void lifecycleControl("pause", jobId, () => pauseJob(jobId))}
-        onResume={() => void lifecycleControl("resume", jobId, () => resumeJob(jobId))}
-        onTerminate={() => { if (window.confirm(t("confirmTerminate"))) void lifecycleControl("terminate", jobId, () => cancelJob(jobId)); }}
-        onRecover={() => { if (window.confirm(t("confirmRecover"))) void lifecycleControl("recover", jobId, () => recoverJob(jobId)); }}
+        onPause={() => void lifecycleControl("pause", () => pauseJob(jobId))}
+        onResume={() => void lifecycleControl("resume", () => resumeJob(jobId))}
+        onTerminate={() => { if (window.confirm(t("confirmTerminate"))) void lifecycleControl("terminate", () => cancelJob(jobId)); }}
+        onRecover={() => { if (window.confirm(t("confirmRecover"))) void lifecycleControl("recover", () => recoverJob(jobId)); }}
         onPin={() => { if (snapshot) void control("pin", () => setJobPin(jobId, !snapshot.job.pinned)); }}
         onDiscard={() => { if (window.confirm(t("confirmDiscard"))) void control("discard", () => discardJob(jobId)); }}
         onBudgetChange={setBudget}

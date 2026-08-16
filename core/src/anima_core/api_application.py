@@ -35,11 +35,12 @@ def build_application_router(context: ControlPlaneContext) -> APIRouter:
             if action == "pause":
                 if job["status"] != "running" or job["current_module_id"] != "dropout" or summary["status"] != "running":
                     raise bad_request(SchedulerError("only a running policy module can be paused"))
-                database.set_module_summary(job_id, "dropout", status="paused")
-                database.set_job_status(job_id, "paused", current_module_id="dropout", resume_status="running")
+                database.pause_active_module(job_id, "dropout", active_status="running")
                 return {"status": "paused"}
         except KeyError as exc:
             raise not_found(exc) from exc
+        except ValueError as exc:
+            raise bad_request(exc) from exc
         finally:
             database.close()
         try:
