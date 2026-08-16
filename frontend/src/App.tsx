@@ -39,10 +39,10 @@ type ActionName = Exclude<PendingAction, null>;
 
 const draftModuleOrder: readonly PipelineModuleId[] = ["caption", "classify", "replace", "ocr", "nl", "count_review", "dropout", "token_budget", "export"];
 const emptyProfile: NlProfile = { profileId: "default", endpoint: "", model: "", backupModel: null, apiCredentialRef: "", systemPrompt: "", apiPolicy: { maxRequestsPerMinute: 60 }, hasCredential: false };
-const CREDENTIAL_REFERENCE = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
+const CREDENTIAL_REFERENCE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
 
 function effectiveCredentialReference(profile: NlProfile): string {
-  return CREDENTIAL_REFERENCE.test(profile.apiCredentialRef) ? profile.apiCredentialRef : `nl-profile:${profile.profileId}`;
+  return CREDENTIAL_REFERENCE.test(profile.apiCredentialRef) ? profile.apiCredentialRef : `nl-profile-${profile.profileId}`;
 }
 
 export function App() {
