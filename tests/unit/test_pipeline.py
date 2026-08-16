@@ -364,6 +364,125 @@ class PipelineTests(unittest.TestCase):
         preparation.confirm_workspace(job_id, confirmed=True, confirmed_rebuild=False)
         return preparation, job_id
 
+    @staticmethod
+    def _prepared_ocr_job(
+        root: Path,
+        *,
+        schema_version: int = 7,
+        enabled: bool = True,
+        device: str = "cuda",
+    ) -> tuple[JobPreparationService, str]:
+        dataset = root / "dataset"
+        dataset.mkdir()
+        Image.new("RGB", (3, 3), "white").save(dataset / "image.png")
+        config = JobConfig(
+            schemaVersion=schema_version,
+            profile="e621",
+            workMode="in_place",
+            overwriteMode="incremental",
+            sourceRoot=str(dataset),
+        )
+        config.caption["enabled"] = config.classify["enabled"] = config.replace["enabled"] = False
+        config.nl["enabled"] = config.dropout["enabled"] = False
+        config.countReview["enabled"] = False  # type: ignore[index]
+        config.ocr["enabled"] = enabled
+        if schema_version in {7, 8}:
+            config.ocr["device"] = device
+        preparation = JobPreparationService(root / "state.db")
+        job_id = preparation.preflight(config.to_dict()).jobId
+        preparation.confirm_workspace(job_id, confirmed=True, confirmed_rebuild=False)
+        return preparation, job_id
+
+    def test_forced_cuda_start_gate_rejects_a_failed_probe_before_starting_a_thread(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            preparation, job_id = self._prepared_ocr_job(root)
+            pipeline = PipelineService(root / "state.db", install_root=ROOT / ".runtime-build")
+            try:
+                database = StateDatabase.open(root / "state.db")
+                try:
+                    job = database.get_job(job_id)
+                    frozen = json.loads(str(job["config_json"]))
+                    layout = OverlayLayout.open_existing(str(job["overlay_root"]), job_id)
+                    binding_path = layout.resource_path("ocr-runtime-binding-v1.json")
+                finally:
+                    database.close()
+                self.assertEqual("cuda", frozen["ocr"]["device"])
+                self.assertFalse(binding_path.exists())
+                launch = SimpleNamespace()
+                with patch.object(pipeline, "_resolve_ocr_runtime", return_value=(launch, "gpu-fingerprint")) as resolve:
+                    with patch.object(pipeline, "_probe_ocr_gpu_runtime", side_effect=PipelineError("CUDA probe failed")) as probe:
+                        with patch("anima_core.pipeline.threading.Thread.start") as thread_start:
+                            with self.assertRaisesRegex(PipelineError, "Choose Auto or CPU"):
+                                pipeline.start(job_id)
+                self.assertEqual([(("ocr-paddle-gpu",), {})], resolve.call_args_list)
+                self.assertEqual([((launch, ROOT / ".runtime-build"), {})], probe.call_args_list)
+                thread_start.assert_not_called()
+                self.assertFalse(binding_path.exists())
+                database = StateDatabase.open(root / "state.db")
+                try:
+                    self.assertEqual("preparing_workspace", database.get_job(job_id)["status"])
+                finally:
+                    database.close()
+            finally:
+                pipeline._threads.pop(job_id, None)
+                preparation.close()
+
+    def test_forced_cuda_start_gate_skips_an_existing_ocr_binding(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            preparation, job_id = self._prepared_ocr_job(root)
+            pipeline = PipelineService(root / "state.db", install_root=ROOT / ".runtime-build")
+            try:
+                database = StateDatabase.open(root / "state.db")
+                try:
+                    job = database.get_job(job_id)
+                    layout = OverlayLayout.open_existing(str(job["overlay_root"]), job_id)
+                    binding_path = layout.resource_path("ocr-runtime-binding-v1.json")
+                    write_runtime_binding(binding_path, self._v7_gpu_ocr_binding())
+                finally:
+                    database.close()
+                original = binding_path.read_bytes()
+                with patch.object(pipeline, "_resolve_ocr_runtime", side_effect=self.fail) as resolve:
+                    with patch.object(pipeline, "_probe_ocr_gpu_runtime", side_effect=self.fail) as probe:
+                        with patch("anima_core.pipeline.threading.Thread.start") as thread_start:
+                            pipeline.start(job_id)
+                resolve.assert_not_called()
+                probe.assert_not_called()
+                thread_start.assert_called_once_with()
+                self.assertEqual(original, binding_path.read_bytes())
+            finally:
+                pipeline._threads.pop(job_id, None)
+                preparation.close()
+
+    def test_start_gate_skips_auto_disabled_and_legacy_ocr_configurations(self) -> None:
+        cases = (
+            ("auto", 7, True, "auto"),
+            ("disabled", 7, False, "cuda"),
+            ("legacy", 6, True, "cuda"),
+        )
+        for label, schema_version, enabled, device in cases:
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                preparation, job_id = self._prepared_ocr_job(
+                    root,
+                    schema_version=schema_version,
+                    enabled=enabled,
+                    device=device,
+                )
+                pipeline = PipelineService(root / "state.db", install_root=ROOT / ".runtime-build")
+                try:
+                    with patch.object(pipeline, "_resolve_ocr_runtime", side_effect=self.fail) as resolve:
+                        with patch.object(pipeline, "_probe_ocr_gpu_runtime", side_effect=self.fail) as probe:
+                            with patch("anima_core.pipeline.threading.Thread.start") as thread_start:
+                                pipeline.start(job_id)
+                    resolve.assert_not_called()
+                    probe.assert_not_called()
+                    thread_start.assert_called_once_with()
+                finally:
+                    pipeline._threads.pop(job_id, None)
+                    preparation.close()
+
     def test_initial_thread_start_failure_unregisters_pipeline(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

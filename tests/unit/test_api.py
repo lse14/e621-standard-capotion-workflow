@@ -880,6 +880,31 @@ class ControlPlaneApiTests(unittest.TestCase):
         workspace = confirm(result["jobId"], _WorkspaceBody(confirmed=True, confirmedRebuild=False))
         self.assertEqual("preparing_workspace", workspace["status"])
 
+    def test_start_preserves_the_forced_cuda_compatibility_error_detail(self) -> None:
+        class FailingPipeline:
+            def startup_recovery(self) -> dict[str, int]:
+                return {"interruptedJobs": 0, "clearedDatasetClaims": 0, "deletedJobs": 0, "deletedOverlays": 0}
+
+            def start(self, _job_id: str) -> None:
+                raise PipelineError(
+                    "The OCR CUDA runtime is unavailable or incompatible with this GPU. Choose Auto or CPU."
+                )
+
+        app = build_control_app(
+            database_path=self.database_path,
+            profile_store=self.profiles,
+            credential_store=self.credentials,
+            preparation_service=self.preparation,
+            pipeline_service=FailingPipeline(),  # type: ignore[arg-type]
+        )
+        start = _endpoint(app, "/api/jobs/{job_id}/start", "POST")
+        with self.assertRaises(HTTPException) as rejected:
+            start("job-api")
+        self.assertEqual(
+            (400, "The OCR CUDA runtime is unavailable or incompatible with this GPU. Choose Auto or CPU."),
+            (rejected.exception.status_code, rejected.exception.detail),
+        )
+
     def test_start_requires_confirmed_workspace_and_runs_mandatory_export(self) -> None:
         preflight = _endpoint(self.app, "/api/jobs/preflight", "POST")
         confirm = _endpoint(self.app, "/api/jobs/{job_id}/confirm-workspace", "POST")
