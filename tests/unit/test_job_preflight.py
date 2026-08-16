@@ -19,6 +19,9 @@ from PIL import Image
 from anima_core.contracts import JobConfig, sha256_json
 from anima_core.db import StateDatabase
 from anima_core.job_preflight import JobPreflightError, JobPreparationService, config_from_dict
+from anima_core.locks import DatasetLockError
+from anima_core.overlay import OverlayLayout
+from anima_core.path_safety import windows_key
 from anima_core.resource_catalog import ResourceCatalog
 
 
@@ -285,6 +288,131 @@ class JobPreflightTests(unittest.TestCase):
         config = JobConfig(profile="e621", workMode="in_place", overwriteMode="incremental", sourceRoot=str(source))
         config.nl["systemPrompt"] = "describe the visible image"
         return config.to_dict()
+
+    def test_dataset_claim_conflict_keeps_new_job_ready(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            dataset = root / "dataset"
+            dataset.mkdir()
+            Image.new("RGB", (3, 3), "white").save(dataset / "image.png")
+            catalog, _ = _write_test_resource_library(root, include_ocr=False)
+            service = JobPreparationService(root / "state.db", resource_catalog=catalog)
+            try:
+                owner = service.preflight(self._ocr_config(dataset, enabled=False))
+                contender = service.preflight(self._ocr_config(dataset, enabled=False))
+                database = StateDatabase.open(root / "state.db")
+                try:
+                    overlay = OverlayLayout.create(dataset, owner.jobId)
+                    database.set_workspace_metadata(
+                        owner.jobId,
+                        dataset_root=str(dataset),
+                        dataset_root_key=windows_key(dataset),
+                        overlay_root=str(overlay.root),
+                    )
+                    for status in (
+                        "preparing_workspace",
+                        "interrupted",
+                        "failed",
+                        "preparing_workspace",
+                        "cancelling",
+                        "cancelled_recoverable",
+                    ):
+                        database.set_job_status(owner.jobId, status, current_module_id="workspace")
+                    database.connection.execute(
+                        """INSERT INTO dataset_claims(dataset_root,dataset_root_key,job_id,lock_path,acquired_at)
+                           VALUES (?,?,?,?,?)""",
+                        (str(dataset), windows_key(dataset), owner.jobId, str(root / ".restart.lock"), "2026-08-17T00:00:00Z"),
+                    )
+
+                    with self.assertRaises(DatasetLockError):
+                        service.confirm_workspace(contender.jobId, confirmed=True, confirmed_rebuild=False)
+
+                    self.assertEqual("ready", database.get_job(contender.jobId)["status"])
+                    claim = database.connection.execute(
+                        "SELECT job_id FROM dataset_claims WHERE dataset_root=?", (str(dataset),)
+                    ).fetchone()
+                    self.assertEqual(owner.jobId, claim["job_id"] if claim is not None else None)
+                    self.assertTrue(overlay.root.is_dir())
+                finally:
+                    database.close()
+            finally:
+                service.close()
+
+    def test_succeeded_dataset_claim_is_released_before_confirmation(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            dataset = root / "dataset"
+            dataset.mkdir()
+            Image.new("RGB", (3, 3), "white").save(dataset / "image.png")
+            catalog, _ = _write_test_resource_library(root, include_ocr=False)
+            service = JobPreparationService(root / "state.db", resource_catalog=catalog)
+            try:
+                owner = service.preflight(self._ocr_config(dataset, enabled=False))
+                contender = service.preflight(self._ocr_config(dataset, enabled=False))
+                database = StateDatabase.open(root / "state.db")
+                try:
+                    overlay = OverlayLayout.create(dataset, owner.jobId)
+                    database.set_workspace_metadata(
+                        owner.jobId,
+                        dataset_root=str(dataset),
+                        dataset_root_key=windows_key(dataset),
+                        overlay_root=str(overlay.root),
+                    )
+                    for status in ("preparing_workspace", "running", "reviewing", "exporting", "committing", "succeeded"):
+                        database.set_job_status(owner.jobId, status, current_module_id="workspace")
+                    database.connection.execute(
+                        """INSERT INTO dataset_claims(dataset_root,dataset_root_key,job_id,lock_path,acquired_at)
+                           VALUES (?,?,?,?,?)""",
+                        (str(dataset), windows_key(dataset), owner.jobId, str(root / ".restart.lock"), "2026-08-17T00:00:00Z"),
+                    )
+                finally:
+                    database.close()
+
+                try:
+                    workspace = service.confirm_workspace(contender.jobId, confirmed=True, confirmed_rebuild=False)
+                except DatasetLockError:
+                    workspace = None
+                self.assertIsNotNone(workspace, "a succeeded task's durable claim must be released before confirmation")
+                if workspace is not None:
+                    self.assertEqual("preparing_workspace", workspace["status"])
+                database = StateDatabase.open(root / "state.db")
+                try:
+                    self.assertEqual("preparing_workspace", database.get_job(contender.jobId)["status"])
+                    claims = database.connection.execute("SELECT job_id FROM dataset_claims").fetchall()
+                    self.assertEqual([contender.jobId], [row["job_id"] for row in claims])
+                finally:
+                    database.close()
+            finally:
+                service.close()
+
+    def test_succeeded_live_dataset_lock_is_released_before_confirmation(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            dataset = root / "dataset"
+            dataset.mkdir()
+            Image.new("RGB", (3, 3), "white").save(dataset / "image.png")
+            catalog, _ = _write_test_resource_library(root, include_ocr=False)
+            service = JobPreparationService(root / "state.db", resource_catalog=catalog)
+            try:
+                owner = service.preflight(self._ocr_config(dataset, enabled=False))
+                contender = service.preflight(self._ocr_config(dataset, enabled=False))
+                service.confirm_workspace(owner.jobId, confirmed=True, confirmed_rebuild=False)
+                database = StateDatabase.open(root / "state.db")
+                try:
+                    for status in ("running", "reviewing", "exporting", "committing", "succeeded"):
+                        database.set_job_status(owner.jobId, status, current_module_id="workspace")
+                finally:
+                    database.close()
+
+                try:
+                    workspace = service.confirm_workspace(contender.jobId, confirmed=True, confirmed_rebuild=False)
+                except DatasetLockError:
+                    workspace = None
+                self.assertIsNotNone(workspace, "a succeeded task's live dataset lock must be released before confirmation")
+                if workspace is not None:
+                    self.assertEqual("preparing_workspace", workspace["status"])
+            finally:
+                service.close()
 
     def test_minimal_v5_config_selects_v3_without_changing_v2_to_v4_defaults(self) -> None:
         v5 = JobConfig(

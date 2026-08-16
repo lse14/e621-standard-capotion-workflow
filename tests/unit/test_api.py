@@ -880,6 +880,60 @@ class ControlPlaneApiTests(unittest.TestCase):
         workspace = confirm(result["jobId"], _WorkspaceBody(confirmed=True, confirmedRebuild=False))
         self.assertEqual("preparing_workspace", workspace["status"])
 
+    def test_confirm_workspace_maps_dataset_claim_conflict_to_actionable_409(self) -> None:
+        dataset = Path(self.temporary.name) / "dataset"
+        database = StateDatabase.open(self.database_path)
+        try:
+            owner = dict(database.get_job("job-api"))
+            database.insert_job({
+                **owner,
+                "job_id": "3bc585",
+                "status": "ready",
+                "current_module_id": None,
+                "overlay_root": None,
+                "resume_status": None,
+                "started_at": None,
+                "cancel_requested_at": None,
+                "finished_at": None,
+            })
+            overlay = OverlayLayout.create(dataset, "3bc585")
+            database.set_workspace_metadata(
+                "3bc585",
+                dataset_root=str(dataset),
+                dataset_root_key=windows_key(dataset),
+                overlay_root=str(overlay.root),
+            )
+            database.set_job_status("3bc585", "preparing_workspace", current_module_id="workspace")
+            database.set_job_status("3bc585", "interrupted", current_module_id="workspace")
+            database.connection.execute(
+                """INSERT INTO dataset_claims(dataset_root,dataset_root_key,job_id,lock_path,acquired_at)
+                   VALUES (?,?,?,?,?)""",
+                (str(dataset), windows_key(dataset), "3bc585", str(Path(self.temporary.name) / ".restart.lock"), "2026-08-17T00:00:00Z"),
+            )
+        finally:
+            database.close()
+
+        preflight = _endpoint(self.app, "/api/jobs/preflight", "POST")
+        confirm = _endpoint(self.app, "/api/jobs/{job_id}/confirm-workspace", "POST")
+        config = JobConfig(profile="e621", workMode="in_place", overwriteMode="incremental", sourceRoot=str(dataset))
+        config.nl["systemPrompt"] = "describe"
+        contender = preflight(_PreflightBody(config=config.to_dict()))
+        try:
+            confirm(contender["jobId"], _WorkspaceBody(confirmed=True, confirmedRebuild=False))
+        except Exception as error:
+            rejected = error
+        else:
+            rejected = None
+        self.assertIsInstance(rejected, HTTPException)
+        assert isinstance(rejected, HTTPException)
+        self.assertEqual(
+            (
+                409,
+                "Dataset is claimed by task 3bc585. Select it under Recent tasks: Recover keeps its progress and continues to hold the dataset; Discard deletes its overlay and releases the dataset.",
+            ),
+            (rejected.status_code, rejected.detail),
+        )
+
     def test_start_preserves_the_forced_cuda_compatibility_error_detail(self) -> None:
         class FailingPipeline:
             def startup_recovery(self) -> dict[str, int]:
