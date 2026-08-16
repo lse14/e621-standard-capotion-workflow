@@ -73,10 +73,117 @@ class PipelineTests(unittest.TestCase):
                 self.assertEqual(child_path, dispatch._ocr_binding_path(database, "repair-job", child_layout))
             self.assertEqual(binding, read_runtime_binding(child_path))
 
+            original = child_path.read_bytes()
+            dispatch._resolve_ocr_runtime = lambda _runtime_id: self.fail("an existing binding must bypass runtime resolution")  # type: ignore[method-assign]
+            dispatch._probe_ocr_gpu_runtime = lambda *_args: self.fail("an existing binding must bypass the GPU probe")  # type: ignore[method-assign]
             selection = dispatch._select_ocr_runtime(database, "repair-job", {"ocr": {"device": "auto"}}, child_path)
             self.assertEqual(("ocr-paddle", "a" * 64, None, "gpu_runtime_unavailable"), (
                 selection.runtime_id, selection.runtime_fingerprint, selection.total_vram_bytes, selection.startup_reason,
             ))
+            self.assertEqual(original, child_path.read_bytes())
+
+    def test_v7_auto_ocr_falls_back_to_cpu_when_gpu_operation_probe_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            dispatch = object.__new__(PipelineService)
+            dispatch.install_root = root
+            resolved: list[str] = []
+
+            def resolve(runtime_id: str) -> tuple[object, str]:
+                resolved.append(runtime_id)
+                return SimpleNamespace(), f"{runtime_id}-fingerprint"
+
+            def probe(_launch: object, _install_root: Path) -> int | None:
+                raise PipelineError("CUDA OCR runtime is unavailable")
+
+            dispatch._resolve_ocr_runtime = resolve  # type: ignore[method-assign]
+            dispatch._probe_ocr_gpu_runtime = probe  # type: ignore[method-assign]
+            selection = dispatch._select_ocr_runtime(
+                SimpleNamespace(), "job", {"ocr": {"device": "auto"}}, root / "ocr-runtime-binding-v1.json",
+            )
+
+            self.assertEqual(("ocr-paddle", "ocr-paddle-fingerprint", None, "gpu_runtime_unavailable"), (
+                selection.runtime_id, selection.runtime_fingerprint, selection.total_vram_bytes, selection.startup_reason,
+            ))
+            self.assertEqual(["ocr-paddle-gpu", "ocr-paddle"], resolved)
+
+    def test_v7_forced_cuda_reports_stable_message_without_cpu_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            dispatch = object.__new__(PipelineService)
+            dispatch.install_root = root
+            resolved: list[str] = []
+
+            def resolve(runtime_id: str) -> tuple[object, str]:
+                resolved.append(runtime_id)
+                return SimpleNamespace(), f"{runtime_id}-fingerprint"
+
+            def probe(_launch: object, _install_root: Path) -> int | None:
+                raise PipelineError("CUDA OCR runtime is unavailable")
+
+            dispatch._resolve_ocr_runtime = resolve  # type: ignore[method-assign]
+            dispatch._probe_ocr_gpu_runtime = probe  # type: ignore[method-assign]
+            with self.assertRaises(PipelineError) as raised:
+                dispatch._select_ocr_runtime(
+                    SimpleNamespace(), "job", {"ocr": {"device": "cuda"}}, root / "ocr-runtime-binding-v1.json",
+                )
+
+            self.assertEqual(
+                "The OCR CUDA runtime is unavailable or incompatible with this GPU. Choose Auto or CPU.",
+                str(raised.exception),
+            )
+            self.assertEqual(["ocr-paddle-gpu"], resolved)
+
+    def test_v7_cpu_ocr_never_probes_the_gpu_runtime(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            dispatch = object.__new__(PipelineService)
+            dispatch.install_root = root
+            resolved: list[str] = []
+
+            def resolve(runtime_id: str) -> tuple[object, str]:
+                resolved.append(runtime_id)
+                return SimpleNamespace(), f"{runtime_id}-fingerprint"
+
+            dispatch._resolve_ocr_runtime = resolve  # type: ignore[method-assign]
+            dispatch._probe_ocr_gpu_runtime = lambda *_args: self.fail("CPU selection must not probe CUDA")  # type: ignore[method-assign]
+            selection = dispatch._select_ocr_runtime(
+                SimpleNamespace(), "job", {"ocr": {"device": "cpu"}}, root / "ocr-runtime-binding-v1.json",
+            )
+
+            self.assertEqual(("ocr-paddle", "ocr-paddle-fingerprint", None, None), (
+                selection.runtime_id, selection.runtime_fingerprint, selection.total_vram_bytes, selection.startup_reason,
+            ))
+            self.assertEqual(["ocr-paddle"], resolved)
+
+    def test_v7_gpu_probe_runs_a_synchronized_cuda_matrix_operation(self) -> None:
+        launch = SimpleNamespace(interpreter=Path("gpu-runtime-python.exe"), environment={"PATH": "runtime-bin"})
+        completed = SimpleNamespace(returncode=0, stdout='{"totalVramBytes":8589934592}', stderr="")
+
+        with patch("anima_core.pipeline_dispatch.subprocess.run", return_value=completed) as run:
+            total = PipelineService._probe_ocr_gpu_runtime(launch, ROOT)
+
+        self.assertEqual(8589934592, total)
+        command = run.call_args.args[0]
+        self.assertEqual(["gpu-runtime-python.exe", "-B", "-I", "-c"], command[:4])
+        probe = command[4]
+        self.assertIn("paddle.set_device('gpu:0')", probe)
+        self.assertIn("paddle.matmul", probe)
+        self.assertIn("paddle.device.synchronize", probe)
+        self.assertIn(".numpy()", probe)
+        self.assertIn("expected = 23.0", probe)
+        self.assertIn("value != expected", probe)
+        self.assertLess(probe.index("paddle.matmul"), probe.index("paddle.device.synchronize"))
+        self.assertLess(probe.index("paddle.device.synchronize"), probe.index(".numpy()"))
+        self.assertEqual(1, probe.count("print("))
+        self.assertIn("print(json.dumps({'totalVramBytes'", probe)
+        self.assertEqual(15, run.call_args.kwargs["timeout"])
+        self.assertLessEqual(len(completed.stdout), 1024)
+
+        overlong = SimpleNamespace(returncode=0, stdout="x" * 1025, stderr="")
+        with patch("anima_core.pipeline_dispatch.subprocess.run", return_value=overlong):
+            with self.assertRaisesRegex(PipelineError, "CUDA OCR runtime is unavailable"):
+                PipelineService._probe_ocr_gpu_runtime(launch, ROOT)
 
     def test_v7_repair_missing_parent_binding_is_reported_as_a_pipeline_error(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

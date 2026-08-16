@@ -126,8 +126,16 @@ class PipelineDispatchMixin:
         if not isinstance(interpreter, Path) or not isinstance(environment, dict):
             raise PipelineError("CUDA OCR runtime is unavailable")
         probe = (
-            "import json, paddle\n"
+            "import json, math, paddle\n"
             "if not paddle.device.is_compiled_with_cuda() or paddle.device.cuda.device_count() < 1: raise SystemExit(2)\n"
+            "paddle.set_device('gpu:0')\n"
+            "left = paddle.to_tensor([[2.0, 3.0]], dtype='float32')\n"
+            "right = paddle.to_tensor([[4.0], [5.0]], dtype='float32')\n"
+            "product = paddle.matmul(left, right)\n"
+            "paddle.device.synchronize()\n"
+            "value = float(product.numpy()[0][0])\n"
+            "expected = 23.0\n"
+            "if not math.isfinite(value) or value != expected: raise SystemExit(3)\n"
             "try:\n"
             " total = int(paddle.device.cuda.get_device_properties(0).total_memory)\n"
             "except Exception:\n"
@@ -186,9 +194,11 @@ class PipelineDispatchMixin:
                         self._probe_ocr_gpu_runtime(launch, self.install_root),
                         None,
                     )
-                except PipelineError:
+                except PipelineError as exc:
                     if device == "cuda":
-                        raise
+                        raise PipelineError(
+                            "The OCR CUDA runtime is unavailable or incompatible with this GPU. Choose Auto or CPU."
+                        ) from exc
             _, fingerprint = self._resolve_ocr_runtime("ocr-paddle")
             return _OcrRuntimeSelection(
                 "ocr-paddle",
