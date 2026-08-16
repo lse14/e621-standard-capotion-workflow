@@ -16,7 +16,7 @@
 
 - 数据库 claim 冲突使用带占用任务 ID 的专用 `DatasetLockError` 子类，不解析异常字符串。
 - `POST /api/jobs/{job_id}/confirm-workspace` 将数据集锁冲突映射为 HTTP 409。
-- 数据库 claim 冲突返回可操作的字符串 `detail`，包含占用任务 ID，并提示选择该任务进行恢复，或丢弃以释放数据集。
+- 数据库 claim 冲突返回可操作的字符串 `detail`，包含占用任务 ID，并明确说明：从“最近任务”选择旧任务；恢复会保留进度并继续占用，丢弃会删除 overlay 并释放数据集。
 - 初次获取数据集锁时发生冲突属于可重试条件，新任务保持 `ready`，不得改为 `failed`，不得创建 overlay。
 - 其他已开始工作区物化后的失败继续沿用现有失败和清理语义。
 - 不修改数据库 schema、任务状态集合、overlay 格式或前端 API 数据结构。
