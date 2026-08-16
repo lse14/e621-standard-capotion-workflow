@@ -43,6 +43,37 @@ def default_install_root() -> Path:
     raise PipelineError("distributed embedded runtime manifests are unavailable")
 
 
+def _forced_cuda_start_gate(service: "PipelineService", job_id: str, job: object) -> None:
+    try:
+        config = json.loads(str(job["config_json"]))  # type: ignore[index]
+        config_hash = job["config_hash"]  # type: ignore[index]
+    except (KeyError, TypeError, json.JSONDecodeError) as exc:
+        raise PipelineError("frozen JobConfig is invalid JSON") from exc
+    if not isinstance(config, dict) or not isinstance(config_hash, str) or sha256_json(config) != config_hash:
+        raise PipelineError("frozen JobConfig hash does not match task record")
+    if not job_config_supports_ocr_device(config.get("schemaVersion")):
+        return
+    ocr = config.get("ocr")
+    if not isinstance(ocr, dict) or ocr.get("enabled") is not True or ocr.get("device") != "cuda":
+        return
+    try:
+        overlay_root = job["overlay_root"]  # type: ignore[index]
+    except (KeyError, TypeError) as exc:
+        raise PipelineError("prepared job has no annotation overlay") from exc
+    if not isinstance(overlay_root, str) or not overlay_root:
+        raise PipelineError("prepared job has no annotation overlay")
+    binding_path = OverlayLayout.open_existing(overlay_root, job_id).resource_path("ocr-runtime-binding-v1.json")
+    if binding_path.exists():
+        return
+    try:
+        launch, _ = service._resolve_ocr_runtime("ocr-paddle-gpu")
+        service._probe_ocr_gpu_runtime(launch, service.install_root)
+    except Exception as exc:
+        raise PipelineError(
+            "The OCR CUDA runtime is unavailable or incompatible with this GPU. Choose Auto or CPU."
+        ) from exc
+
+
 class PipelineService(PipelineRecoveryMixin, PipelineDispatchMixin):
     """Owns background threads, while individual runners own bounded module work."""
 
@@ -68,36 +99,6 @@ class PipelineService(PipelineRecoveryMixin, PipelineDispatchMixin):
         self._lock = threading.Lock()
         self._threads: dict[str, threading.Thread] = {}
 
-    def _forced_cuda_start_gate(self, job_id: str, job: object) -> None:
-        try:
-            config = json.loads(str(job["config_json"]))  # type: ignore[index]
-            config_hash = job["config_hash"]  # type: ignore[index]
-        except (KeyError, TypeError, json.JSONDecodeError) as exc:
-            raise PipelineError("frozen JobConfig is invalid JSON") from exc
-        if not isinstance(config, dict) or not isinstance(config_hash, str) or sha256_json(config) != config_hash:
-            raise PipelineError("frozen JobConfig hash does not match task record")
-        if not job_config_supports_ocr_device(config.get("schemaVersion")):
-            return
-        ocr = config.get("ocr")
-        if not isinstance(ocr, dict) or ocr.get("enabled") is not True or ocr.get("device") != "cuda":
-            return
-        try:
-            overlay_root = job["overlay_root"]  # type: ignore[index]
-        except (KeyError, TypeError) as exc:
-            raise PipelineError("prepared job has no annotation overlay") from exc
-        if not isinstance(overlay_root, str) or not overlay_root:
-            raise PipelineError("prepared job has no annotation overlay")
-        binding_path = OverlayLayout.open_existing(overlay_root, job_id).resource_path("ocr-runtime-binding-v1.json")
-        if binding_path.exists():
-            return
-        try:
-            launch, _ = self._resolve_ocr_runtime("ocr-paddle-gpu")
-            self._probe_ocr_gpu_runtime(launch, self.install_root)
-        except Exception as exc:
-            raise PipelineError(
-                "The OCR CUDA runtime is unavailable or incompatible with this GPU. Choose Auto or CPU."
-            ) from exc
-
     def start(self, job_id: str) -> None:
         with self._lock:
             if job_id in self._threads:
@@ -107,7 +108,7 @@ class PipelineService(PipelineRecoveryMixin, PipelineDispatchMixin):
                 job = database.get_job(job_id)
                 if job["status"] != "preparing_workspace":
                     raise PipelineError("only a prepared workspace can start its module pipeline")
-                self._forced_cuda_start_gate(job_id, job)
+                _forced_cuda_start_gate(self, job_id, job)
             finally:
                 database.close()
             thread = threading.Thread(target=self._thread_main, args=(job_id, False), daemon=True, name=f"anima-{job_id[:12]}")
