@@ -8,6 +8,7 @@ frontend/.playwright-browsers/
 frontend/playwright-report/
 frontend/test-results/
 .test-tmp/
+.worktrees/
 packaging/wheelhouse/**/*.partial
 
 # Local runtimes, toolchains, assembled trees, and test output.
