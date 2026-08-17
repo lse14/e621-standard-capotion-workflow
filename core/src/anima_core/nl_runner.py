@@ -655,23 +655,27 @@ class NlRunner:
                         continue
                     if outcome.nl is None:
                         code = outcome.code or "nl_processing_failed"
+                        nonblocking_terminal = code in NONBLOCKING_TERMINAL_NL_CODES
                         self._issue(
                             lease,
                             row,
                             code,
                             "NL worker could not produce a caption",
-                            blocking=code not in NONBLOCKING_TERMINAL_NL_CODES,
+                            blocking=not nonblocking_terminal,
                             retriable=outcome.retriable,
                             allowed_statuses=("request_started",),
                         )
-                        processed, failed = self.database.record_nl_outcome(self.job_id, succeeded=False)
+                        processed, failed = self.database.record_nl_outcome(self.job_id, succeeded=nonblocking_terminal)
                         if outcome.code == "nl_auth_failed":
                             pause_code = "nl_auth_paused"
-                        elif failed >= 10 and self.database.module_diagnostic_count(self.job_id, "nl", "nl_consecutive_failures") >= 9:
+                        elif not nonblocking_terminal and failed >= 10 and self.database.module_diagnostic_count(self.job_id, "nl", "nl_consecutive_failures") >= 9:
                             pause_code = "nl_circuit_breaker_paused"
-                        elif processed >= 20 and failed * 2 >= processed:
+                        elif not nonblocking_terminal and processed >= 20 and failed * 2 >= processed:
                             pause_code = "nl_circuit_breaker_paused"
-                        self.database.increment_module_diagnostic(self.job_id, "nl", "nl_consecutive_failures", severity="warning", amount=1)
+                        if nonblocking_terminal:
+                            self.database.set_module_diagnostic_count(self.job_id, "nl", "nl_consecutive_failures", severity="warning", count=0)
+                        else:
+                            self.database.increment_module_diagnostic(self.job_id, "nl", "nl_consecutive_failures", severity="warning", amount=1)
                     else:
                         self.database.stage_nl_response(
                             self.job_id,

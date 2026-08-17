@@ -177,6 +177,27 @@ test.describe("task status and issue characterization", () => {
     await expect(page.getByLabel("Task ID")).toHaveValue(`${DEFAULT_JOB_ID}-manual-retry-batch`);
   });
 
+  test("disables individual NL actions while a selected batch retry is pending", async ({ page, api }) => {
+    const snapshot = makeSnapshot({ status: "succeeded", currentModuleId: "export", schemaVersion: 8 });
+    snapshot.issues = [
+      { issue_id: "nl-failed-1", sample_id: 1, module_id: "nl", code: "nl_api_unavailable", severity: "error", message: "provider unavailable", retriable: 0, attempt: 1 },
+      { issue_id: "nl-failed-2", sample_id: 2, module_id: "nl", code: "nl_response_invalid", severity: "error", message: "invalid provider response", retriable: 0, attempt: 1 },
+    ];
+    setJobSnapshot(api, snapshot);
+    const releaseBatchRetry = holdRoute(api, `POST /api/jobs/${DEFAULT_JOB_ID}/nl/manual-retry-batch`);
+    try {
+      await openApp(page, { jobId: DEFAULT_JOB_ID, language: "en" });
+      await page.getByRole("checkbox", { name: "Select NL issues on this page" }).check();
+      page.once("dialog", (dialog) => dialog.accept());
+      await page.getByRole("button", { name: "Retry selected NL" }).click();
+      await expect.poll(() => mutationsFor(api, "POST", `/api/jobs/${DEFAULT_JOB_ID}/nl/manual-retry-batch`).length).toBe(1);
+      await expect(page.getByRole("button", { name: "Retry NL API" }).first()).toBeDisabled();
+      await expect(page.getByPlaceholder("Manual NL text").first()).toBeDisabled();
+    } finally {
+      releaseBatchRetry();
+    }
+  });
+
   test("refreshes the selected snapshot after pausing while a poll is in flight", async ({ page, api }) => {
     setJobSnapshot(api, makeSnapshot({ status: "running", currentModuleId: "caption" }));
     await installSnapshotFetchProbe(page, DEFAULT_JOB_ID);

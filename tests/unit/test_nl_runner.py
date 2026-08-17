@@ -954,20 +954,21 @@ class NlRunnerTests(unittest.TestCase):
             finally:
                 fixture.close()
 
-    def test_ten_consecutive_api_failures_open_circuit_breaker(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            fixture = NlFixture(Path(temporary), baseline_nl="", sample_count=10)
-            try:
-                fixture.config.nl.update({"apiEnabled": True, "reuseOriginalNl": False, "useImage": True, "useFullJson": True, "systemPrompt": "describe", "apiPolicy": {"maxHttpAttempts": 100}})
-                fixture.refresh_config()
-                transport = FakeNlTransport(issue_code="nl_api_unavailable")
-                self.assertEqual("paused", fixture.runner(transport, NlApiCredentials("https://example.test", "main", "secret")).run())
-                self.assertEqual(2, transport.process)
-                diagnostics = {row["code"]: row["count"] for row in fixture.database.module_diagnostics("job-nl", "nl")}
-                self.assertEqual(10, diagnostics["nl_consecutive_failures"])
-                self.assertIn("nl_circuit_breaker_paused", diagnostics)
-            finally:
-                fixture.close()
+    def test_ten_terminal_api_failures_do_not_open_circuit_breaker(self) -> None:
+        for issue_code in ("nl_api_unavailable", "nl_response_invalid"):
+            with self.subTest(issue_code=issue_code), tempfile.TemporaryDirectory() as temporary:
+                fixture = NlFixture(Path(temporary), baseline_nl="", sample_count=10)
+                try:
+                    fixture.config.nl.update({"apiEnabled": True, "reuseOriginalNl": False, "useImage": True, "useFullJson": True, "systemPrompt": "describe", "apiPolicy": {"maxHttpAttempts": 100}})
+                    fixture.refresh_config()
+                    transport = FakeNlTransport(issue_code=issue_code)
+                    self.assertEqual("completed_with_issues", fixture.runner(transport, NlApiCredentials("https://example.test", "main", "secret")).run())
+                    self.assertEqual(2, transport.process)
+                    diagnostics = {row["code"]: row["count"] for row in fixture.database.module_diagnostics("job-nl", "nl")}
+                    self.assertEqual(0, diagnostics.get("nl_consecutive_failures", 0))
+                    self.assertNotIn("nl_circuit_breaker_paused", diagnostics)
+                finally:
+                    fixture.close()
 
     def test_cancellation_stops_new_nl_batches_after_in_flight_batch_persists(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -1038,18 +1039,18 @@ class NlRunnerTests(unittest.TestCase):
             finally:
                 fixture.close()
 
-    def test_rolling_hundred_window_breaker_pauses_at_fifty_percent_after_twenty(self) -> None:
+    def test_terminal_api_failures_do_not_open_rolling_window_breaker(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             fixture = NlFixture(Path(temporary), baseline_nl="", sample_count=20)
             try:
                 fixture.config.nl.update({"apiEnabled": True, "reuseOriginalNl": False, "useImage": True, "useFullJson": True, "systemPrompt": "describe", "apiPolicy": {"maxHttpAttempts": 100}})
                 fixture.refresh_config()
                 transport = FakeNlTransport(issue_code="nl_api_unavailable", issue_sample_ids=set(range(2, 21, 2)))
-                self.assertEqual("paused", fixture.runner(transport, NlApiCredentials("https://example.test", "main", "secret")).run())
+                self.assertEqual("completed_with_issues", fixture.runner(transport, NlApiCredentials("https://example.test", "main", "secret")).run())
                 self.assertEqual(4, transport.process)
                 diagnostics = {row["code"]: row["count"] for row in fixture.database.module_diagnostics("job-nl", "nl")}
-                self.assertEqual(1, diagnostics["nl_consecutive_failures"])
-                self.assertIn("nl_circuit_breaker_paused", diagnostics)
+                self.assertEqual(0, diagnostics.get("nl_consecutive_failures", 0))
+                self.assertNotIn("nl_circuit_breaker_paused", diagnostics)
             finally:
                 fixture.close()
 

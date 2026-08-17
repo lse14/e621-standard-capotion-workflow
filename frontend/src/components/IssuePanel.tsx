@@ -91,9 +91,9 @@ export function IssuePanel({
         </div>
         <small>{labels.attempt(item.attempt)}; {item.retriable ? labels.retryFrom(item.repairStartModule ?? "-") : labels.notRetriable}</small>
         {isNlManual && <div className="issue-manual-nl">
-          <button className="secondary" type="button" disabled={manualNlRetrying || manualNlWriting} onClick={() => onManualNlRetry(item)}>{labels.nlRetry}</button>
-          <input value={draft} placeholder={labels.nlWritePlaceholder} disabled={manualNlRetrying || manualNlWriting} onChange={(event) => setNlDrafts((current) => ({ ...current, [item.issueId]: event.target.value }))} />
-          <button className="secondary" type="button" disabled={!draft.trim() || manualNlRetrying || manualNlWriting} onClick={() => onManualNlWrite(item, draft)}>{labels.nlWrite}</button>
+          <button className="secondary" type="button" disabled={manualNlRetrying || manualNlBatchRetrying || manualNlWriting} onClick={() => onManualNlRetry(item)}>{labels.nlRetry}</button>
+          <input value={draft} placeholder={labels.nlWritePlaceholder} disabled={manualNlRetrying || manualNlBatchRetrying || manualNlWriting} onChange={(event) => setNlDrafts((current) => ({ ...current, [item.issueId]: event.target.value }))} />
+          <button className="secondary" type="button" disabled={!draft.trim() || manualNlRetrying || manualNlBatchRetrying || manualNlWriting} onClick={() => onManualNlWrite(item, draft)}>{labels.nlWrite}</button>
         </div>}
       </li>;
     })}</ul>
