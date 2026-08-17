@@ -1338,6 +1338,31 @@ class ControlPlaneApiTests(unittest.TestCase):
         with self.assertRaises(HTTPException):
             listing(afterCreatedAt="2026-07-24T00:00:00Z", afterJobId=None, limit=2)
 
+    def test_job_hierarchy_hides_repair_children_from_list_and_exposes_snapshot_links(self) -> None:
+        database = StateDatabase.open(self.database_path)
+        try:
+            template = dict(database.get_job("job-api"))
+            database.insert_job({
+                **template,
+                "job_id": "repair-api",
+                "created_at": "2026-07-25T00:00:00Z",
+                "status": "cancelled_recoverable",
+            })
+            database.create_repair_link("repair-api", "job-api")
+        finally:
+            database.close()
+
+        listing = _endpoint(self.app, "/api/jobs", "GET")
+        page = listing(afterCreatedAt=None, afterJobId=None, limit=20)
+        self.assertEqual(["job-api"], [job["jobId"] for job in page["jobs"]])
+
+        snapshot = _endpoint(self.app, "/api/jobs/{job_id}", "GET")
+        parent = snapshot("job-api", afterEventId=0, issueAfterSampleId=0, issueAfterIssueId=None, limit=50)
+        self.assertEqual("repair-api", parent["repairChildren"][0]["jobId"])
+        self.assertEqual(0, parent["repairChildren"][0]["targetCount"])
+        child = snapshot("repair-api", afterEventId=0, issueAfterSampleId=0, issueAfterIssueId=None, limit=50)
+        self.assertEqual("job-api", child["job"]["parentJobId"])
+
     def test_preflight_response_exposes_every_frozen_preflight_page_field(self) -> None:
         # F39: ROADMAP.md:1224 requires blank counts, projection, estimates and API bounds.
         preflight = _endpoint(self.app, "/api/jobs/preflight", "POST")

@@ -306,6 +306,19 @@ class JobDatabaseMixin:
         ).fetchone()
         return None if row is None else str(row["parent_job_id"])
 
+    def repair_children(self, parent_job_id: str) -> list[sqlite3.Row]:
+        return list(self.connection.execute(
+            """SELECT jobs.job_id,jobs.status,jobs.current_module_id,jobs.sample_count,jobs.created_at,jobs.finished_at,
+                      COUNT(repair_targets.sample_id) AS target_count
+                 FROM repair_jobs
+                 JOIN jobs ON jobs.job_id=repair_jobs.repair_job_id
+                 LEFT JOIN repair_targets ON repair_targets.repair_job_id=repair_jobs.repair_job_id
+                WHERE repair_jobs.parent_job_id=?
+                GROUP BY jobs.job_id,jobs.status,jobs.current_module_id,jobs.sample_count,jobs.created_at,jobs.finished_at
+                ORDER BY jobs.created_at DESC, jobs.job_id DESC""",
+            (parent_job_id,),
+        ))
+
     def count_repair_targets(self, repair_job_id: str) -> int:
         return int(self.connection.execute(
             "SELECT COUNT(*) FROM repair_targets WHERE repair_job_id=?", (repair_job_id,)

@@ -89,7 +89,9 @@ def build_jobs_router(context: ControlPlaneContext) -> APIRouter:
             cursor: list[object] = [] if afterCreatedAt is None else [afterCreatedAt, afterCreatedAt, afterJobId]
             rows = list(database.connection.execute(
                 "SELECT job_id,status,current_module_id,profile,dataset_root,sample_count,pinned,created_at,finished_at"
-                f" FROM jobs{predicate} ORDER BY created_at DESC,job_id DESC LIMIT ?", [*cursor, limit],
+                f" FROM jobs{predicate}{' AND ' if predicate else ' WHERE '}NOT EXISTS "
+                "(SELECT 1 FROM repair_jobs WHERE repair_jobs.repair_job_id=jobs.job_id) "
+                "ORDER BY created_at DESC,job_id DESC LIMIT ?", [*cursor, limit],
             ))
             jobs = [{
                 "jobId": row["job_id"], "status": row["status"], "currentModuleId": row["current_module_id"],
@@ -123,6 +125,12 @@ def build_jobs_router(context: ControlPlaneContext) -> APIRouter:
             issues = database.page_issues(
                 job_id, after_sample_id=issueAfterSampleId or None, after_issue_id=issueAfterIssueId, limit=limit,
             )
+            parent_job_id = database.repair_parent_job_id(job_id)
+            repair_children = [{
+                "jobId": row["job_id"], "status": row["status"], "currentModuleId": row["current_module_id"],
+                "sampleCount": row["sample_count"], "targetCount": row["target_count"],
+                "createdAt": row["created_at"], "finishedAt": row["finished_at"],
+            } for row in database.repair_children(job_id)]
             export_summary = None
             repair_preview = None
             ocr_runtime = None
@@ -162,6 +170,7 @@ def build_jobs_router(context: ControlPlaneContext) -> APIRouter:
                 "job": {
                     "jobId": job["job_id"], "status": job["status"], "currentModuleId": job["current_module_id"],
                     "profile": job["profile"], "configSchemaVersion": job["config_schema_version"],
+                    "parentJobId": parent_job_id,
                     "lastEventId": job["last_event_id"], "apiBudgetExtra": job["api_budget_extra"],
                     "apiBudgetRevision": job["api_budget_revision"], "pinned": bool(job["pinned"]),
                     # F41: the frozen JobState fields (ROADMAP.md:1233-1246).
@@ -186,6 +195,7 @@ def build_jobs_router(context: ControlPlaneContext) -> APIRouter:
                 "issues": [dict(row) for row in issues],
                 "exportSummary": export_summary,
                 "repairPreview": repair_preview,
+                "repairChildren": repair_children,
                 "nlPendingApiDecisions": pending_api_decisions(database, job_id),
                 "nextAfterEventId": int(events[-1]["event_id"]) if events else afterEventId,
                 "nextIssueAfterSampleId": int(issues[-1]["sample_id"]) if issues else issueAfterSampleId,
