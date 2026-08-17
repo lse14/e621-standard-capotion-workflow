@@ -102,8 +102,55 @@ class BoundedScheduler:
             if statuses.get(predecessor) not in FINAL_MODULE_STATUSES:
                 raise SchedulerError(f"{module_id} cannot start before {predecessor} reaches a final state")
         for successor in module_order[index + 1:]:
-            if successor in statuses:
+            if successor in statuses and statuses[successor] != "paused":
                 raise SchedulerError(f"{module_id} cannot start after {successor} has been initialized")
+
+    @staticmethod
+    def _is_module_enabled(job: object, module_id: ModuleId) -> bool:
+        try:
+            config = json.loads(job["config_json"])  # type: ignore[index]
+            if module_id == "export":
+                return True
+            section_name = "countReview" if module_id == "count_review" else "tokenBudget" if module_id == "token_budget" else module_id
+            section = config[section_name]
+            enabled = section["enabled"]
+        except (KeyError, TypeError, json.JSONDecodeError) as exc:
+            raise SchedulerError(f"frozen {module_id} configuration is invalid") from exc
+        if type(enabled) is not bool:
+            raise SchedulerError(f"frozen {module_id} configuration is invalid")
+        if module_id != "dropout" or not enabled:
+            return enabled
+        children = (section.get("artist"), section.get("quality"), section.get("appearanceNl"))
+        if any(not isinstance(child, dict) or type(child.get("enabled")) is not bool for child in children):
+            raise SchedulerError("frozen dropout subfeature configuration is invalid")
+        return any(child["enabled"] for child in children)
+
+    def _assert_future_module(self, job_id: str, module_id: ModuleId) -> tuple[object, str]:
+        job = self.database.get_job(job_id)
+        try:
+            module_order = pipeline_module_ids(int(job["config_schema_version"]))
+            current_module_id = job["current_module_id"]
+            if not isinstance(current_module_id, str):
+                raise ValueError
+            if module_order.index(module_id) <= module_order.index(current_module_id):
+                raise ValueError
+        except ValueError as exc:
+            raise SchedulerError(f"{module_id} is not an enabled later successor") from exc
+        if not self._is_module_enabled(job, module_id):
+            raise SchedulerError(f"{module_id} is not an enabled later successor")
+        return job, current_module_id
+
+    def pause_future_module(self, job_id: str, module_id: ModuleId, *, total: int) -> None:
+        job, current_module_id = self._assert_future_module(job_id, module_id)
+        self.database.pause_future_module(
+            job_id, module_id, total=total, current_module_id=current_module_id, active_status=str(job["status"]),
+        )
+
+    def cancel_future_pause(self, job_id: str, module_id: ModuleId) -> None:
+        job, current_module_id = self._assert_future_module(job_id, module_id)
+        self.database.cancel_future_pause(
+            job_id, module_id, current_module_id=current_module_id, active_status=str(job["status"]),
+        )
 
     def start_module(self, job_id: str, module_id: ModuleId, *, enabled: bool, profile: str) -> str:
         job = self.database.get_job(job_id)
@@ -117,9 +164,21 @@ class BoundedScheduler:
             raise SchedulerError(f"job state {job['status']} cannot start a module")
         self._assert_module_order(job_id, module_id)
         availability = module_availability(profile, module_id, enabled=enabled)
-        total = self.database.count_module_samples(job_id, module_id)
-        self.database.initialize_module_summary(job_id, module_id, total=total)
-        summary = self.database.module_summary(job_id, module_id)
+        try:
+            summary = self.database.module_summary(job_id, module_id)
+        except KeyError:
+            total = self.database.count_module_samples(job_id, module_id)
+            self.database.initialize_module_summary(job_id, module_id, total=total)
+            summary = self.database.module_summary(job_id, module_id)
+        else:
+            total = int(summary["total"])
+        if summary["status"] == "paused":
+            self.database.start_prepaused_module(
+                job_id,
+                module_id,
+                resume_status="exporting" if module_id == "export" else "running",
+            )
+            return "paused"
         if summary["status"] == "running":
             expected_job_status = "exporting" if module_id == "export" else "running"
             if job["current_module_id"] == module_id and job["status"] == expected_job_status:

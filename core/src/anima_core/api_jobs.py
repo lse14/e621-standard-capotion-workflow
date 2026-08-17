@@ -264,6 +264,26 @@ def build_jobs_router(context: ControlPlaneContext) -> APIRouter:
         except PipelineError as exc:
             raise bad_request(exc) from exc
 
+    @router.post("/api/jobs/{job_id}/modules/{module_id}/pause")
+    def pause_module(job_id: str, module_id: str) -> dict[str, object]:
+        try:
+            context.pipeline_service.pause_module(job_id, module_id)
+            return job_snapshot(job_id, afterEventId=0, issueAfterSampleId=0, issueAfterIssueId=None, limit=DEFAULT_PAGE_SIZE)
+        except KeyError as exc:
+            raise not_found(exc) from exc
+        except PipelineError as exc:
+            raise bad_request(exc) from exc
+
+    @router.post("/api/jobs/{job_id}/modules/{module_id}/resume")
+    def resume_module(job_id: str, module_id: str) -> dict[str, object]:
+        try:
+            context.pipeline_service.resume_module(job_id, module_id)
+            return job_snapshot(job_id, afterEventId=0, issueAfterSampleId=0, issueAfterIssueId=None, limit=DEFAULT_PAGE_SIZE)
+        except KeyError as exc:
+            raise not_found(exc) from exc
+        except PipelineError as exc:
+            raise bad_request(exc) from exc
+
     @router.post("/api/jobs/{job_id}/repair")
     def repair_job(job_id: str) -> dict[str, object]:
         released_parent_lock = False

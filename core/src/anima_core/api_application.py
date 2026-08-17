@@ -28,24 +28,15 @@ def build_application_router(context: ControlPlaneContext) -> APIRouter:
             raise bad_request(exc) from exc
 
     def policy_control(job_id: str, action: str) -> dict[str, str]:
-        database = StateDatabase.open(context.database_path)
         try:
-            job = database.get_job(job_id)
-            summary = database.module_summary(job_id, "dropout")
-            if action == "pause":
-                if job["status"] != "running" or job["current_module_id"] != "dropout" or summary["status"] != "running":
-                    raise bad_request(SchedulerError("only a running policy module can be paused"))
-                database.pause_active_module(job_id, "dropout", active_status="running")
-                return {"status": "paused"}
+            status = (
+                context.pipeline_service.pause_module(job_id, "dropout")
+                if action == "pause"
+                else context.pipeline_service.resume_module(job_id, "dropout")
+            )
+            return {"status": status}
         except KeyError as exc:
             raise not_found(exc) from exc
-        except ValueError as exc:
-            raise bad_request(exc) from exc
-        finally:
-            database.close()
-        try:
-            context.pipeline_service.resume(job_id)
-            return {"status": "running"}
         except PipelineError as exc:
             raise bad_request(exc) from exc
 

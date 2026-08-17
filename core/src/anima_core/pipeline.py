@@ -26,7 +26,7 @@ from .overlay import BaselineView, OverlayLayout, WorkingAnnotationView
 from .pipeline_dispatch import PipelineDispatchMixin, PipelineError, _RUNTIMES
 from .pipeline_recovery import PipelineRecoveryMixin
 from .resource_catalog import ResourceCatalog, default_resource_library_root
-from .scheduler import BoundedScheduler
+from .scheduler import BoundedScheduler, SchedulerError
 from .stdio_transport import StdioJsonlTransportError
 from .token_budget_overlay import TokenBudgetOverlayError, TokenBudgetOverlayWriter
 
@@ -72,6 +72,22 @@ def _forced_cuda_start_gate(service: "PipelineService", job_id: str, job: object
         raise PipelineError(
             "The OCR CUDA runtime is unavailable or incompatible with this GPU. Choose Auto or CPU."
         ) from exc
+
+
+def _is_unstarted_paused_summary(summary: object) -> bool:
+    try:
+        return (
+            summary["status"] == "paused"  # type: ignore[index]
+            and int(summary["completed"]) == 0  # type: ignore[index]
+            and int(summary["failed"]) == 0  # type: ignore[index]
+            and int(summary["skipped"]) == 0  # type: ignore[index]
+            and int(summary["issue_count"]) == 0  # type: ignore[index]
+            and int(summary["worker_restart_count"]) == 0  # type: ignore[index]
+            and summary["started_at"] is None  # type: ignore[index]
+            and summary["finished_at"] is None  # type: ignore[index]
+        )
+    except (KeyError, TypeError, ValueError):
+        return False
 
 
 class PipelineService(PipelineRecoveryMixin, PipelineDispatchMixin):
@@ -151,12 +167,84 @@ class PipelineService(PipelineRecoveryMixin, PipelineDispatchMixin):
                 database.close()
             return True
 
+    def pause_module(self, job_id: str, module_id: str) -> str:
+        """Pause the active module or persist an enabled later-module pre-pause."""
+        with self._lock:
+            database = StateDatabase.open(self.database_path)
+            try:
+                job = database.get_job(job_id)
+                try:
+                    module_order = pipeline_module_ids(int(job["config_schema_version"]))
+                    current_module_id = str(job["current_module_id"])
+                    target_index = module_order.index(module_id)
+                    current_index = module_order.index(current_module_id)
+                except (TypeError, ValueError) as exc:
+                    raise PipelineError("task has no controllable current module") from exc
+                if target_index < current_index:
+                    raise PipelineError("only an unfinished module can be paused")
+                if target_index == current_index:
+                    if job_id not in self._threads:
+                        raise PipelineError("only a running worker module can pause")
+                    active_status = self._active_module_status(module_id)
+                    if job["status"] != active_status:
+                        raise PipelineError("only a running worker module can pause")
+                    try:
+                        database.pause_active_module(job_id, module_id, active_status=active_status)
+                    except ValueError as exc:
+                        raise PipelineError(str(exc)) from exc
+                    return "paused"
+                if job["status"] not in {"running", "exporting"}:
+                    raise PipelineError("only a running task can pre-pause a later module")
+                try:
+                    BoundedScheduler(database).pause_future_module(
+                        job_id, module_id, total=database.count_module_samples(job_id, module_id),
+                    )
+                except (SchedulerError, ValueError) as exc:
+                    raise PipelineError(str(exc)) from exc
+                return "paused"
+            finally:
+                database.close()
+
+    def resume_module(self, job_id: str, module_id: str) -> str:
+        """Cancel a later pre-pause or resume the exact current module."""
+        resume_current = False
+        with self._lock:
+            database = StateDatabase.open(self.database_path)
+            try:
+                job = database.get_job(job_id)
+                try:
+                    module_order = pipeline_module_ids(int(job["config_schema_version"]))
+                    current_module_id = str(job["current_module_id"])
+                    target_index = module_order.index(module_id)
+                    current_index = module_order.index(current_module_id)
+                except (TypeError, ValueError) as exc:
+                    raise PipelineError("task has no controllable current module") from exc
+                if target_index < current_index:
+                    raise PipelineError("only an unfinished module can be resumed")
+                if target_index > current_index:
+                    if job["status"] not in {"running", "exporting", "paused", "reviewing"}:
+                        raise PipelineError("only a running task can resume a later module")
+                    try:
+                        BoundedScheduler(database).cancel_future_pause(job_id, module_id)
+                    except (SchedulerError, ValueError) as exc:
+                        raise PipelineError(str(exc)) from exc
+                    return "pending"
+                resume_current = True
+            finally:
+                database.close()
+        if resume_current:
+            self.resume(job_id)
+            return "running"
+        raise AssertionError("module resume did not select a control path")
+
     def resume(self, job_id: str) -> bool:
         """Resume a paused current module, starting a thread only when needed."""
         with self._lock:
             if job_id in self._threads:
                 raise PipelineError("task pipeline is still settling; retry resume")
             resuming_token_budget_review = False
+            resuming_prepaused_module = False
+            prepaused_total: int | None = None
             resume_target_status: str | None = None
             database = StateDatabase.open(self.database_path)
             try:
@@ -193,9 +281,17 @@ class PipelineService(PipelineRecoveryMixin, PipelineDispatchMixin):
                     if job["status"] != "paused" or job["resume_status"] != resume_target_status:
                         raise PipelineError("only a paused worker module can resume")
                     try:
-                        database.resume_paused_module(
-                            job_id, str(module_id), target_status=resume_target_status
-                        )
+                        summary = database.module_summary(job_id, str(module_id))
+                        if _is_unstarted_paused_summary(summary):
+                            prepaused_total = int(summary["total"])
+                            database.resume_prepaused_module(
+                                job_id, str(module_id), target_status=resume_target_status, total=prepaused_total,
+                            )
+                            resuming_prepaused_module = True
+                        else:
+                            database.resume_paused_module(
+                                job_id, str(module_id), target_status=resume_target_status
+                            )
                     except ValueError as exc:
                         raise PipelineError(str(exc)) from exc
                     thread = threading.Thread(
@@ -215,6 +311,14 @@ class PipelineService(PipelineRecoveryMixin, PipelineDispatchMixin):
                             current = database.get_job(job_id)
                             if current["status"] == "exporting" and current["current_module_id"] == "export":
                                 database.set_job_status(job_id, "reviewing", current_module_id="token_budget", resume_status=None)
+                    elif resuming_prepaused_module:
+                        assert resume_target_status is not None and prepaused_total is not None
+                        try:
+                            database.restore_prepaused_module(
+                                job_id, str(module_id), active_status=resume_target_status, total=prepaused_total,
+                            )
+                        except (KeyError, ValueError):
+                            pass
                     else:
                         assert resume_target_status is not None
                         try:
@@ -443,6 +547,8 @@ class PipelineService(PipelineRecoveryMixin, PipelineDispatchMixin):
                         # With no policy action selected, starting the worker would only read and rewrite JSON.
                         enabled = enabled and any(child["enabled"] for child in children)
                 state = scheduler.start_module(job_id, module_id, enabled=enabled, profile=str(profile))
+                if state == "paused":
+                    return
                 if state == "running":
                     finished = self._run_module_with_restarts(database, scheduler, job_id, module_id, config)
                     if finished in {"paused", "reviewing", "cancelling"}:

@@ -685,6 +685,154 @@ class SchedulerDatabaseMixin:
             if result.rowcount != 1:
                 raise ValueError("active module state changed before pause")
 
+    def pause_future_module(
+        self, job_id: str, module_id: str, *, total: int, current_module_id: str, active_status: str,
+    ) -> None:
+        """Create a no-work paused summary for the selected future module."""
+        if total < 0:
+            raise ValueError("module total must not be negative")
+        transition_module("pending", "paused", module_id=module_id)
+        with self.transaction(immediate=True):
+            job = self.connection.execute(
+                "SELECT status,current_module_id FROM jobs WHERE job_id=?", (job_id,)
+            ).fetchone()
+            if job is None:
+                raise KeyError(f"job does not exist: {job_id}")
+            if job["status"] != active_status or job["current_module_id"] != current_module_id:
+                raise ValueError("task state changed before future pause")
+            if self.connection.execute(
+                "SELECT 1 FROM module_summary WHERE job_id=? AND module_id=?", (job_id, module_id)
+            ).fetchone() is not None:
+                raise ValueError("future module has already been initialized")
+            if self.connection.execute(
+                "SELECT 1 FROM sample_state WHERE job_id=? AND current_module_id=? LIMIT 1",
+                (job_id, module_id),
+            ).fetchone() is not None:
+                raise ValueError("future module already has work")
+            self.connection.execute(
+                "INSERT INTO module_summary(job_id,module_id,status,total) VALUES (?,?,?,?)",
+                (job_id, module_id, "paused", total),
+            )
+
+    def cancel_future_pause(
+        self, job_id: str, module_id: str, *, current_module_id: str, active_status: str,
+    ) -> None:
+        """Remove only an unstarted future pause summary."""
+        with self.transaction(immediate=True):
+            job = self.connection.execute(
+                "SELECT status,current_module_id FROM jobs WHERE job_id=?", (job_id,)
+            ).fetchone()
+            if job is None:
+                raise KeyError(f"job does not exist: {job_id}")
+            if (
+                job["status"] != active_status
+                or job["current_module_id"] != current_module_id
+                or current_module_id == module_id
+            ):
+                raise ValueError("task state changed before future pause cancellation")
+            result = self.connection.execute(
+                """DELETE FROM module_summary
+                   WHERE job_id=? AND module_id=? AND status='paused'
+                     AND completed=0 AND failed=0 AND skipped=0 AND issue_count=0
+                     AND worker_restart_count=0 AND started_at IS NULL AND finished_at IS NULL
+                     AND NOT EXISTS (
+                         SELECT 1 FROM sample_state
+                         WHERE job_id=? AND current_module_id=?
+                     )""",
+                (job_id, module_id, job_id, module_id),
+            )
+            if result.rowcount != 1:
+                raise ValueError("future pause is not a zero-work summary")
+
+    def start_prepaused_module(self, job_id: str, module_id: str, *, resume_status: str) -> None:
+        """Make a selected future pause the current task pause without queue work."""
+        if resume_status not in {"running", "exporting"}:
+            raise ValueError("prepaused module resume status is invalid")
+        with self.transaction(immediate=True):
+            job = self.connection.execute(
+                "SELECT status,current_module_id FROM jobs WHERE job_id=?", (job_id,)
+            ).fetchone()
+            if job is None:
+                raise KeyError(f"job does not exist: {job_id}")
+            transition_job(str(job["status"]), "paused")
+            summary = self.connection.execute(
+                """SELECT 1 FROM module_summary
+                   WHERE job_id=? AND module_id=? AND status='paused'
+                     AND completed=0 AND failed=0 AND skipped=0 AND issue_count=0
+                     AND worker_restart_count=0 AND started_at IS NULL AND finished_at IS NULL""",
+                (job_id, module_id),
+            ).fetchone()
+            if summary is None or job["current_module_id"] == module_id:
+                raise ValueError("prepaused module state changed before start")
+            if self.connection.execute(
+                "SELECT 1 FROM sample_state WHERE job_id=? AND current_module_id=? LIMIT 1",
+                (job_id, module_id),
+            ).fetchone() is not None:
+                raise ValueError("prepaused module already has work")
+            result = self.connection.execute(
+                """UPDATE jobs SET status='paused',resume_status=?,current_module_id=?
+                   WHERE job_id=? AND status=? AND current_module_id=?""",
+                (resume_status, module_id, job_id, job["status"], job["current_module_id"]),
+            )
+            if result.rowcount != 1:
+                raise ValueError("prepaused module state changed before start")
+
+    def resume_prepaused_module(self, job_id: str, module_id: str, *, target_status: str, total: int) -> None:
+        """Remove an arrived zero-work pause before its first worker starts."""
+        if target_status not in {"running", "exporting"} or total < 0:
+            raise ValueError("prepaused module resume state is invalid")
+        transition_job("paused", target_status)
+        with self.transaction(immediate=True):
+            job = self.connection.execute(
+                "SELECT status,current_module_id,resume_status FROM jobs WHERE job_id=?", (job_id,)
+            ).fetchone()
+            if job is None:
+                raise KeyError(f"job does not exist: {job_id}")
+            summary = self.connection.execute(
+                """SELECT total FROM module_summary
+                   WHERE job_id=? AND module_id=? AND status='paused'
+                     AND completed=0 AND failed=0 AND skipped=0 AND issue_count=0
+                     AND worker_restart_count=0 AND started_at IS NULL AND finished_at IS NULL""",
+                (job_id, module_id),
+            ).fetchone()
+            if (
+                job["status"] != "paused"
+                or job["current_module_id"] != module_id
+                or job["resume_status"] != target_status
+                or summary is None
+                or int(summary["total"]) != total
+            ):
+                raise ValueError("prepaused module state changed before resume")
+            result = self.connection.execute(
+                "DELETE FROM module_summary WHERE job_id=? AND module_id=?", (job_id, module_id)
+            )
+            if result.rowcount != 1:
+                raise ValueError("prepaused module state changed before resume")
+            self.connection.execute(
+                "UPDATE jobs SET status=?,resume_status=NULL WHERE job_id=?", (target_status, job_id)
+            )
+
+    def restore_prepaused_module(self, job_id: str, module_id: str, *, active_status: str, total: int) -> None:
+        """Restore a zero-work pause when its replacement pipeline thread cannot start."""
+        if active_status not in {"running", "exporting"} or total < 0:
+            raise ValueError("prepaused module restore state is invalid")
+        transition_job(active_status, "paused")
+        with self.transaction(immediate=True):
+            job = self.connection.execute(
+                "SELECT status,current_module_id FROM jobs WHERE job_id=?", (job_id,)
+            ).fetchone()
+            if job is None:
+                raise KeyError(f"job does not exist: {job_id}")
+            if job["status"] != active_status or job["current_module_id"] != module_id:
+                raise ValueError("prepaused module state changed before restore")
+            self.connection.execute(
+                "INSERT INTO module_summary(job_id,module_id,status,total) VALUES (?,?,?,?)",
+                (job_id, module_id, "paused", total),
+            )
+            self.connection.execute(
+                "UPDATE jobs SET status='paused',resume_status=? WHERE job_id=?", (active_status, job_id)
+            )
+
     def resume_paused_module(self, job_id: str, module_id: str, *, target_status: str) -> None:
         """Atomically resume the exact paused job and module pair."""
         if target_status not in {"running", "exporting"}:

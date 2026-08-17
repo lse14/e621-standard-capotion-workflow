@@ -61,6 +61,8 @@ EXPECTED_CONTROL_ROUTES = {
     ("POST", "/api/jobs/{job_id}/start"),
     ("POST", "/api/jobs/{job_id}/pause"),
     ("POST", "/api/jobs/{job_id}/resume"),
+    ("POST", "/api/jobs/{job_id}/modules/{module_id}/pause"),
+    ("POST", "/api/jobs/{job_id}/modules/{module_id}/resume"),
     ("GET", "/api/jobs/{job_id}/token-budget/reviews"),
     ("POST", "/api/jobs/{job_id}/token-budget/recount"),
     ("POST", "/api/jobs/{job_id}/token-budget/rewrite-short"),
@@ -424,6 +426,13 @@ class ControlPlaneApiTests(unittest.TestCase):
                 self.resumed.append(job_id)
                 return True
 
+            def pause_module(self, _job_id: str, _module_id: str) -> str:
+                return "paused"
+
+            def resume_module(self, job_id: str, _module_id: str) -> str:
+                self.resume(job_id)
+                return "running"
+
         pipeline = ResumePipeline()
         app = build_control_app(
             database_path=self.database_path, profile_store=self.profiles, credential_store=self.credentials,
@@ -452,6 +461,10 @@ class ControlPlaneApiTests(unittest.TestCase):
 
             def resume(self, _job_id: str) -> bool:
                 raise PipelineError("task pipeline is still settling; retry resume")
+
+            def resume_module(self, job_id: str, _module_id: str) -> str:
+                self.resume(job_id)
+                raise AssertionError("unreachable")
 
         database = StateDatabase.open(self.database_path)
         try:
@@ -522,6 +535,56 @@ class ControlPlaneApiTests(unittest.TestCase):
         with self.assertRaises(HTTPException) as missing_job:
             resume("missing-job")
         self.assertEqual(404, missing_job.exception.status_code)
+
+    def test_module_lifecycle_routes_return_the_updated_snapshot_and_legacy_routes_delegate(self) -> None:
+        class ModulePipeline:
+            def __init__(self, database_path: Path) -> None:
+                self.database_path = database_path
+                self.calls: list[tuple[str, str, str]] = []
+
+            def startup_recovery(self) -> dict[str, int]:
+                return {"interruptedJobs": 0, "clearedDatasetClaims": 0, "deletedJobs": 0, "deletedOverlays": 0}
+
+            def pause_module(self, job_id: str, module_id: str) -> str:
+                self.calls.append(("pause", job_id, module_id))
+                database = StateDatabase.open(self.database_path)
+                try:
+                    database.initialize_module_summary(job_id, module_id, total=1, status="paused")
+                finally:
+                    database.close()
+                return "paused"
+
+            def resume_module(self, job_id: str, module_id: str) -> str:
+                self.calls.append(("resume", job_id, module_id))
+                database = StateDatabase.open(self.database_path)
+                try:
+                    database.connection.execute(
+                        "DELETE FROM module_summary WHERE job_id=? AND module_id=?", (job_id, module_id)
+                    )
+                finally:
+                    database.close()
+                return "running"
+
+        pipeline = ModulePipeline(self.database_path)
+        app = build_control_app(
+            database_path=self.database_path, profile_store=self.profiles, credential_store=self.credentials,
+            preparation_service=self.preparation, pipeline_service=pipeline,  # type: ignore[arg-type]
+        )
+        pause = _endpoint(app, "/api/jobs/{job_id}/modules/{module_id}/pause", "POST")
+        resume = _endpoint(app, "/api/jobs/{job_id}/modules/{module_id}/resume", "POST")
+        pause_nl = _endpoint(app, "/api/jobs/{job_id}/nl/pause", "POST")
+        resume_policy = _endpoint(app, "/api/jobs/{job_id}/policy/resume", "POST")
+
+        paused = pause("job-api", "dropout")
+        self.assertEqual("paused", next(item["status"] for item in paused["modules"] if item["module_id"] == "dropout"))
+        resumed = resume("job-api", "dropout")
+        self.assertNotIn("dropout", [item["module_id"] for item in resumed["modules"]])
+        pause_nl("job-api")
+        resume_policy("job-api")
+        self.assertEqual(
+            [("pause", "job-api", "dropout"), ("resume", "job-api", "dropout"), ("pause", "job-api", "nl"), ("resume", "job-api", "dropout")],
+            pipeline.calls,
+        )
 
     def test_reviewing_token_budget_uses_a_safe_existing_resume_entry(self) -> None:
         """Apply may only reopen Export through a public PipelineService entry."""
@@ -612,6 +675,13 @@ class ControlPlaneApiTests(unittest.TestCase):
                 self.resumed.append(job_id)
                 return True
 
+            def pause_module(self, _job_id: str, _module_id: str) -> str:
+                return "paused"
+
+            def resume_module(self, job_id: str, _module_id: str) -> str:
+                self.resume(job_id)
+                return "running"
+
         database = StateDatabase.open(self.database_path)
         try:
             database.initialize_module_summary("job-api", "dropout", total=1, status="running")
@@ -636,7 +706,18 @@ class ControlPlaneApiTests(unittest.TestCase):
             database.set_job_status("job-api", "running", current_module_id="dropout")
         finally:
             database.close()
-        pause = _endpoint(self.app, "/api/jobs/{job_id}/policy/pause", "POST")
+        pipeline = PipelineService(self.database_path, install_root=ROOT / ".runtime-build")
+        pipeline._threads["job-api"] = SimpleNamespace()  # type: ignore[assignment]
+        app = build_control_app(
+            database_path=self.database_path, profile_store=self.profiles, credential_store=self.credentials,
+            preparation_service=self.preparation, pipeline_service=pipeline,
+        )
+        database = StateDatabase.open(self.database_path)
+        try:
+            database.set_job_status("job-api", "running", current_module_id="dropout")
+        finally:
+            database.close()
+        pause = _endpoint(app, "/api/jobs/{job_id}/policy/pause", "POST")
         pause_active_module = StateDatabase.pause_active_module
 
         def finish_before_pause(database: StateDatabase, job_id: str, module_id: str, *, active_status: str) -> None:
@@ -647,12 +728,16 @@ class ControlPlaneApiTests(unittest.TestCase):
                 concurrent.close()
             pause_active_module(database, job_id, module_id, active_status=active_status)
 
-        with patch.object(StateDatabase, "pause_active_module", new=finish_before_pause):
-            with self.assertRaises(HTTPException) as raised:
-                pause("job-api")
-        self.assertEqual((400, "active module state changed before pause"), (
-            raised.exception.status_code, raised.exception.detail,
-        ))
+        try:
+            with patch.object(StateDatabase, "pause_active_module", new=finish_before_pause):
+                with self.assertRaises(HTTPException) as raised:
+                    pause("job-api")
+            self.assertEqual((400, "active module state changed before pause"), (
+                raised.exception.status_code, raised.exception.detail,
+            ))
+        finally:
+            pipeline._threads.pop("job-api", None)
+            pipeline.close()
 
     def test_token_budget_routes_use_the_review_service_and_public_resume_only(self) -> None:
         class ResumePipeline:

@@ -246,29 +246,22 @@ def build_nl_router(context: ControlPlaneContext) -> APIRouter:
         return {"deleted": True}
 
     def nl_control(job_id: str, action: str, body: _AmountBody | _ConfirmBody | None = None) -> dict[str, Any]:
+        if action in {"pause", "resume"}:
+            try:
+                status = (
+                    context.pipeline_service.pause_module(job_id, "nl")
+                    if action == "pause"
+                    else context.pipeline_service.resume_module(job_id, "nl")
+                )
+                return {"status": status}
+            except KeyError as exc:
+                raise not_found(exc) from exc
+            except PipelineError as exc:
+                raise bad_request(exc) from exc
         database = StateDatabase.open(context.database_path)
         try:
             scheduler = BoundedScheduler(database)
             try:
-                job = database.get_job(job_id)
-                summary = database.module_summary(job_id, "nl")
-            except KeyError as exc:
-                raise not_found(exc) from exc
-            try:
-                if action == "pause":
-                    if job["status"] != "running" or job["current_module_id"] != "nl" or summary["status"] != "running":
-                        raise SchedulerError("only a running NL module can be paused")
-                    database.pause_active_module(job_id, "nl", active_status="running")
-                    return {"status": "paused"}
-                if action == "resume":
-                    if job["status"] != "paused" or job["current_module_id"] != "nl" or summary["status"] != "paused":
-                        raise SchedulerError("only a paused NL module can be resumed")
-                    database.close()
-                    try:
-                        context.pipeline_service.resume(job_id)
-                    finally:
-                        database = StateDatabase.open(context.database_path)
-                    return {"status": "running"}
                 if action == "budget":
                     assert isinstance(body, _AmountBody)
                     revision = database.add_api_budget_extra(job_id, body.amount)

@@ -134,6 +134,73 @@ class SchedulerTests(unittest.TestCase):
             finally:
                 database.close()
 
+    def test_prepaused_successor_does_not_block_predecessor(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            database = self._database(Path(temporary), count=1)
+            try:
+                scheduler = BoundedScheduler(database, lease_id_factory=lambda: "caption-lease")
+                self.assertEqual("running", scheduler.start_module("job-1", "caption", enabled=True, profile="e621"))
+                scheduler.pause_future_module("job-1", "nl", total=1)
+
+                caption_lease = scheduler.claim_batch(
+                    "job-1", "caption", "caption-worker", str(database.get_job("job-1")["config_hash"])
+                )[0]
+                scheduler.complete(caption_lease)
+                self.assertEqual("completed", scheduler.finish_module("job-1", "caption"))
+
+                self.assertEqual("skipped", scheduler.start_module("job-1", "classify", enabled=False, profile="e621"))
+                self.assertEqual("skipped", scheduler.start_module("job-1", "replace", enabled=False, profile="e621"))
+                before = database.get_sample_state("job-1", 1)
+                self.assertEqual(("caption", "completed", None), (
+                    before["current_module_id"], before["status"], before["lease_id"],
+                ))
+
+                self.assertEqual("paused", scheduler.start_module("job-1", "nl", enabled=True, profile="e621"))
+                job = database.get_job("job-1")
+                self.assertEqual(("paused", "nl", "running"), (
+                    job["status"], job["current_module_id"], job["resume_status"],
+                ))
+                after = database.get_sample_state("job-1", 1)
+                self.assertEqual(("caption", "completed", None), (
+                    after["current_module_id"], after["status"], after["lease_id"],
+                ))
+                self.assertEqual(
+                    [],
+                    scheduler.claim_batch("job-1", "nl", "nl-worker", str(job["config_hash"])),
+                )
+            finally:
+                database.close()
+
+    def test_cancel_future_pause_removes_only_a_zero_work_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            database = self._database(Path(temporary), count=1)
+            try:
+                scheduler = BoundedScheduler(database)
+                scheduler.start_module("job-1", "caption", enabled=True, profile="e621")
+                scheduler.pause_future_module("job-1", "nl", total=1)
+                scheduler.cancel_future_pause("job-1", "nl")
+                with self.assertRaises(KeyError):
+                    database.module_summary("job-1", "nl")
+
+                scheduler.pause_future_module("job-1", "nl", total=1)
+                database.set_module_summary("job-1", "nl", status="paused", completed=1)
+                with self.assertRaisesRegex(ValueError, "zero-work"):
+                    scheduler.cancel_future_pause("job-1", "nl")
+                self.assertEqual("paused", database.module_summary("job-1", "nl")["status"])
+            finally:
+                database.close()
+
+    def test_nonpaused_successor_summary_still_blocks_predecessor(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            database = self._database(Path(temporary), count=1)
+            try:
+                database.initialize_module_summary("job-1", "nl", total=1)
+                scheduler = BoundedScheduler(database)
+                with self.assertRaisesRegex(SchedulerError, "cannot start after nl has been initialized"):
+                    scheduler.start_module("job-1", "caption", enabled=True, profile="e621")
+            finally:
+                database.close()
+
     def test_disabled_nl_records_v3_not_requested_observations_in_pages(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             database = self._database(Path(temporary), count=1001, schema_version=3)

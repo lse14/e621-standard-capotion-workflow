@@ -19,6 +19,7 @@ export type TaskMonitorSnapshot = {
 export type TaskMonitorModule = {
   moduleId: string;
   label: string;
+  controlLabel: string;
   status: string;
   statusLabel: string;
   completed: number;
@@ -27,6 +28,7 @@ export type TaskMonitorModule = {
   total: number;
   issueCount: number;
   isCurrent: boolean;
+  isFuture: boolean;
 };
 
 export type TaskMonitorProps = {
@@ -41,7 +43,7 @@ export type TaskMonitorProps = {
   modules: TaskMonitorModule[];
   labels: {
     taskOverview: string; taskProgress: string; annotationProfile: string; currentModule: string; currentBatch: string;
-    taskActions: string; activeModule: string; pauseTask: string; resumeTask: string; terminateTask: string; recoverTask: string;
+    taskActions: string; activeModule: string; pauseModule: (module: string) => string; resumeModule: (module: string) => string; terminateTask: string; recoverTask: string;
     pinTask: string; unpinTask: string; discardTask: string;
     additionalAttempts: string; addBudget: string; pendingApiDecisions: string; confirmUnknown: string;
     issues: string; noTask: string; loadingTask: string; retryTask: string;
@@ -53,8 +55,7 @@ export type TaskMonitorProps = {
   pendingApiDecisions: number;
   nlAwaitsDecision: boolean;
   pendingActions: ReadonlySet<string>;
-  onPause: () => void;
-  onResume: () => void;
+  onModuleControl: (moduleId: string, action: "pause" | "resume") => void;
   onTerminate: () => void;
   onRecover: () => void;
   onPin: () => void;
@@ -71,12 +72,10 @@ function formatGiB(bytes: number): string {
 
 export function TaskMonitor({
   snapshot, loading, error, statusLabel, profileLabel, currentModuleLabel, currentBatchLabel, rawE621ConvertedMessage, modules, labels,
-  canDiscard, budget, pendingApiDecisions, nlAwaitsDecision, pendingActions, onPause, onResume, onTerminate, onRecover, onPin, onDiscard,
+  canDiscard, budget, pendingApiDecisions, nlAwaitsDecision, pendingActions, onModuleControl, onTerminate, onRecover, onPin, onDiscard,
   onBudgetChange, onAddBudget, onConfirmUnknown, onRetry,
 }: TaskMonitorProps) {
   const isPending = (action: string) => pendingActions.has(action);
-  const canPause = snapshot?.status === "running" || snapshot?.status === "exporting";
-  const canResume = snapshot?.status === "paused";
   const canRecover = snapshot?.status === "interrupted" || snapshot?.status === "cancelled_recoverable";
   const canTerminate = Boolean(snapshot && ["preparing_workspace", "running", "paused", "reviewing", "exporting"].includes(snapshot.status));
 
@@ -109,8 +108,18 @@ export function TaskMonitor({
       <div className="module-progress">{modules.map((module) => {
         const settled = module.completed + module.failed + module.skipped;
         const percentage = module.total ? Math.min(100, Math.round(settled / module.total * 100)) : 0;
+        const action = module.status === "paused" ? "resume" : "pause";
+        const pendingKey = `module:${module.moduleId}:${action}`;
+        const canControl = action === "pause"
+          ? (module.isCurrent
+            ? module.status === "running" && (snapshot.status === "running" || snapshot.status === "exporting")
+            : module.isFuture && module.status === "pending" && (snapshot.status === "running" || snapshot.status === "exporting"))
+          : (module.isCurrent
+            ? snapshot.status === "paused"
+            : module.isFuture && ["running", "exporting", "paused", "reviewing"].includes(snapshot.status));
+        const actionLabel = action === "pause" ? labels.pauseModule(module.controlLabel) : labels.resumeModule(module.controlLabel);
         return <div className={`module-row ${module.isCurrent ? "current" : ""}`} key={module.moduleId}>
-          <div><strong>{module.label}</strong><span className={`status ${module.status}`}>{module.statusLabel}</span></div>
+          <div><strong>{module.label}</strong><span className={`status ${module.status}`}>{module.statusLabel}</span><button className="module-control" type="button" disabled={!canControl || isPending(pendingKey)} aria-busy={isPending(pendingKey)} onClick={() => onModuleControl(module.moduleId, action)}>{actionLabel}</button></div>
           <progress value={settled} max={Math.max(module.total, 1)} />
           <small>{settled} / {module.total} ({percentage}%) {module.issueCount ? `- ${module.issueCount} ${labels.issues}` : ""}</small>
         </div>;
@@ -119,8 +128,6 @@ export function TaskMonitor({
         <h3>{labels.taskActions}</h3>
         <p className="task-action-context">{labels.activeModule}: {currentModuleLabel}</p>
         <div className="action-grid">
-          <button type="button" disabled={!canPause || isPending("pause")} aria-busy={isPending("pause")} onClick={onPause}>{labels.pauseTask}</button>
-          <button type="button" disabled={!canResume || isPending("resume")} aria-busy={isPending("resume")} onClick={onResume}>{labels.resumeTask}</button>
           <button className="secondary" type="button" disabled={!canTerminate || isPending("terminate")} aria-busy={isPending("terminate")} onClick={onTerminate}>{labels.terminateTask}</button>
           <button className="secondary" type="button" disabled={!canRecover || isPending("recover")} aria-busy={isPending("recover")} onClick={onRecover}>{labels.recoverTask}</button>
         </div>

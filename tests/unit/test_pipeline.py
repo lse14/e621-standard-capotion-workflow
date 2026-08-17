@@ -1346,6 +1346,300 @@ class PipelineTests(unittest.TestCase):
             finally:
                 pipeline.close()
 
+    def test_pause_module_maps_an_atomic_active_state_conflict_to_pipeline_error(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            job_id = "job-module-pause-conflict"
+            database = StateDatabase.open(root / "state.db")
+            try:
+                database.insert_job({
+                    "job_id": job_id, "config_schema_version": 5, "config_json": "{}", "config_hash": "a" * 64,
+                    "profile": "e621", "work_mode": "in_place", "overwrite_mode": "incremental", "source_root": str(root),
+                    "output_root": None, "dataset_root": str(root), "dataset_root_key": str(root), "manifest_schema_version": 1,
+                    "recursive": 0, "sample_count": 0, "manifest_generated_at": "now", "status": "running",
+                    "current_module_id": "dropout", "last_event_id": 0, "pinned": 0, "api_budget_extra": 0,
+                    "api_budget_revision": 0, "overlay_root": None, "commit_journal_path": None, "resume_status": None,
+                    "created_at": "now", "started_at": "now", "cancel_requested_at": None, "finished_at": None,
+                })
+                database.initialize_module_summary(job_id, "dropout", total=0, status="running")
+            finally:
+                database.close()
+
+            original_pause = StateDatabase.pause_active_module
+
+            def finish_before_pause(database: StateDatabase, job_id: str, module_id: str, *, active_status: str) -> None:
+                concurrent = StateDatabase.open(root / "state.db")
+                try:
+                    BoundedScheduler(concurrent).finish_module(job_id, module_id)
+                finally:
+                    concurrent.close()
+                original_pause(database, job_id, module_id, active_status=active_status)
+
+            pipeline = PipelineService(root / "state.db", install_root=ROOT / ".runtime-build")
+            pipeline._threads[job_id] = SimpleNamespace()  # type: ignore[assignment]
+            try:
+                with patch.object(StateDatabase, "pause_active_module", new=finish_before_pause):
+                    with self.assertRaisesRegex(PipelineError, "active module state changed before pause"):
+                        pipeline.pause_module(job_id, "dropout")
+            finally:
+                pipeline._threads.pop(job_id, None)
+                pipeline.close()
+
+    def test_resume_future_module_rejects_a_terminating_task_without_removing_its_pre_pause(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            job_id = "job-module-resume-cancelling"
+            config = JobConfig(profile="e621", workMode="in_place", overwriteMode="incremental", sourceRoot=str(root))
+            database = StateDatabase.open(root / "state.db")
+            try:
+                database.insert_job({
+                    "job_id": job_id, "config_schema_version": config.schemaVersion, "config_json": json.dumps(config.to_dict()),
+                    "config_hash": config.config_hash, "profile": "e621", "work_mode": "in_place", "overwrite_mode": "incremental",
+                    "source_root": str(root), "output_root": None, "dataset_root": str(root), "dataset_root_key": str(root),
+                    "manifest_schema_version": 1, "recursive": 0, "sample_count": 0, "manifest_generated_at": "now",
+                    "status": "cancelling", "current_module_id": "caption", "last_event_id": 0, "pinned": 0,
+                    "api_budget_extra": 0, "api_budget_revision": 0, "overlay_root": None, "commit_journal_path": None,
+                    "resume_status": "running", "created_at": "now", "started_at": "now", "cancel_requested_at": "now", "finished_at": None,
+                })
+                database.initialize_module_summary(job_id, "nl", total=0, status="paused")
+            finally:
+                database.close()
+
+            pipeline = PipelineService(root / "state.db", install_root=ROOT / ".runtime-build")
+            try:
+                with self.assertRaisesRegex(PipelineError, "only a running task"):
+                    pipeline.resume_module(job_id, "nl")
+                database = StateDatabase.open(root / "state.db")
+                try:
+                    self.assertEqual("paused", database.module_summary(job_id, "nl")["status"])
+                finally:
+                    database.close()
+            finally:
+                pipeline.close()
+
+    def test_future_module_pause_does_not_win_a_race_with_global_cancellation(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            job_id = "job-module-pause-cancellation-race"
+            config = JobConfig(profile="e621", workMode="in_place", overwriteMode="incremental", sourceRoot=str(root))
+            database = StateDatabase.open(root / "state.db")
+            try:
+                database.insert_job({
+                    "job_id": job_id, "config_schema_version": config.schemaVersion, "config_json": json.dumps(config.to_dict()),
+                    "config_hash": config.config_hash, "profile": "e621", "work_mode": "in_place", "overwrite_mode": "incremental",
+                    "source_root": str(root), "output_root": None, "dataset_root": str(root), "dataset_root_key": str(root),
+                    "manifest_schema_version": 1, "recursive": 0, "sample_count": 0, "manifest_generated_at": "now",
+                    "status": "running", "current_module_id": "caption", "last_event_id": 0, "pinned": 0,
+                    "api_budget_extra": 0, "api_budget_revision": 0, "overlay_root": None, "commit_journal_path": None,
+                    "resume_status": None, "created_at": "now", "started_at": "now", "cancel_requested_at": None, "finished_at": None,
+                })
+            finally:
+                database.close()
+
+            original_pause = StateDatabase.pause_future_module
+
+            def cancel_before_future_pause(
+                database: StateDatabase, job_id: str, module_id: str, *, total: int, current_module_id: str, active_status: str,
+            ) -> None:
+                concurrent = StateDatabase.open(root / "state.db")
+                try:
+                    concurrent.begin_cancellation(job_id)
+                finally:
+                    concurrent.close()
+                original_pause(
+                    database, job_id, module_id, total=total, current_module_id=current_module_id, active_status=active_status,
+                )
+
+            pipeline = PipelineService(root / "state.db", install_root=ROOT / ".runtime-build")
+            try:
+                with patch.object(StateDatabase, "pause_future_module", new=cancel_before_future_pause):
+                    with self.assertRaisesRegex(PipelineError, "task state changed before future pause"):
+                        pipeline.pause_module(job_id, "nl")
+                database = StateDatabase.open(root / "state.db")
+                try:
+                    self.assertEqual("cancelling", database.get_job(job_id)["status"])
+                    with self.assertRaises(KeyError):
+                        database.module_summary(job_id, "nl")
+                finally:
+                    database.close()
+            finally:
+                pipeline.close()
+
+    def test_active_module_pause_and_resume_starts_exactly_one_thread(self) -> None:
+        class DeferredThread:
+            created: list[object] = []
+
+            def __init__(self, *, target, args, daemon, name) -> None:
+                self.target = target
+                self.args = args
+                self.daemon = daemon
+                self.name = name
+                self.started = False
+                self.created.append(self)
+
+            def start(self) -> None:
+                self.started = True
+
+            def join(self, timeout=None) -> None:
+                return None
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            job_id = "job-module-active-resume"
+            database = StateDatabase.open(root / "state.db")
+            try:
+                database.insert_job({
+                    "job_id": job_id, "config_schema_version": 5, "config_json": "{}", "config_hash": "a" * 64,
+                    "profile": "e621", "work_mode": "in_place", "overwrite_mode": "incremental", "source_root": str(root),
+                    "output_root": None, "dataset_root": str(root), "dataset_root_key": str(root), "manifest_schema_version": 1,
+                    "recursive": 0, "sample_count": 0, "manifest_generated_at": "now", "status": "running",
+                    "current_module_id": "dropout", "last_event_id": 0, "pinned": 0, "api_budget_extra": 0,
+                    "api_budget_revision": 0, "overlay_root": None, "commit_journal_path": None, "resume_status": None,
+                    "created_at": "now", "started_at": "now", "cancel_requested_at": None, "finished_at": None,
+                })
+                database.initialize_module_summary(job_id, "dropout", total=0, status="running")
+            finally:
+                database.close()
+
+            pipeline = PipelineService(root / "state.db", install_root=ROOT / ".runtime-build")
+            pipeline._threads[job_id] = SimpleNamespace()  # type: ignore[assignment]
+            try:
+                self.assertEqual("paused", pipeline.pause_module(job_id, "dropout"))
+                pipeline._threads.pop(job_id)
+                with patch("anima_core.pipeline.threading.Thread", DeferredThread):
+                    self.assertEqual("running", pipeline.resume_module(job_id, "dropout"))
+                self.assertEqual(1, len(DeferredThread.created))
+                self.assertTrue(DeferredThread.created[0].started)
+            finally:
+                pipeline._threads.pop(job_id, None)
+                pipeline.close()
+
+    def test_future_module_pause_and_resume_do_not_start_a_thread_or_stop_the_current_module(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            job_id = "job-module-future-prepause"
+            config = JobConfig(profile="e621", workMode="in_place", overwriteMode="incremental", sourceRoot=str(root))
+            database = StateDatabase.open(root / "state.db")
+            try:
+                database.insert_job({
+                    "job_id": job_id, "config_schema_version": config.schemaVersion, "config_json": json.dumps(config.to_dict()),
+                    "config_hash": config.config_hash, "profile": "e621", "work_mode": "in_place", "overwrite_mode": "incremental",
+                    "source_root": str(root), "output_root": None, "dataset_root": str(root), "dataset_root_key": str(root),
+                    "manifest_schema_version": 1, "recursive": 0, "sample_count": 0, "manifest_generated_at": "now",
+                    "status": "running", "current_module_id": "caption", "last_event_id": 0, "pinned": 0,
+                    "api_budget_extra": 0, "api_budget_revision": 0, "overlay_root": None, "commit_journal_path": None,
+                    "resume_status": None, "created_at": "now", "started_at": "now", "cancel_requested_at": None, "finished_at": None,
+                })
+                database.initialize_module_summary(job_id, "caption", total=0, status="running")
+            finally:
+                database.close()
+
+            pipeline = PipelineService(root / "state.db", install_root=ROOT / ".runtime-build")
+            try:
+                self.assertEqual("paused", pipeline.pause_module(job_id, "nl"))
+                self.assertFalse(pipeline.is_running(job_id))
+                database = StateDatabase.open(root / "state.db")
+                try:
+                    self.assertEqual(("running", "caption", "paused"), (
+                        database.get_job(job_id)["status"], database.get_job(job_id)["current_module_id"],
+                        database.module_summary(job_id, "nl")["status"],
+                    ))
+                finally:
+                    database.close()
+                self.assertEqual("pending", pipeline.resume_module(job_id, "nl"))
+                self.assertFalse(pipeline.is_running(job_id))
+                database = StateDatabase.open(root / "state.db")
+                try:
+                    with self.assertRaises(KeyError):
+                        database.module_summary(job_id, "nl")
+                    self.assertEqual(("running", "caption"), (
+                        database.get_job(job_id)["status"], database.get_job(job_id)["current_module_id"],
+                    ))
+                finally:
+                    database.close()
+            finally:
+                pipeline.close()
+
+    def test_resume_arrived_prepaused_module_initializes_its_samples_after_thread_start(self) -> None:
+        class DeferredThread:
+            def __init__(self, *, target, args, daemon, name) -> None:
+                self.target = target
+                self.args = args
+                self.daemon = daemon
+                self.name = name
+
+            def start(self) -> None:
+                return None
+
+            def join(self, timeout=None) -> None:
+                return None
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            job_id = "job-prepaused-nl"
+            config = JobConfig(profile="e621", workMode="in_place", overwriteMode="incremental", sourceRoot=str(root))
+            config.caption["enabled"] = True
+            config.nl["enabled"] = True
+            frozen = config.to_dict()
+            database = StateDatabase.open(root / "state.db")
+            try:
+                database.insert_job({
+                    "job_id": job_id, "config_schema_version": config.schemaVersion, "config_json": json.dumps(frozen),
+                    "config_hash": config.config_hash, "profile": "e621", "work_mode": "in_place", "overwrite_mode": "incremental",
+                    "source_root": str(root), "output_root": None, "dataset_root": str(root), "dataset_root_key": str(root),
+                    "manifest_schema_version": 1, "recursive": 0, "sample_count": 1, "manifest_generated_at": "now",
+                    "status": "running", "current_module_id": "caption", "last_event_id": 0, "pinned": 0,
+                    "api_budget_extra": 0, "api_budget_revision": 0, "overlay_root": None, "commit_journal_path": None,
+                    "resume_status": None, "created_at": "now", "started_at": "now", "cancel_requested_at": None, "finished_at": None,
+                })
+                database.insert_samples(job_id, [{
+                    "sample_id": 1, "relative_image_path": "image.png", "annotation_key": "image", "source": "e621",
+                    "in_processing_scope": True, "image_format": "png", "image_frame_count": 1, "original_txt_state": "missing_or_blank",
+                    "original_json_state": "missing_or_blank", "image_file_id": "volume:1", "image_size": 1, "image_mtime_ns": 1,
+                }])
+                scheduler = BoundedScheduler(database, lease_id_factory=lambda: "caption-lease")
+                scheduler.start_module(job_id, "caption", enabled=True, profile="e621")
+                caption_lease = scheduler.claim_batch(job_id, "caption", "caption-worker", str(config.config_hash))[0]
+                scheduler.complete(caption_lease)
+                scheduler.finish_module(job_id, "caption")
+                scheduler.start_module(job_id, "classify", enabled=False, profile="e621")
+                scheduler.start_module(job_id, "replace", enabled=False, profile="e621")
+                scheduler.pause_future_module(job_id, "nl", total=1)
+                self.assertEqual("paused", scheduler.start_module(job_id, "nl", enabled=True, profile="e621"))
+            finally:
+                database.close()
+
+            pipeline = PipelineService(root / "state.db", install_root=ROOT / ".runtime-build")
+            pipeline._run_module_with_restarts = lambda *_args: "paused"  # type: ignore[method-assign]
+            try:
+                with patch("anima_core.pipeline.threading.Thread", DeferredThread):
+                    self.assertEqual("running", pipeline.resume_module(job_id, "nl"))
+                database = StateDatabase.open(root / "state.db")
+                try:
+                    self.assertEqual(("running", "nl"), (database.get_job(job_id)["status"], database.get_job(job_id)["current_module_id"]))
+                    with self.assertRaises(KeyError):
+                        database.module_summary(job_id, "nl")
+                    self.assertEqual(("caption", "completed", None), (
+                        database.get_sample_state(job_id, 1)["current_module_id"],
+                        database.get_sample_state(job_id, 1)["status"],
+                        database.get_sample_state(job_id, 1)["lease_id"],
+                    ))
+                finally:
+                    database.close()
+                pipeline._run(job_id, resume_current=True)
+                database = StateDatabase.open(root / "state.db")
+                try:
+                    self.assertEqual(("nl", "pending", None), (
+                        database.get_sample_state(job_id, 1)["current_module_id"],
+                        database.get_sample_state(job_id, 1)["status"],
+                        database.get_sample_state(job_id, 1)["lease_id"],
+                    ))
+                finally:
+                    database.close()
+            finally:
+                pipeline._threads.pop(job_id, None)
+                pipeline.close()
+
     def test_pause_and_resume_cover_count_review_and_export(self) -> None:
         class DeferredThread:
             def __init__(self, *, target, args, daemon, name) -> None:

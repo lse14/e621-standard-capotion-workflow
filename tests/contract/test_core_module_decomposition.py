@@ -56,15 +56,16 @@ STATE_DATABASE_API = frozenset({
     "set_workspace_metadata", "settle_cancellation", "skip_disabled_caption_page",
     "skip_failed_samples_for_export_page", "skip_leased_caption_sample", "stage_classify_prepared_artifact",
     "stage_export_artifacts", "stage_nl_response", "stage_prepared_artifact", "stage_repair_target_page",
-    "resume_paused_module", "staged_nl", "transaction", "update_count_review_decision", "update_count_review_decisions",
+    "cancel_future_pause", "pause_future_module", "restore_prepaused_module", "resume_paused_module",
+    "resume_prepaused_module", "staged_nl", "start_prepaused_module", "transaction", "update_count_review_decision", "update_count_review_decisions",
     "update_preflight_config", "upsert_issue",
 })
 
 PIPELINE_SERVICE_API = frozenset({
     "_active_module_status", "_nl_credentials", "_ocr_binding_path", "_probe_ocr_gpu_runtime", "_recover_policy_prepared", "_recovery_target_status", "_resolve_ocr_runtime", "_run", "_run_active_module",
     "_run_module_with_restarts", "_selected_resource", "_spawn_transport", "_thread_main",
-    "_spawn_ocr_transport", "_select_ocr_runtime", "_token_budget_export_gate", "_verify_source_fingerprints", "close", "confirm_count_review", "is_running", "pause", "recover_job",
-    "recover_pending_commits", "resume", "shutdown", "start", "startup_recovery",
+    "_spawn_ocr_transport", "_select_ocr_runtime", "_token_budget_export_gate", "_verify_source_fingerprints", "close", "confirm_count_review", "is_running", "pause", "pause_module", "recover_job",
+    "recover_pending_commits", "resume", "resume_module", "shutdown", "start", "startup_recovery",
 })
 
 RESOURCE_CATALOG_API = frozenset({"_defaults", "scan"})
@@ -115,6 +116,8 @@ API_JOB_ROUTES = frozenset({
     ("POST", "/api/jobs/{job_id}/start"),
     ("POST", "/api/jobs/{job_id}/pause"),
     ("POST", "/api/jobs/{job_id}/resume"),
+    ("POST", "/api/jobs/{job_id}/modules/{module_id}/pause"),
+    ("POST", "/api/jobs/{job_id}/modules/{module_id}/resume"),
     ("POST", "/api/jobs/{job_id}/repair"),
     ("POST", "/api/jobs/{job_id}/recover"),
     ("POST", "/api/jobs/{job_id}/cancel"),

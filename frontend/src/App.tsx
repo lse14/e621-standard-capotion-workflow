@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   addNlBudget, cancelJob, confirmNlOutcomes, confirmWorkspace, deleteNlSecret, discardJob, listNlProfiles, manualNlRetry, manualNlRetryBatch, manualNlWrite,
-  pauseJob, preflightJob, recoverJob, restoreOriginalAnnotations, resumeJob, saveNlProfile,
+  pauseModule, preflightJob, recoverJob, restoreOriginalAnnotations, resumeModule, saveNlProfile,
   setJobPin, repairJob, saveNlSecret, startPipeline, type NlProfile, type OcrExecutionRequest, type PreflightSummary,
   type AnnotationProfile, type PipelineModuleId, type ResourceCatalogResponse, type ResourceKind,
 } from "./api";
@@ -29,11 +29,12 @@ import { TokenBudgetReviewPanel } from "./TokenBudgetReviewPanel";
 import "./styles.css";
 
 type StepId = "setup" | PipelineModuleId;
+type ModuleAction = `module:${PipelineModuleId}:${"pause" | "resume"}`;
 type PendingAction =
   | "preflight" | "confirm_workspace" | "start" | "repair" | "recover"
-  | "terminate" | "pause" | "resume" | "pin" | "discard" | "restore" | "nl_manual_retry" | "nl_manual_retry_batch" | "nl_manual_write"
+  | "terminate" | "pin" | "discard" | "restore" | "nl_manual_retry" | "nl_manual_retry_batch" | "nl_manual_write"
   | "nl_budget" | "nl_confirm_outcomes"
-  | "profile_save" | "credential_delete"
+  | "profile_save" | "credential_delete" | ModuleAction
   | null;
 type ActionName = Exclude<PendingAction, null>;
 
@@ -426,9 +427,8 @@ export function App() {
   });
   const stepReady = visibleStepIndex !== 0 || Boolean(preflight);
   const taskLocked = Boolean(workspaceReady || (snapshot && (isActiveJobStatus(snapshot.job.status) || snapshot.job.status === "reviewing")));
-  const orderedModules = snapshot?.moduleOrder.flatMap((id) => {
-    const summary = snapshot.modules.find((module) => module.module_id === id);
-    return summary ? [summary] : [];
+  const orderedModules = snapshot?.moduleOrder.map((id) => snapshot.modules.find((module) => module.module_id === id) ?? {
+    module_id: id, status: "pending", completed: 0, failed: 0, skipped: 0, total: 0, issue_count: 0,
   }) ?? [];
   const numberedModuleLabel = (moduleId: string) => {
     const index = snapshot?.moduleOrder.indexOf(moduleId as PipelineModuleId) ?? -1;
@@ -501,8 +501,8 @@ export function App() {
     currentBatch: t("currentBatch"),
     taskActions: copy.taskActions,
     activeModule: t("activeModule"),
-    pauseTask: t("pauseTask"),
-    resumeTask: t("resumeTask"),
+    pauseModule: (module: string) => t("pauseModule", { module }),
+    resumeModule: (module: string) => t("resumeModule", { module }),
     terminateTask: t("terminateTask"),
     recoverTask: t("recoverTask"),
     pinTask: t("pinTask"),
@@ -553,6 +553,8 @@ export function App() {
     total: module.total,
     issueCount: module.issue_count,
     isCurrent: module.module_id === snapshot?.job.currentModuleId,
+    isFuture: (snapshot?.moduleOrder.indexOf(module.module_id as PipelineModuleId) ?? -1) > (snapshot?.moduleOrder.indexOf(snapshot.job.currentModuleId as PipelineModuleId) ?? -1),
+    controlLabel: moduleLabel(language, module.module_id),
   }));
 
   const guide = <details className="module-guide" open={openGuide} onToggle={(event) => setOpenGuide((event.target as HTMLDetailsElement).open)}>
@@ -831,8 +833,9 @@ export function App() {
         pendingApiDecisions={pendingApiDecisions}
         nlAwaitsDecision={nlAwaitsDecision}
         pendingActions={pendingActions}
-        onPause={() => void lifecycleControl("pause", () => pauseJob(jobId))}
-        onResume={() => void lifecycleControl("resume", () => resumeJob(jobId))}
+        onModuleControl={(moduleId, action) => void lifecycleControl(`module:${moduleId as PipelineModuleId}:${action}`, () => (
+          action === "pause" ? pauseModule(jobId, moduleId as PipelineModuleId) : resumeModule(jobId, moduleId as PipelineModuleId)
+        ))}
         onTerminate={() => { if (window.confirm(t("confirmTerminate"))) void lifecycleControl("terminate", () => cancelJob(jobId)); }}
         onRecover={() => { if (window.confirm(t("confirmRecover"))) void lifecycleControl("recover", () => recoverJob(jobId)); }}
         onPin={() => { if (snapshot) void control("pin", () => setJobPin(jobId, !snapshot.job.pinned)); }}

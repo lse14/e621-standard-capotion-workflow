@@ -46,14 +46,14 @@ async function snapshotFetchProbe(page: Parameters<typeof openApp>[0]): Promise<
   });
 }
 
-const lifecycleButtonNames = ["Pause task", "Resume task", "Terminate task", "Recover task"] as const;
+const lifecycleButtonNames = ["Terminate task", "Recover task"] as const;
 
 const lifecycleStateMatrix = [
-  { status: "running", statusLabel: "running", enabled: ["Pause task", "Terminate task"] },
-  { status: "paused", statusLabel: "paused", enabled: ["Resume task", "Terminate task"] },
+  { status: "running", statusLabel: "running", enabled: ["Terminate task"] },
+  { status: "paused", statusLabel: "paused", enabled: ["Terminate task"] },
   { status: "preparing_workspace", statusLabel: "preparing workspace", enabled: ["Terminate task"] },
   { status: "reviewing", statusLabel: "reviewing", enabled: ["Terminate task"] },
-  { status: "exporting", statusLabel: "exporting", enabled: ["Pause task", "Terminate task"] },
+  { status: "exporting", statusLabel: "exporting", enabled: ["Terminate task"] },
   { status: "interrupted", statusLabel: "interrupted", enabled: ["Recover task"] },
   { status: "cancelled_recoverable", statusLabel: "cancelled, recoverable", enabled: ["Recover task"] },
   { status: "committing", statusLabel: "committing", enabled: [] },
@@ -136,21 +136,43 @@ test.describe("task status and issue characterization", () => {
     await expect(page.getByLabel("OCR device", { exact: true })).toBeDisabled();
   });
 
-  test("pauses then resumes a running task through the task lifecycle endpoints", async ({ page, api }) => {
-    setJobSnapshot(api, makeSnapshot({ status: "running", currentModuleId: "caption" }));
+  test("module-lifecycle controls every module through the generic routes", async ({ page, api }) => {
+    const snapshot = makeSnapshot({ status: "running", currentModuleId: "caption", schemaVersion: 5 });
+    snapshot.modules = snapshot.modules.filter((module) => ["caption", "classify", "replace"].includes(module.module_id));
+    snapshot.modules.find((module) => module.module_id === "classify")!.status = "completed";
+    snapshot.modules.find((module) => module.module_id === "replace")!.status = "skipped";
+    setJobSnapshot(api, snapshot);
     await openTrackedJob(page, "running");
 
-    const pauseTask = page.getByRole("button", { name: "Pause task" });
-    await expect(pauseTask).toBeVisible({ timeout: 1_500 });
-    await pauseTask.click();
-    await expect.poll(() => mutationsFor(api, "POST", `/api/jobs/${DEFAULT_JOB_ID}/pause`).length).toBe(1);
-    await expect(page.locator(".task-monitor > .monitor-heading > .status")).toHaveText("paused");
+    await expect(page.locator(".module-progress .module-row")).toHaveCount(snapshot.moduleOrder.length);
+    await expect(page.getByRole("button", { name: "Pause Classify module" })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Pause Replace module" })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Terminate task" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Pause task" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Resume task" })).toHaveCount(0);
 
-    const resumeTask = page.getByRole("button", { name: "Resume task" });
-    await expect(resumeTask).toBeVisible({ timeout: 1_500 });
-    await resumeTask.click();
-    await expect.poll(() => mutationsFor(api, "POST", `/api/jobs/${DEFAULT_JOB_ID}/resume`).length).toBe(1);
+    await page.getByRole("button", { name: "Pause NL module" }).click();
+    await expect.poll(() => mutationsFor(api, "POST", `/api/jobs/${DEFAULT_JOB_ID}/modules/nl/pause`).length).toBe(1);
+    await expect(page.getByRole("button", { name: "Resume NL module" })).toBeVisible();
     await expect(page.locator(".task-monitor > .monitor-heading > .status")).toHaveText("running");
+
+    await page.getByRole("button", { name: "Resume NL module" }).click();
+    await expect.poll(() => mutationsFor(api, "POST", `/api/jobs/${DEFAULT_JOB_ID}/modules/nl/resume`).length).toBe(1);
+    await expect(page.getByRole("button", { name: "Pause NL module" })).toBeVisible();
+
+    const releaseCaptionPause = holdRoute(api, `POST /api/jobs/${DEFAULT_JOB_ID}/modules/caption/pause`);
+    try {
+      await page.getByRole("button", { name: "Pause Caption module" }).click();
+      await expect.poll(() => mutationsFor(api, "POST", `/api/jobs/${DEFAULT_JOB_ID}/modules/caption/pause`).length).toBe(1);
+      await expect(page.getByRole("button", { name: "Pause Caption module" })).toBeDisabled();
+      await expect(page.getByRole("button", { name: "Pause NL module" })).toBeEnabled();
+    } finally {
+      releaseCaptionPause();
+    }
+    await expect(page.getByRole("button", { name: "Resume Caption module" })).toBeVisible();
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(page.getByRole("button", { name: "Resume Caption module" })).toBeVisible();
   });
 
   test("retries the selected current-page NL issues as one child after Export succeeds", async ({ page, api }) => {
@@ -208,8 +230,8 @@ test.describe("task status and issue characterization", () => {
     try {
       await expect.poll(async () => (await snapshotFetchProbe(page)).started).toBeGreaterThan(initialRequests);
       const inFlightRequests = (await snapshotFetchProbe(page)).started;
-      await page.getByRole("button", { name: "Pause task" }).click();
-      await expect.poll(() => mutationsFor(api, "POST", `/api/jobs/${DEFAULT_JOB_ID}/pause`).length).toBe(1);
+      await page.getByRole("button", { name: "Pause Caption module" }).click();
+      await expect.poll(() => mutationsFor(api, "POST", `/api/jobs/${DEFAULT_JOB_ID}/modules/caption/pause`).length).toBe(1);
       await expect.poll(async () => (await snapshotFetchProbe(page)).started, { timeout: 1_500 }).toBeGreaterThan(inFlightRequests);
     } finally {
       releasePoll();
@@ -252,10 +274,10 @@ test.describe("task status and issue characterization", () => {
     await openApp(page, { jobId: taskA, language: "en" });
     await expect(page.locator(".task-monitor > .monitor-heading > .status")).toHaveText("running");
 
-    const releasePause = holdRoute(api, `POST /api/jobs/${taskA}/pause`);
+    const releasePause = holdRoute(api, `POST /api/jobs/${taskA}/modules/caption/pause`);
     try {
-      await page.getByRole("button", { name: "Pause task" }).click();
-      await expect.poll(() => mutationsFor(api, "POST", `/api/jobs/${taskA}/pause`).length).toBe(1);
+      await page.getByRole("button", { name: "Pause Caption module" }).click();
+      await expect.poll(() => mutationsFor(api, "POST", `/api/jobs/${taskA}/modules/caption/pause`).length).toBe(1);
 
       await page.getByLabel("Task ID").fill(taskB);
       await expect(page.locator(".task-monitor > .monitor-heading > .status")).toHaveText("succeeded");
@@ -268,8 +290,8 @@ test.describe("task status and issue characterization", () => {
     }
 
     await expect(page.locator(".task-monitor > .monitor-heading > .status")).toHaveText("succeeded");
-    await expect.poll(() => mutationsFor(api, "POST", `/api/jobs/${taskA}/pause`).length).toBe(1);
-    expect(mutationsFor(api, "POST", `/api/jobs/${taskB}/pause`)).toHaveLength(0);
+    await expect.poll(() => mutationsFor(api, "POST", `/api/jobs/${taskA}/modules/caption/pause`).length).toBe(1);
+    expect(mutationsFor(api, "POST", `/api/jobs/${taskB}/modules/caption/pause`)).toHaveLength(0);
   });
 
   test("routes recovery to the task selected at click time", async ({ page, api }) => {

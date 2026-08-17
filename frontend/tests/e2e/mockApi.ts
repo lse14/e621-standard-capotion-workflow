@@ -752,6 +752,21 @@ async function handleApiRequest(scenario: ApiScenario, route: Route, pathname: s
     return fulfillJson(route, { jobId: snapshot.job.jobId, started: true });
   }
 
+  const moduleControlMatch = pathname.match(/^\/api\/jobs\/([^/]+)\/modules\/([^/]+)\/(pause|resume)$/);
+  if (moduleControlMatch && method === "POST") {
+    const snapshot = snapshotFor(scenario, decodeURIComponent(moduleControlMatch[1]));
+    const moduleId = decodeURIComponent(moduleControlMatch[2]);
+    const action = moduleControlMatch[3];
+    const summary = snapshot.modules.find((module) => module.module_id === moduleId);
+    if (action === "pause") {
+      if (moduleId === snapshot.job.currentModuleId) updateJobState(snapshot, "paused", moduleId);
+      else if (summary) summary.status = "paused";
+      else snapshot.modules.push({ module_id: moduleId, status: "paused", completed: 0, failed: 0, skipped: 0, total: 0, issue_count: 0 });
+    } else if (moduleId === snapshot.job.currentModuleId) updateJobState(snapshot, "running", moduleId);
+    else snapshot.modules = snapshot.modules.filter((module) => module.module_id !== moduleId);
+    return fulfillJson(route, snapshot);
+  }
+
   const pauseMatch = pathname.match(/^\/api\/jobs\/([^/]+)\/pause$/);
   if (pauseMatch && method === "POST") {
     const snapshot = snapshotFor(scenario, decodeURIComponent(pauseMatch[1]));
