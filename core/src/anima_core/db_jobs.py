@@ -82,6 +82,11 @@ class JobDatabaseMixin:
         if result.rowcount != 1:
             raise KeyError(f"job does not exist: {job_id}")
 
+    def has_repair_children(self, parent_job_id: str) -> bool:
+        return self.connection.execute(
+            "SELECT 1 FROM repair_jobs WHERE parent_job_id=? LIMIT 1", (parent_job_id,)
+        ).fetchone() is not None
+
     def delete_job_control_record(self, job_id: str) -> None:
         """Delete only control-plane rows. Backup paths are never tracked/deleted here."""
         result = self.connection.execute("DELETE FROM jobs WHERE job_id=?", (job_id,))

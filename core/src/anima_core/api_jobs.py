@@ -354,11 +354,17 @@ def build_jobs_router(context: ControlPlaneContext) -> APIRouter:
         database = StateDatabase.open(context.database_path)
         try:
             try:
-                if body.confirmed and database.get_job(job_id)["status"] == "discarded":
+                job = database.get_job(job_id)
+                lifecycle = JobLifecycle(database)
+                if body.confirmed:
+                    lifecycle.ensure_delete_allowed(job_id)
+                if body.confirmed and job["status"] == "discarded":
                     context.preparation_service.release_lock_for_discard(job_id)
+                    database.delete_job_control_record(job_id)
                     return {"jobId": job_id, "overlayDeleted": False}
-                result = JobLifecycle(database).discard(job_id, confirmed=body.confirmed)
+                result = lifecycle.discard(job_id, confirmed=body.confirmed)
                 context.preparation_service.release_lock_for_discard(job_id)
+                database.delete_job_control_record(job_id)
                 return {"jobId": result.jobId, "overlayDeleted": result.overlayDeleted}
             except KeyError as exc:
                 raise not_found(exc) from exc

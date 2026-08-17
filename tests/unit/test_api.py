@@ -1179,6 +1179,77 @@ class ControlPlaneApiTests(unittest.TestCase):
             discard("job-api", _ConfirmBody(confirmed=True)),
         )
         self.assertEqual(["job-api", "job-api"], attempts)
+        database = StateDatabase.open(self.database_path)
+        try:
+            with self.assertRaises(KeyError):
+                database.get_job("job-api")
+        finally:
+            database.close()
+        with self.assertRaises(HTTPException) as missing:
+            discard("job-api", _ConfirmBody(confirmed=True))
+        self.assertEqual(404, missing.exception.status_code)
+
+    def test_discard_deletes_record_after_releasing_claim_and_lock(self) -> None:
+        discard = _endpoint(self.app, "/api/jobs/{job_id}/discard", "POST")
+        cancel = _endpoint(self.app, "/api/jobs/{job_id}/cancel", "POST")
+        released: list[str] = []
+        self.preparation.release_lock_for_discard = lambda job_id: released.append(job_id) or False  # type: ignore[method-assign]
+        self.assertEqual({"status": "cancelled_recoverable"}, cancel("job-api"))
+
+        self.assertEqual(
+            {"jobId": "job-api", "overlayDeleted": False},
+            discard("job-api", _ConfirmBody(confirmed=True)),
+        )
+        self.assertEqual(["job-api"], released)
+        database = StateDatabase.open(self.database_path)
+        try:
+            with self.assertRaises(KeyError):
+                database.get_job("job-api")
+        finally:
+            database.close()
+
+    def test_parent_discard_is_rejected_when_repair_child_exists(self) -> None:
+        discard = _endpoint(self.app, "/api/jobs/{job_id}/discard", "POST")
+        database = StateDatabase.open(self.database_path)
+        try:
+            template = dict(database.get_job("job-api"))
+            database.insert_job({**template, "job_id": "repair-api", "status": "cancelled_recoverable"})
+            database.create_repair_link("repair-api", "job-api")
+        finally:
+            database.close()
+
+        with self.assertRaises(HTTPException) as rejected:
+            discard("job-api", _ConfirmBody(confirmed=True))
+        self.assertEqual(400, rejected.exception.status_code)
+        self.assertIn("\u8bf7\u5148\u5220\u9664\u4fee\u590d\u5b50\u4efb\u52a1", str(rejected.exception.detail))
+        database = StateDatabase.open(self.database_path)
+        try:
+            self.assertEqual("running", database.get_job("job-api")["status"])
+            self.assertTrue(database.has_repair_children("job-api"))
+        finally:
+            database.close()
+
+    def test_repair_child_can_be_discarded_without_deleting_parent(self) -> None:
+        discard = _endpoint(self.app, "/api/jobs/{job_id}/discard", "POST")
+        database = StateDatabase.open(self.database_path)
+        try:
+            template = dict(database.get_job("job-api"))
+            database.insert_job({**template, "job_id": "repair-api", "status": "cancelled_recoverable"})
+            database.create_repair_link("repair-api", "job-api")
+        finally:
+            database.close()
+        self.assertEqual(
+            {"jobId": "repair-api", "overlayDeleted": False},
+            discard("repair-api", _ConfirmBody(confirmed=True)),
+        )
+        database = StateDatabase.open(self.database_path)
+        try:
+            with self.assertRaises(KeyError):
+                database.get_job("repair-api")
+            self.assertEqual("running", database.get_job("job-api")["status"])
+            self.assertFalse(database.has_repair_children("job-api"))
+        finally:
+            database.close()
 
     def test_startup_freezes_jobs_an_earlier_process_left_running(self) -> None:
         # F15: the control plane must run the whole startup recovery sequence, not only

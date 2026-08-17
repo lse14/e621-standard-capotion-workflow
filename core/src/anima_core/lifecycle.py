@@ -24,6 +24,10 @@ class JobLifecycle:
     def __init__(self, database: StateDatabase) -> None:
         self.database = database
 
+    def ensure_delete_allowed(self, job_id: str) -> None:
+        if self.database.has_repair_children(job_id):
+            raise JobLifecycleError("请先删除修复子任务")
+
     def discard(self, job_id: str, *, confirmed: bool) -> DiscardResult:
         require_discard_confirmation(confirmed)
         job = self.database.get_job(job_id)
