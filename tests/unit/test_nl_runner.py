@@ -260,6 +260,42 @@ class NlRunnerTests(unittest.TestCase):
             finally:
                 fixture.close()
 
+    def test_terminal_api_failures_are_nonblocking_and_leave_the_sample_for_review(self) -> None:
+        for issue_code in ("nl_api_unavailable", "nl_response_invalid"):
+            with self.subTest(issue_code=issue_code), tempfile.TemporaryDirectory() as temporary:
+                fixture = NlFixture(Path(temporary), baseline_nl="", sample_count=2, schema_version=8)
+                try:
+                    fixture.config.nl.update({
+                        "enabled": True,
+                        "apiEnabled": True,
+                        "reuseOriginalNl": False,
+                        "useImage": True,
+                        "useFullJson": False,
+                        "systemPrompt": "describe visible content",
+                    })
+                    fixture.config.dropout["enabled"] = False
+                    assert fixture.config.tokenBudget is not None
+                    fixture.config.tokenBudget["enabled"] = False
+                    fixture.refresh_config()
+
+                    status = fixture.runner(
+                        FakeNlTransport(issue_code=issue_code, issue_sample_ids={1}),
+                        NlApiCredentials("https://example.test/v1", "model", "secret"),
+                    ).run()
+
+                    issue = fixture.database.page_issues("job-nl", limit=1)[0]
+                    self.assertEqual("completed_with_issues", status)
+                    self.assertEqual((issue_code, 0, 0), (issue["code"], issue["blocking"], issue["retriable"]))
+                    self.assertEqual("failed", fixture.database.get_sample_state("job-nl", 1)["status"])
+                    self.assertEqual(0, fixture.database.count_unresolved_blocking_issues("job-nl"))
+                    for module_id in ("count_review", "dropout", "token_budget"):
+                        fixture.scheduler.start_module("job-nl", module_id, enabled=False, profile="e621")
+                    self.assertEqual("running", fixture.scheduler.start_module("job-nl", "export", enabled=True, profile="e621"))
+                    self.assertEqual(("export", "skipped"), tuple(fixture.database.get_sample_state("job-nl", 1)[key] for key in ("current_module_id", "status")))
+                    self.assertEqual(("export", "pending"), tuple(fixture.database.get_sample_state("job-nl", 2)[key] for key in ("current_module_id", "status")))
+                finally:
+                    fixture.close()
+
     def test_api_enabled_configuration_requires_use_image(self) -> None:
         config = JobConfig(schemaVersion=8, profile="e621", workMode="in_place", overwriteMode="incremental", sourceRoot="E:\\dataset")
         config.nl.update({"apiEnabled": True, "useImage": False, "useFullJson": True})

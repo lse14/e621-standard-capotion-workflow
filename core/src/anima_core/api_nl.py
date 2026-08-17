@@ -8,6 +8,7 @@ from .api_context import ControlPlaneContext, bad_request, conflict, not_found
 from .api_models import (
     _AmountBody,
     _ConfirmBody,
+    _NlManualRetryBatchBody,
     _NlManualRetryBody,
     _NlManualWriteBody,
     _NlModelDiscoveryBody,
@@ -311,6 +312,31 @@ def build_nl_router(context: ControlPlaneContext) -> APIRouter:
                 "parentJobId": result.parentJobId,
                 "sampleId": body.sampleId,
                 "issueId": body.issueId,
+                "targetCount": result.targetCount,
+                "started": True,
+            }
+        except KeyError as exc:
+            raise not_found(exc) from exc
+        except (RepairPreparationError, PipelineError, SchedulerError, ValueError) as exc:
+            if released_parent_lock:
+                context.preparation_service.restore_lock_after_repair_failure(job_id)
+            raise bad_request(exc) from exc
+
+    @router.post("/api/jobs/{job_id}/nl/manual-retry-batch")
+    def manual_nl_retry_batch(job_id: str, body: _NlManualRetryBatchBody) -> dict[str, Any]:
+        if not body.confirmed:
+            raise bad_request(ValueError("manual NL retry requires explicit confirmation"))
+        released_parent_lock = False
+        try:
+            released_parent_lock = context.preparation_service.release_lock_for_repair(job_id)
+            result = context.repair_service.prepare_manual_nl_batch(
+                job_id, issue_ids=body.issueIds, confirmed=body.confirmed,
+            )
+            context.pipeline_service.start(result.repairJobId)
+            return {
+                "jobId": result.repairJobId,
+                "parentJobId": result.parentJobId,
+                "issueIds": body.issueIds,
                 "targetCount": result.targetCount,
                 "started": True,
             }

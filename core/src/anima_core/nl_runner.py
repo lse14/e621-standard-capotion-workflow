@@ -34,6 +34,7 @@ from .worker_protocol import ProtocolEnvelopeV1, ProtocolError
 
 RUNTIME_ID = "nl"
 OWNER = "nl"
+NONBLOCKING_TERMINAL_NL_CODES = frozenset({"nl_api_unavailable", "nl_response_invalid"})
 DEFAULT_POLICY = {
     "concurrency": 3, "maxRequestsPerMinute": 60, "maxHttpAttempts": 10_000,
     "mainAttempts": 3, "backupEnabled": False, "backupAttempts": 2,
@@ -653,7 +654,16 @@ class NlRunner:
                         active.remove(lease)
                         continue
                     if outcome.nl is None:
-                        self._issue(lease, row, outcome.code or "nl_processing_failed", "NL worker could not produce a caption", retriable=outcome.retriable, allowed_statuses=("request_started",))
+                        code = outcome.code or "nl_processing_failed"
+                        self._issue(
+                            lease,
+                            row,
+                            code,
+                            "NL worker could not produce a caption",
+                            blocking=code not in NONBLOCKING_TERMINAL_NL_CODES,
+                            retriable=outcome.retriable,
+                            allowed_statuses=("request_started",),
+                        )
                         processed, failed = self.database.record_nl_outcome(self.job_id, succeeded=False)
                         if outcome.code == "nl_auth_failed":
                             pause_code = "nl_auth_paused"

@@ -319,6 +319,11 @@ export function manualNlRetry(jobId: string, body: ManualNlSelector): Promise<{ 
     method: "POST", body: JSON.stringify({ ...body, confirmed: true }),
   });
 }
+export function manualNlRetryBatch(jobId: string, issueIds: string[]): Promise<{ jobId: string; parentJobId: string; issueIds: string[]; targetCount: number; started: boolean }> {
+  return request(`/api/jobs/${encodeURIComponent(jobId)}/nl/manual-retry-batch`, {
+    method: "POST", body: JSON.stringify({ issueIds, confirmed: true }),
+  });
+}
 export function manualNlWrite(jobId: string, body: ManualNlSelector & { nl: string }): Promise<{ jobId: string; parentJobId: string; targetCount: number; started: boolean }> {
   return request(`/api/jobs/${encodeURIComponent(jobId)}/nl/manual-write`, {
     method: "POST", body: JSON.stringify({ ...body, confirmed: true }),

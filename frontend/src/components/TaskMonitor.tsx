@@ -41,7 +41,7 @@ export type TaskMonitorProps = {
   modules: TaskMonitorModule[];
   labels: {
     taskOverview: string; taskProgress: string; annotationProfile: string; currentModule: string; currentBatch: string;
-    taskActions: string; pauseTask: string; resumeTask: string; terminateTask: string; recoverTask: string;
+    taskActions: string; activeModule: string; pauseTask: string; resumeTask: string; terminateTask: string; recoverTask: string;
     pinTask: string; unpinTask: string; discardTask: string;
     additionalAttempts: string; addBudget: string; pendingApiDecisions: string; confirmUnknown: string;
     issues: string; noTask: string; loadingTask: string; retryTask: string;
@@ -117,6 +117,7 @@ export function TaskMonitor({
       })}</div>
       <section className="task-actions">
         <h3>{labels.taskActions}</h3>
+        <p className="task-action-context">{labels.activeModule}: {currentModuleLabel}</p>
         <div className="action-grid">
           <button type="button" disabled={!canPause || isPending("pause")} aria-busy={isPending("pause")} onClick={onPause}>{labels.pauseTask}</button>
           <button type="button" disabled={!canResume || isPending("resume")} aria-busy={isPending("resume")} onClick={onResume}>{labels.resumeTask}</button>

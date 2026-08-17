@@ -78,6 +78,18 @@ class _NlManualRetryBody(BaseModel):
         return self
 
 
+class _NlManualRetryBatchBody(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    issueIds: list[str] = Field(min_length=1, max_length=1_000)
+    confirmed: bool
+
+    @model_validator(mode="after")
+    def _require_unique_issue_ids(self) -> "_NlManualRetryBatchBody":
+        if any(not 1 <= len(issue_id) <= 128 for issue_id in self.issueIds) or len(set(self.issueIds)) != len(self.issueIds):
+            raise ValueError("manual NL retry requires unique issue IDs")
+        return self
+
+
 class _NlManualWriteBody(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     sampleId: int | None = Field(default=None, ge=1)

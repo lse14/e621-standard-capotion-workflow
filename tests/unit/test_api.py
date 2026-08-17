@@ -95,6 +95,7 @@ EXPECTED_CONTROL_ROUTES = {
     ("POST", "/api/jobs/{job_id}/nl/api-budget"),
     ("POST", "/api/jobs/{job_id}/nl/confirm-api-outcomes"),
     ("POST", "/api/jobs/{job_id}/nl/manual-retry"),
+    ("POST", "/api/jobs/{job_id}/nl/manual-retry-batch"),
     ("POST", "/api/jobs/{job_id}/nl/manual-write"),
     ("POST", "/api/jobs/{job_id}/policy/pause"),
     ("POST", "/api/jobs/{job_id}/policy/resume"),

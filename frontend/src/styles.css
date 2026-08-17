@@ -182,10 +182,15 @@ dt { color: #5d6d77; } dd { margin: 0; color: #25343d; font-weight: 600; overflo
 progress { width: 100%; height: 7px; accent-color: #19705b; }
 .task-actions { margin-top: 18px; padding-top: 16px; border-top: 1px solid #e5eaed; }
 .task-actions h3 { color: #3f5661; }
+.task-action-context { margin: -2px 0 10px; color: #63747e; font-size: 12px; }
 .action-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .inline-control { margin-bottom: 8px; }
 .issue-manual-nl { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 8px; }
 .issue-manual-nl input { min-width: 220px; flex: 1 1 280px; }
+.issue-batch-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 12px; padding: 10px 12px; border: 1px solid #d9e1e5; border-radius: 6px; background: #f7f9fa; color: #63747e; font-size: 12px; }
+.issue-batch-bar .checkbox { margin-right: auto; }
+.issue-row-selection { display: flex !important; grid-template-columns: none !important; align-items: start; gap: 10px; }
+.issue-row-selection > .checkbox { flex: 0 0 auto; padding-top: 1px; }
 .inline-control input { width: 118px; }
 .issues-panel { max-width: 1440px; margin: 0 auto 28px; padding: 18px 24px; }
 .panel-heading { margin-bottom: 14px; }

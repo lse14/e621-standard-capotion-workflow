@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "core" / "src"))
 
 from anima_core.classify_overlay import serialize_annotation_json
-from anima_core.api_models import _NlManualRetryBody, _NlManualWriteBody
+from anima_core.api_models import _NlManualRetryBatchBody, _NlManualRetryBody, _NlManualWriteBody
 from anima_core.contracts import JobConfig, SampleIssue
 from anima_core.db import StateDatabase
 from anima_core.job_preflight import JobPreparationService
@@ -34,13 +34,25 @@ class NlManualReviewTests(unittest.TestCase):
             _NlManualWriteBody.model_validate({"sampleId": 1, "issueId": "x", "nl": "caption", "confirmed": True})
         retry = _NlManualRetryBody(issueId="x", confirmed=True)
         write = _NlManualWriteBody(issueId="x", nl="caption", confirmed=True)
+        batch = _NlManualRetryBatchBody(issueIds=["x", "y"], confirmed=True)
         self.assertEqual((None, "x", True), (retry.sampleId, retry.issueId, write.confirmed))
+        self.assertEqual((['x', 'y'], True), (batch.issueIds, batch.confirmed))
+        with self.assertRaises(Exception):
+            _NlManualRetryBatchBody(issueIds=["x", "x"], confirmed=True)
 
-    def _fixture(self, root: Path) -> tuple[JobPreparationService, RepairPreparationService, StateDatabase, str]:
+    def _fixture(
+        self,
+        root: Path,
+        *,
+        sample_count: int = 1,
+        release_parent_lock: bool = True,
+    ) -> tuple[JobPreparationService, RepairPreparationService, StateDatabase, str]:
         dataset = root / "dataset"
         dataset.mkdir()
-        Image.new("RGB", (2, 2), "white").save(dataset / "image.png")
-        (dataset / "image.json").write_bytes(serialize_annotation_json({"nl": "", "tags": []}))
+        for sample_id in range(1, sample_count + 1):
+            name = "image" if sample_id == 1 else f"image-{sample_id}"
+            Image.new("RGB", (2, 2), "white").save(dataset / f"{name}.png")
+            (dataset / f"{name}.json").write_bytes(serialize_annotation_json({"nl": "", "tags": []}))
         config = JobConfig(profile="e621", workMode="in_place", overwriteMode="incremental", sourceRoot=str(dataset))
         config.caption["enabled"] = config.classify["enabled"] = config.replace["enabled"] = False
         config.countReview["enabled"] = False  # type: ignore[index]
@@ -49,22 +61,25 @@ class NlManualReviewTests(unittest.TestCase):
         job_id = preparation.preflight(config.to_dict()).jobId
         preparation.confirm_workspace(job_id, confirmed=True, confirmed_rebuild=False)
         database = StateDatabase.open(root / "state.db")
-        sample = database.page_samples(job_id, limit=1)[0]
+        samples = database.page_samples(job_id, limit=sample_count)
         scheduler = BoundedScheduler(database)
         for module in ("caption", "classify", "replace"):
             scheduler.start_module(job_id, module, enabled=False, profile="e621")
         scheduler.start_module(job_id, "nl", enabled=True, profile="e621")
         database.set_job_status(job_id, "reviewing", current_module_id="nl")
-        database.connection.execute(
-            "UPDATE sample_state SET current_module_id='nl',status='failed',attempt=1 WHERE job_id=? AND sample_id=?",
-            (job_id, int(sample["sample_id"])),
-        )
-        database.upsert_issue(SampleIssue(
-            issueId="nl-manual-1", jobId=job_id, sampleId=int(sample["sample_id"]),
-            relativeImagePath="image.png", moduleId="nl", code="nl_auth_failed", severity="error",
-            blocking=True, retriable=False, repairStartModule=None, message="manual review", attempt=1,
-        ))
-        preparation.release_lock_for_repair(job_id)
+        for sample in samples:
+            sample_id = int(sample["sample_id"])
+            database.connection.execute(
+                "UPDATE sample_state SET current_module_id='nl',status='failed',attempt=1 WHERE job_id=? AND sample_id=?",
+                (job_id, sample_id),
+            )
+            database.upsert_issue(SampleIssue(
+                issueId=f"nl-manual-{sample_id}", jobId=job_id, sampleId=sample_id,
+                relativeImagePath=str(sample["relative_image_path"]), moduleId="nl", code="nl_auth_failed", severity="error",
+                blocking=True, retriable=False, repairStartModule=None, message="manual review", attempt=1,
+            ))
+        if release_parent_lock:
+            preparation.release_lock_for_repair(job_id)
         return preparation, RepairPreparationService(root / "state.db"), database, job_id
 
     def test_manual_retry_requires_confirmation_and_exact_selector(self) -> None:
@@ -84,6 +99,9 @@ class NlManualReviewTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             preparation, repair, database, job_id = self._fixture(Path(temporary))
             try:
+                database.connection.execute(
+                    "UPDATE jobs SET status='succeeded',current_module_id='export' WHERE job_id=?", (job_id,),
+                )
                 result = repair.prepare_manual_nl(job_id, issue_id="nl-manual-1", confirmed=True)
                 target = database.connection.execute(
                     "SELECT sample_id,repair_start_module FROM repair_targets WHERE repair_job_id=?",
@@ -91,6 +109,39 @@ class NlManualReviewTests(unittest.TestCase):
                 ).fetchone()
                 self.assertEqual((1, "nl"), (target["sample_id"], target["repair_start_module"]))
                 self.assertEqual(0, database.repair_candidate_summary(job_id)[0])
+            finally:
+                database.close()
+                repair.close()
+                preparation.close()
+
+    def test_manual_retry_batch_creates_one_child_for_multiple_issues_after_export(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            preparation, repair, database, job_id = self._fixture(
+                Path(temporary), sample_count=2, release_parent_lock=False,
+            )
+            try:
+                database.connection.execute(
+                    "UPDATE jobs SET status='succeeded',current_module_id='export' WHERE job_id=?", (job_id,),
+                )
+                self.assertTrue(preparation.release_lock_for_repair(job_id))
+
+                result = repair.prepare_manual_nl_batch(
+                    job_id,
+                    issue_ids=("nl-manual-1", "nl-manual-2"),
+                    confirmed=True,
+                )
+
+                targets = list(database.connection.execute(
+                    "SELECT sample_id,repair_start_module FROM repair_targets WHERE repair_job_id=? ORDER BY sample_id",
+                    (result.repairJobId,),
+                ))
+                linked_issues = [row["parent_issue_id"] for row in database.connection.execute(
+                    "SELECT parent_issue_id FROM repair_target_issues WHERE repair_job_id=? ORDER BY parent_issue_id",
+                    (result.repairJobId,),
+                )]
+                self.assertEqual(2, result.targetCount)
+                self.assertEqual([(1, "nl"), (2, "nl")], [(row["sample_id"], row["repair_start_module"]) for row in targets])
+                self.assertEqual(["nl-manual-1", "nl-manual-2"], linked_issues)
             finally:
                 database.close()
                 repair.close()

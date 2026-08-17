@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  addNlBudget, cancelJob, confirmNlOutcomes, confirmWorkspace, deleteNlSecret, discardJob, listNlProfiles, manualNlRetry, manualNlWrite,
+  addNlBudget, cancelJob, confirmNlOutcomes, confirmWorkspace, deleteNlSecret, discardJob, listNlProfiles, manualNlRetry, manualNlRetryBatch, manualNlWrite,
   pauseJob, preflightJob, recoverJob, restoreOriginalAnnotations, resumeJob, saveNlProfile,
   setJobPin, repairJob, saveNlSecret, startPipeline, type NlProfile, type OcrExecutionRequest, type PreflightSummary,
   type AnnotationProfile, type PipelineModuleId, type ResourceCatalogResponse, type ResourceKind,
@@ -31,7 +31,7 @@ import "./styles.css";
 type StepId = "setup" | PipelineModuleId;
 type PendingAction =
   | "preflight" | "confirm_workspace" | "start" | "repair" | "recover"
-  | "terminate" | "pause" | "resume" | "pin" | "discard" | "restore" | "nl_manual_retry" | "nl_manual_write"
+  | "terminate" | "pause" | "resume" | "pin" | "discard" | "restore" | "nl_manual_retry" | "nl_manual_retry_batch" | "nl_manual_write"
   | "nl_budget" | "nl_confirm_outcomes"
   | "profile_save" | "credential_delete"
   | null;
@@ -354,6 +354,15 @@ export function App() {
       return result;
     });
   };
+  const startManualNlBatchRetry = (issues: Array<{ issueId: string; sampleId: number }>) => {
+    if (!window.confirm(t("confirmNlManualBatchRetry", { count: issues.length }))) return;
+    void control("nl_manual_retry_batch", async () => {
+      const result = await manualNlRetryBatch(jobId, issues.map((issue) => issue.issueId));
+      selectJob(result.jobId);
+      await refreshJobs();
+      return result;
+    });
+  };
   const startManualNlWrite = (issue: { issueId: string; sampleId: number }, nl: string) => {
     if (!window.confirm(t("confirmNlManualWrite"))) return;
     void control("nl_manual_write", async () => {
@@ -491,6 +500,7 @@ export function App() {
     currentModule: t("currentModule"),
     currentBatch: t("currentBatch"),
     taskActions: copy.taskActions,
+    activeModule: t("activeModule"),
     pauseTask: t("pauseTask"),
     resumeTask: t("resumeTask"),
     terminateTask: t("terminateTask"),
@@ -526,6 +536,9 @@ export function App() {
     restoreOriginal: t("restoreOriginal"),
     reprocess: t("reprocess"),
     nlRetry: t("nlManualRetry"),
+    nlBatchRetry: t("nlManualBatchRetry"),
+    selectNlPage: t("selectNlPage"),
+    selectedNlCount: (selected: number) => t("selectedNlCount", { selected }),
     nlWrite: t("nlManualWrite"),
     nlWritePlaceholder: t("nlManualWritePlaceholder"),
   };
@@ -847,13 +860,14 @@ export function App() {
       labels={issuePanelLabels}
        canRestore={snapshot.job.status === "succeeded"}
       canReprocess={retriableCount > 0 && ["reviewing", "failed"].includes(snapshot.job.status)}
-      canManualNl={Boolean(snapshot.job.status === "reviewing" || snapshot.job.status === "failed")}
+        canManualNl={Boolean(snapshot.job.status === "reviewing" || snapshot.job.status === "failed" || snapshot.job.status === "succeeded")}
       pendingActions={pendingActions}
       onFirstPage={firstIssuePage}
       onNextPage={nextIssuePage}
        onRestore={() => { if (window.confirm(t("confirmRestore"))) void control("restore", () => restoreOriginalAnnotations(jobId)); }}
       onReprocess={() => void startRepair()}
       onManualNlRetry={startManualNlRetry}
+      onManualNlBatchRetry={startManualNlBatchRetry}
       onManualNlWrite={startManualNlWrite}
     />}
   </main>;

@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .contracts import pipeline_module_ids, utc_now
-from .db import StateDatabase
+from .db import MAX_PAGE_SIZE, StateDatabase
 from .job_preflight import config_from_dict
 from .locks import DatasetLock
 from .overlay import BaselineView, OverlayLayout, WorkingAnnotationView
@@ -158,7 +158,7 @@ class RepairPreparationService:
         repair_job_id = uuid.uuid4().hex
         try:
             parent = database.get_job(parent_job_id)
-            if parent["status"] not in {"reviewing", "failed"}:
+            if parent["status"] not in {"reviewing", "failed", "succeeded"}:
                 raise RepairPreparationError("manual NL retry requires a reviewed NL task")
             if issue_id is not None:
                 issue = database.connection.execute(
@@ -254,6 +254,145 @@ class RepairPreparationService:
                 return RepairPreparationResult(repair_job_id, parent_job_id, 1, str(dataset), str(layout.root))
             except Exception:
                 raise
+        except Exception:
+            if layout is not None and layout.root.exists():
+                layout.discard()
+            try:
+                database.delete_job_control_record(repair_job_id)
+            except KeyError:
+                pass
+            if acquired is not None:
+                acquired.release(recovery_complete=True)
+            raise
+        finally:
+            if not retain_database:
+                database.close()
+
+    def prepare_manual_nl_batch(
+        self,
+        parent_job_id: str,
+        *,
+        issue_ids: tuple[str, ...] | list[str],
+        confirmed: bool,
+    ) -> RepairPreparationResult:
+        """Create one NL repair task for a bounded selection of unresolved NL issues."""
+        requested_issue_ids = tuple(issue_ids)
+        if not confirmed:
+            raise RepairPreparationError("manual NL retry requires explicit confirmation")
+        if (
+            not requested_issue_ids
+            or len(requested_issue_ids) > MAX_PAGE_SIZE
+            or len(set(requested_issue_ids)) != len(requested_issue_ids)
+            or any(not isinstance(issue_id, str) or not 1 <= len(issue_id) <= 128 for issue_id in requested_issue_ids)
+        ):
+            raise RepairPreparationError("manual NL retry requires a unique current-page issue selection")
+        database = StateDatabase.open(self.database_path)
+        layout: OverlayLayout | None = None
+        acquired: DatasetLock | None = None
+        retain_database = False
+        repair_job_id = uuid.uuid4().hex
+        try:
+            parent = database.get_job(parent_job_id)
+            if parent["status"] not in {"reviewing", "failed", "succeeded"}:
+                raise RepairPreparationError("manual NL retry requires a reviewed NL task")
+            placeholders = ",".join("?" for _ in requested_issue_ids)
+            found = list(database.connection.execute(
+                f"""SELECT * FROM issues WHERE job_id=? AND resolved_at IS NULL AND issue_id IN ({placeholders})
+                    ORDER BY sample_id,issue_id""",
+                (parent_job_id, *requested_issue_ids),
+            ))
+            issues_by_id = {str(issue["issue_id"]): issue for issue in found}
+            if len(issues_by_id) != len(requested_issue_ids):
+                raise RepairPreparationError("manual NL retry requires unresolved current-page NL issues")
+            issues = [issues_by_id[issue_id] for issue_id in requested_issue_ids]
+            if any(issue["module_id"] != "nl" or bool(issue["retriable"]) for issue in issues):
+                raise RepairPreparationError("manual NL retry requires unresolved non-retriable NL issues")
+            selected_sample_ids = [int(issue["sample_id"]) for issue in issues]
+            if len(set(selected_sample_ids)) != len(selected_sample_ids):
+                raise RepairPreparationError("manual NL retry requires at most one issue per sample")
+            try:
+                config = config_from_dict(json.loads(str(parent["config_json"])))
+            except (TypeError, ValueError, json.JSONDecodeError) as exc:
+                raise RepairPreparationError("parent frozen JobConfig is invalid") from exc
+            if (
+                config.config_hash != parent["config_hash"]
+                or config.profile != parent["profile"]
+                or config.schemaVersion != int(parent["config_schema_version"])
+            ):
+                raise RepairPreparationError("parent frozen JobConfig identity does not match")
+            try:
+                order = pipeline_module_ids(config.schemaVersion)
+                current_index = order.index(str(parent["current_module_id"]))
+                nl_index = order.index("nl")
+            except ValueError as exc:
+                raise RepairPreparationError("manual NL retry requires a review stage at or after NL") from exc
+            if current_index < nl_index:
+                raise RepairPreparationError("manual NL retry requires a review stage at or after NL")
+            nl = config.nl
+            if nl.get("enabled") is not True or nl.get("apiEnabled") is not True or nl.get("useImage") is not True:
+                raise RepairPreparationError("manual NL retry requires image-enabled API NL configuration")
+            policy = nl.get("apiPolicy")
+            if not isinstance(policy, dict) or type(policy.get("maxHttpAttempts")) is not int:
+                raise RepairPreparationError("frozen NL API budget is invalid")
+            used = database.module_diagnostic_count(parent_job_id, "nl", "nl_http_attempts")
+            if used >= int(policy["maxHttpAttempts"]) + int(parent["api_budget_extra"]):
+                raise RepairPreparationError("NL API budget is exhausted")
+            dataset = Path(str(parent["dataset_root"]))
+            samples = [database.get_sample_with_state(parent_job_id, sample_id) for sample_id in selected_sample_ids]
+            for sample in samples:
+                try:
+                    image = ensure_within(dataset, dataset / str(sample["relative_image_path"]))
+                    with image.open("rb") as stream:
+                        if not stream.read(1):
+                            raise OSError("image is empty")
+                except (OSError, PathSafetyError) as exc:
+                    raise RepairPreparationError("manual NL retry image is missing or unreadable") from exc
+            database.insert_job(self._job_row(repair_job_id, parent, dataset))
+            acquired = DatasetLock.acquire(database, dataset, repair_job_id)
+            self._copy_parent_manifest(database, parent_job_id, repair_job_id)
+            database.create_repair_link(repair_job_id, parent_job_id)
+            relative_paths = [str(sample["relative_image_path"]) for sample in samples]
+            child_placeholders = ",".join("?" for _ in relative_paths)
+            child_samples = {
+                str(row["relative_image_path"]): int(row["sample_id"])
+                for row in database.connection.execute(
+                    f"SELECT sample_id,relative_image_path FROM samples WHERE job_id=? AND relative_image_path IN ({child_placeholders})",
+                    (repair_job_id, *relative_paths),
+                )
+            }
+            targets: list[tuple[int, str]] = []
+            for issue, sample in zip(issues, samples, strict=True):
+                child_sample_id = child_samples.get(str(sample["relative_image_path"]))
+                if child_sample_id is None:
+                    raise RepairPreparationError("manual NL retry sample is not present in the child manifest")
+                targets.append((child_sample_id, str(issue["issue_id"])))
+            database.connection.executemany(
+                "INSERT INTO repair_targets(repair_job_id,sample_id,repair_start_module) VALUES (?,?,?)",
+                [(repair_job_id, sample_id, "nl") for sample_id, _ in targets],
+            )
+            database.connection.executemany(
+                "INSERT INTO repair_target_issues(repair_job_id,sample_id,parent_issue_id) VALUES (?,?,?)",
+                [(repair_job_id, sample_id, issue_id) for sample_id, issue_id in targets],
+            )
+            if isinstance(config.countReview, dict) and config.countReview.get("enabled") is True:
+                database.inherit_repair_count_evidence(repair_job_id, parent_job_id)
+            layout = OverlayLayout.create(dataset, repair_job_id)
+            parent_overlay = parent["overlay_root"]
+            if isinstance(parent_overlay, str) and parent_overlay:
+                parent_layout = OverlayLayout.open_existing(parent_overlay, parent_job_id)
+                parent_view = WorkingAnnotationView(BaselineView(dataset), parent_layout)
+                for sample in samples:
+                    raw_annotation = parent_view.read(str(sample["annotation_key"]), ".json")
+                    if raw_annotation is not None:
+                        layout.write_annotation(str(sample["annotation_key"]), ".json", raw_annotation)
+            database.set_workspace_metadata(
+                repair_job_id, dataset_root=str(dataset), dataset_root_key=windows_key(dataset), overlay_root=str(layout.root),
+            )
+            database.set_job_status(repair_job_id, "preparing_workspace", current_module_id="workspace")
+            self._locks[repair_job_id] = acquired
+            acquired = None
+            retain_database = True
+            return RepairPreparationResult(repair_job_id, parent_job_id, len(targets), str(dataset), str(layout.root))
         except Exception:
             if layout is not None and layout.root.exists():
                 layout.discard()

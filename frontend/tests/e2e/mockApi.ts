@@ -810,6 +810,15 @@ async function handleApiRequest(scenario: ApiScenario, route: Route, pathname: s
     return fulfillJson(route, { requeued: 0 });
   }
 
+  const manualNlBatchMatch = pathname.match(/^\/api\/jobs\/([^/]+)\/nl\/manual-retry-batch$/);
+  if (manualNlBatchMatch && method === "POST") {
+    const parentJobId = decodeURIComponent(manualNlBatchMatch[1]);
+    const issueIds = (body as { issueIds: string[] }).issueIds;
+    const jobId = `${parentJobId}-manual-retry-batch`;
+    scenario.snapshots.set(jobId, makeSnapshot({ jobId, status: "running", currentModuleId: "nl" }));
+    return fulfillJson(route, { jobId, parentJobId, issueIds, targetCount: issueIds.length, started: true });
+  }
+
   const manualNlMatch = pathname.match(/^\/api\/jobs\/([^/]+)\/nl\/(manual-retry|manual-write)$/);
   if (manualNlMatch && method === "POST") {
     const parentJobId = decodeURIComponent(manualNlMatch[1]);

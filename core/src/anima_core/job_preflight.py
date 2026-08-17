@@ -641,8 +641,8 @@ class JobPreparationService:
         if lock is None:
             return False
         job = lock.database.get_job(job_id)
-        if job["status"] not in {"reviewing", "failed"}:
-            raise JobPreflightError("only a reviewed or failed task can release its lock for repair")
+        if job["status"] not in {"reviewing", "failed", "succeeded"}:
+            raise JobPreflightError("only a reviewed, failed, or succeeded task can release its lock for repair")
         overlay_root = job["overlay_root"]
         if isinstance(overlay_root, str) and overlay_root:
             try:
