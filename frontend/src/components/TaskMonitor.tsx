@@ -2,7 +2,6 @@ export type TaskMonitorSnapshot = {
   status: string;
   profile: string;
   currentModuleId: string | null;
-  pinned: boolean;
   ocrRuntime: {
     availability: "pending" | "available" | "unavailable";
     runtimeId: "ocr-paddle" | "ocr-paddle-gpu" | null;
@@ -33,6 +32,8 @@ export type TaskMonitorModule = {
 
 export type TaskMonitorProps = {
   snapshot: TaskMonitorSnapshot | null;
+  isRepairTask: boolean;
+  hasRepairChildren: boolean;
   loading: boolean;
   error: string | null;
   statusLabel: string;
@@ -44,7 +45,7 @@ export type TaskMonitorProps = {
   labels: {
     taskOverview: string; taskProgress: string; annotationProfile: string; currentModule: string; currentBatch: string;
     taskActions: string; activeModule: string; pauseModule: (module: string) => string; resumeModule: (module: string) => string; terminateTask: string; recoverTask: string;
-    pinTask: string; unpinTask: string; discardTask: string;
+    discardTask: string; repairDeleteBlocked: string; repairTask: string; backToParentTask: string;
     additionalAttempts: string; addBudget: string; pendingApiDecisions: string; confirmUnknown: string;
     issues: string; noTask: string; loadingTask: string; retryTask: string;
     ocrRuntime: string; ocrAvailability: string; ocrGpu: string; ocrRequestedDevice: string; ocrObservedDevice: string;
@@ -58,8 +59,8 @@ export type TaskMonitorProps = {
   onModuleControl: (moduleId: string, action: "pause" | "resume") => void;
   onTerminate: () => void;
   onRecover: () => void;
-  onPin: () => void;
   onDiscard: () => void;
+  onBackToParent: () => void;
   onBudgetChange: (value: string) => void;
   onAddBudget: () => void;
   onConfirmUnknown: () => void;
@@ -71,8 +72,8 @@ function formatGiB(bytes: number): string {
 }
 
 export function TaskMonitor({
-  snapshot, loading, error, statusLabel, profileLabel, currentModuleLabel, currentBatchLabel, rawE621ConvertedMessage, modules, labels,
-  canDiscard, budget, pendingApiDecisions, nlAwaitsDecision, pendingActions, onModuleControl, onTerminate, onRecover, onPin, onDiscard,
+  snapshot, isRepairTask, hasRepairChildren, loading, error, statusLabel, profileLabel, currentModuleLabel, currentBatchLabel, rawE621ConvertedMessage, modules, labels,
+  canDiscard, budget, pendingApiDecisions, nlAwaitsDecision, pendingActions, onModuleControl, onTerminate, onRecover, onDiscard, onBackToParent,
   onBudgetChange, onAddBudget, onConfirmUnknown, onRetry,
 }: TaskMonitorProps) {
   const isPending = (action: string) => pendingActions.has(action);
@@ -81,8 +82,9 @@ export function TaskMonitor({
 
   return <aside className="task-monitor" aria-busy={loading || pendingActions.size > 0}>
     <div className="monitor-heading">
-      <div><p className="eyebrow">{labels.taskOverview}</p><h2>{labels.taskProgress}</h2></div>
+      <div><p className="eyebrow">{labels.taskOverview}</p><h2>{isRepairTask ? labels.repairTask : labels.taskProgress}</h2></div>
       <span className={`status ${snapshot?.status ?? "idle"}`} aria-live="polite" aria-atomic="true">{statusLabel}</span>
+      {isRepairTask && <button className="secondary" type="button" onClick={onBackToParent}>{labels.backToParentTask}</button>}
     </div>
     {loading && <p className="monitor-state" role="status">{labels.loadingTask}</p>}
     {error && <div className="monitor-error"><p role="alert">{error}</p><button className="secondary" type="button" onClick={onRetry}>{labels.retryTask}</button></div>}
@@ -108,18 +110,19 @@ export function TaskMonitor({
       <div className="module-progress">{modules.map((module) => {
         const settled = module.completed + module.failed + module.skipped;
         const percentage = module.total ? Math.min(100, Math.round(settled / module.total * 100)) : 0;
-        const action = module.status === "paused" ? "resume" : "pause";
-        const pendingKey = `module:${module.moduleId}:${action}`;
-        const canControl = action === "pause"
-          ? (module.isCurrent
-            ? module.status === "running" && (snapshot.status === "running" || snapshot.status === "exporting")
-            : module.isFuture && module.status === "pending" && (snapshot.status === "running" || snapshot.status === "exporting"))
-          : (module.isCurrent
-            ? snapshot.status === "paused"
-            : module.isFuture && ["running", "exporting", "paused", "reviewing"].includes(snapshot.status));
-        const actionLabel = action === "pause" ? labels.pauseModule(module.controlLabel) : labels.resumeModule(module.controlLabel);
+        const pauseKey = `module:${module.moduleId}:pause`;
+        const resumeKey = `module:${module.moduleId}:resume`;
+        const canPause = module.isCurrent
+          ? module.status === "running" && (snapshot.status === "running" || snapshot.status === "exporting")
+          : module.isFuture && module.status === "pending" && (snapshot.status === "running" || snapshot.status === "exporting");
+        const canResume = module.isCurrent
+          ? module.status === "paused" && snapshot.status === "paused"
+          : module.isFuture && module.status === "paused" && ["running", "exporting", "paused", "reviewing"].includes(snapshot.status);
         return <div className={`module-row ${module.isCurrent ? "current" : ""}`} key={module.moduleId}>
-          <div><strong>{module.label}</strong><span className={`status ${module.status}`}>{module.statusLabel}</span><button className="module-control" type="button" disabled={!canControl || isPending(pendingKey)} aria-busy={isPending(pendingKey)} onClick={() => onModuleControl(module.moduleId, action)}>{actionLabel}</button></div>
+          <div className="module-row-heading"><div><strong>{module.label}</strong><span className={`status ${module.status}`}>{module.statusLabel}</span></div><div className="module-controls">
+            <button className="module-control" type="button" disabled={!canPause || isPending(pauseKey)} aria-busy={isPending(pauseKey)} onClick={() => onModuleControl(module.moduleId, "pause")}>{labels.pauseModule(module.controlLabel)}</button>
+            <button className="module-control" type="button" disabled={!canResume || isPending(resumeKey)} aria-busy={isPending(resumeKey)} onClick={() => onModuleControl(module.moduleId, "resume")}>{labels.resumeModule(module.controlLabel)}</button>
+          </div></div>
           <progress value={settled} max={Math.max(module.total, 1)} />
           <small>{settled} / {module.total} ({percentage}%) {module.issueCount ? `- ${module.issueCount} ${labels.issues}` : ""}</small>
         </div>;
@@ -132,11 +135,11 @@ export function TaskMonitor({
           <button className="secondary" type="button" disabled={!canRecover || isPending("recover")} aria-busy={isPending("recover")} onClick={onRecover}>{labels.recoverTask}</button>
         </div>
         <div className="action-grid">
-          <button className="secondary" type="button" disabled={isPending("pin")} aria-busy={isPending("pin")} onClick={onPin}>{snapshot.pinned ? labels.unpinTask : labels.pinTask}</button>
           <button className="danger-action" type="button" disabled={!canDiscard || isPending("discard")} aria-busy={isPending("discard")} onClick={onDiscard}>{labels.discardTask}</button>
         </div>
       </section>
-      <section className="task-actions">
+      {hasRepairChildren && <p className="hint">{labels.repairDeleteBlocked}</p>}
+      {pendingApiDecisions > 0 && <section className="task-actions">
         <div className="inline-control">
           <input inputMode="numeric" value={budget} onChange={(event) => onBudgetChange(event.target.value)} aria-label={labels.additionalAttempts} />
           <button type="button" disabled={!/^\d+$/.test(budget) || Number(budget) < 1 || isPending("nl_budget")} aria-busy={isPending("nl_budget")} onClick={onAddBudget}>{labels.addBudget}</button>
@@ -145,7 +148,7 @@ export function TaskMonitor({
           <span>{labels.pendingApiDecisions}: {pendingApiDecisions}</span>
           <button className="warning-action" type="button" disabled={!nlAwaitsDecision || isPending("nl_confirm_outcomes")} aria-busy={isPending("nl_confirm_outcomes")} onClick={onConfirmUnknown}>{labels.confirmUnknown}</button>
         </div>
-      </section>
+      </section>}
     </> : !loading && !error && <p className="empty-state">{labels.noTask}</p>}
   </aside>;
 }

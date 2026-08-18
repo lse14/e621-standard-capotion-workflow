@@ -295,10 +295,15 @@ class JobDatabaseMixin:
         ).fetchone()[0])
 
     def create_repair_link(self, repair_job_id: str, parent_job_id: str) -> None:
-        self.connection.execute(
-            "INSERT INTO repair_jobs(repair_job_id,parent_job_id,created_at) VALUES (?,?,?)",
-            (repair_job_id, parent_job_id, utc_now()),
+        result = self.connection.execute(
+            """INSERT INTO repair_jobs(repair_job_id,parent_job_id,created_at)
+               SELECT ?,?,? WHERE EXISTS (
+                   SELECT 1 FROM jobs WHERE job_id=? AND status<>'discarded'
+               )""",
+            (repair_job_id, parent_job_id, utc_now(), parent_job_id),
         )
+        if result.rowcount != 1:
+            raise ValueError("parent task is unavailable for repair")
 
     def repair_parent_job_id(self, repair_job_id: str) -> str | None:
         row = self.connection.execute(

@@ -85,7 +85,7 @@ def build_jobs_router(context: ControlPlaneContext) -> APIRouter:
             raise bad_request(ValueError("both task-list cursor parts are required"))
         database = StateDatabase.open(context.database_path)
         try:
-            predicate = "" if afterCreatedAt is None else " WHERE created_at<? OR (created_at=? AND job_id<?)"
+            predicate = "" if afterCreatedAt is None else " WHERE (created_at<? OR (created_at=? AND job_id<?))"
             cursor: list[object] = [] if afterCreatedAt is None else [afterCreatedAt, afterCreatedAt, afterJobId]
             rows = list(database.connection.execute(
                 "SELECT job_id,status,current_module_id,profile,dataset_root,sample_count,pinned,created_at,finished_at"

@@ -145,6 +145,11 @@ test.describe("task status and issue characterization", () => {
     await openTrackedJob(page, "running");
 
     await expect(page.locator(".module-progress .module-row")).toHaveCount(snapshot.moduleOrder.length);
+    const moduleControlLabels = ["Caption", "Classify", "Replace", "OCR", "NL", "Count review", "Dropout", "Export"];
+    for (const label of moduleControlLabels) {
+      await expect(page.getByRole("button", { name: `Pause ${label} module` })).toBeVisible();
+      await expect(page.getByRole("button", { name: `Resume ${label} module` })).toBeVisible();
+    }
     await expect(page.getByRole("button", { name: "Pause Classify module" })).toBeDisabled();
     await expect(page.getByRole("button", { name: "Pause Replace module" })).toBeDisabled();
     await expect(page.getByRole("button", { name: "Terminate task" })).toBeVisible();
@@ -173,6 +178,77 @@ test.describe("task status and issue characterization", () => {
 
     await page.setViewportSize({ width: 390, height: 844 });
     await expect(page.getByRole("button", { name: "Resume Caption module" })).toBeVisible();
+  });
+
+  test("hides NL API controls without pending API decisions", async ({ page, api }) => {
+    setJobSnapshot(api, makeSnapshot({ status: "running", currentModuleId: "nl" }));
+    await openTrackedJob(page, "running");
+
+    await expect(page.getByLabel("Additional HTTP attempts")).toHaveCount(0);
+    await expect(page.getByText("Pending API decisions: 0", { exact: true })).toHaveCount(0);
+  });
+
+  test("修复子任务独立展示、切换并可删除任务", async ({ page, api }) => {
+    const parent = makeSnapshot({
+      jobId: DEFAULT_JOB_ID,
+      status: "failed",
+      currentModuleId: "export",
+    });
+    const childJobId = `${DEFAULT_JOB_ID}-repair`;
+    const child = makeSnapshot({
+      jobId: childJobId,
+      status: "failed",
+      currentModuleId: "caption",
+      parentJobId: DEFAULT_JOB_ID,
+    });
+
+    parent.repairChildren = [{
+      jobId: childJobId,
+      status: "failed",
+      currentModuleId: "caption",
+      sampleCount: 2,
+      targetCount: 2,
+      createdAt: child.job.createdAt,
+      finishedAt: child.job.finishedAt,
+    }];
+
+    setJobSnapshot(api, parent);
+    api.snapshots.set(childJobId, child);
+
+    await openApp(page, { jobId: DEFAULT_JOB_ID, language: "zh-CN" });
+
+    await expect(page.getByRole("heading", { name: "修复子任务", exact: true })).toBeVisible();
+    await expect(page.getByText(`创建于 ${child.job.createdAt}`, { exact: true })).toBeVisible();
+    await expect(page.getByLabel("最近任务").locator(`option[value="${childJobId}"]`)).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "固定任务" })).toHaveCount(0);
+    await expect(page.locator(".task-monitor .task-actions").getByRole("button", { name: "删除任务并释放训练集占用" })).toBeDisabled();
+    await expect(page.getByText("请先删除修复子任务")).toBeVisible();
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect.poll(() => page.locator(".repair-tasks-panel").evaluate((element) => (
+      element.getBoundingClientRect().right <= window.innerWidth
+    ))).toBe(true);
+
+    await page.getByRole("button", { name: "打开修复任务" }).click();
+    await expect(page.getByText("修复任务", { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "返回父任务" })).toBeVisible();
+    await expect(page.locator(".task-monitor .task-actions").getByRole("button", { name: "删除任务并释放训练集占用" })).toBeEnabled();
+
+    await page.getByRole("button", { name: "返回父任务" }).click();
+    await expect(page.getByLabel("任务 ID")).toHaveValue(DEFAULT_JOB_ID);
+    await expect(page.getByRole("heading", { name: "修复子任务", exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "打开修复任务" }).click();
+
+    page.once("dialog", (dialog) => {
+      expect(dialog.message()).toBe("确认删除该任务并释放训练集占用吗？未提交进度和任务记录将被删除，且无法恢复。");
+      dialog.accept();
+    });
+    await page.locator(".task-monitor .task-actions").getByRole("button", { name: "删除任务并释放训练集占用" }).click();
+    await expect.poll(() =>
+      mutationsFor(api, "POST", `/api/jobs/${childJobId}/discard`).length,
+    ).toBe(1);
+    await expect(page.getByLabel("任务 ID")).toHaveValue(DEFAULT_JOB_ID);
+    await expect(page.getByRole("heading", { name: "修复子任务", exact: true })).toHaveCount(0);
   });
 
   test("retries the selected current-page NL issues as one child after Export succeeds", async ({ page, api }) => {

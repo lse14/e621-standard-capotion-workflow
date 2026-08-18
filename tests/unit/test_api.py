@@ -1229,6 +1229,46 @@ class ControlPlaneApiTests(unittest.TestCase):
         finally:
             database.close()
 
+    def test_discard_rechecks_repair_children_before_side_effects(self) -> None:
+        discard = _endpoint(self.app, "/api/jobs/{job_id}/discard", "POST")
+        cancel = _endpoint(self.app, "/api/jobs/{job_id}/cancel", "POST")
+        lifecycle_module = importlib.import_module("anima_core.lifecycle")
+        original_discard = lifecycle_module.JobLifecycle.discard
+        self.assertEqual({"status": "cancelled_recoverable"}, cancel("job-api"))
+
+        def add_repair_child_before_discard(lifecycle, job_id: str, *, confirmed: bool):
+            database = StateDatabase.open(self.database_path)
+            try:
+                template = dict(database.get_job(job_id))
+                database.insert_job({**template, "job_id": "repair-api", "status": "cancelled_recoverable"})
+                database.create_repair_link("repair-api", job_id)
+            finally:
+                database.close()
+            return original_discard(lifecycle, job_id, confirmed=confirmed)
+
+        with patch("anima_core.api_jobs.JobLifecycle.discard", new=add_repair_child_before_discard):
+            with self.assertRaises(HTTPException) as rejected:
+                discard("job-api", _ConfirmBody(confirmed=True))
+        self.assertEqual(400, rejected.exception.status_code)
+        self.assertIn("\u8bf7\u5148\u5220\u9664\u4fee\u590d\u5b50\u4efb\u52a1", str(rejected.exception.detail))
+        database = StateDatabase.open(self.database_path)
+        try:
+            self.assertEqual("cancelled_recoverable", database.get_job("job-api")["status"])
+            self.assertTrue(database.has_repair_children("job-api"))
+        finally:
+            database.close()
+
+    def test_repair_link_rejects_a_discarded_parent(self) -> None:
+        database = StateDatabase.open(self.database_path)
+        try:
+            template = dict(database.get_job("job-api"))
+            database.connection.execute("UPDATE jobs SET status='discarded' WHERE job_id='job-api'")
+            database.insert_job({**template, "job_id": "repair-api", "status": "cancelled_recoverable"})
+            with self.assertRaises(ValueError):
+                database.create_repair_link("repair-api", "job-api")
+        finally:
+            database.close()
+
     def test_repair_child_can_be_discarded_without_deleting_parent(self) -> None:
         discard = _endpoint(self.app, "/api/jobs/{job_id}/discard", "POST")
         database = StateDatabase.open(self.database_path)
@@ -1325,6 +1365,8 @@ class ControlPlaneApiTests(unittest.TestCase):
             template = dict(database.get_job("job-api"))
             for job_id, created_at in (("job-older", "2026-07-23T00:00:00Z"), ("job-newer", "2026-07-25T00:00:00Z")):
                 database.insert_job({**template, "job_id": job_id, "created_at": created_at, "status": "succeeded"})
+            database.insert_job({**template, "job_id": "repair-older", "created_at": "2026-07-22T00:00:00Z", "status": "cancelled_recoverable"})
+            database.create_repair_link("repair-older", "job-api")
         finally:
             database.close()
         listing = _endpoint(self.app, "/api/jobs", "GET")

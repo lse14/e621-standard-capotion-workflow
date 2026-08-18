@@ -45,12 +45,15 @@ class JobLifecycle:
                     raise JobLifecycleError("overlay cannot be safely inspected for discard") from exc
         elif job["commit_journal_path"]:
             raise JobLifecycleError("job has a journal pointer without a recoverable overlay")
-        if not can_discard(str(job["status"]), journal_state=journal_state):
-            raise JobLifecycleError("job cannot be discarded before recovery and journal resolution")
-        if layout is not None:
-            layout.discard()
-            overlay_deleted = True
-        self.database.set_job_status(job_id, "discarded")
-        # A discarded job can never run again, so it must stop claiming its dataset.
-        self.database.release_dataset_claim(job_id)
+        with self.database.transaction(immediate=True):
+            self.ensure_delete_allowed(job_id)
+            current = self.database.get_job(job_id)
+            if not can_discard(str(current["status"]), journal_state=journal_state):
+                raise JobLifecycleError("job cannot be discarded before recovery and journal resolution")
+            if layout is not None:
+                layout.discard()
+                overlay_deleted = True
+            self.database.set_job_status(job_id, "discarded")
+            # A discarded job can never run again, so it must stop claiming its dataset.
+            self.database.release_dataset_claim(job_id)
         return DiscardResult(job_id, overlay_deleted)
