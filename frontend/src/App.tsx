@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   addNlBudget, cancelJob, confirmNlOutcomes, confirmWorkspace, deleteNlSecret, discardJob, listNlProfiles, manualNlRetry, manualNlRetryBatch, manualNlWrite,
-  pauseModule, preflightJob, recoverJob, restoreOriginalAnnotations, resumeModule, saveNlProfile,
+  pauseJob, preflightJob, recoverJob, restoreOriginalAnnotations, resumeJob, saveNlProfile,
   repairJob, saveNlSecret, startPipeline, type NlProfile, type OcrExecutionRequest, type PreflightSummary,
   type AnnotationProfile, type PipelineModuleId, type ResourceCatalogResponse, type ResourceKind,
 } from "./api";
@@ -30,12 +30,11 @@ import { TokenBudgetReviewPanel } from "./TokenBudgetReviewPanel";
 import "./styles.css";
 
 type StepId = "setup" | PipelineModuleId;
-type ModuleAction = `module:${PipelineModuleId}:${"pause" | "resume"}`;
 type PendingAction =
   | "preflight" | "confirm_workspace" | "start" | "repair" | "recover"
   | "terminate" | "discard" | "restore" | "nl_manual_retry" | "nl_manual_retry_batch" | "nl_manual_write"
-  | "nl_budget" | "nl_confirm_outcomes"
-  | "profile_save" | "credential_delete" | ModuleAction
+  | "nl_budget" | "nl_confirm_outcomes" | "pause" | "resume"
+  | "profile_save" | "credential_delete"
   | null;
 type ActionName = Exclude<PendingAction, null>;
 
@@ -515,8 +514,8 @@ export function App() {
     currentBatch: t("currentBatch"),
     taskActions: copy.taskActions,
     activeModule: t("activeModule"),
-    pauseModule: (module: string) => t("pauseModule", { module }),
-    resumeModule: (module: string) => t("resumeModule", { module }),
+    pauseTask: t("pauseTask"),
+    resumeTask: t("resumeTask"),
     terminateTask: t("terminateTask"),
     recoverTask: t("recoverTask"),
     discardTask: t("discardTask"),
@@ -568,8 +567,6 @@ export function App() {
     total: module.total,
     issueCount: module.issue_count,
     isCurrent: module.module_id === snapshot?.job.currentModuleId,
-    isFuture: (snapshot?.moduleOrder.indexOf(module.module_id as PipelineModuleId) ?? -1) > (snapshot?.moduleOrder.indexOf(snapshot.job.currentModuleId as PipelineModuleId) ?? -1),
-    controlLabel: moduleLabel(language, module.module_id),
   }));
 
   const guide = <details className="module-guide" open={openGuide} onToggle={(event) => setOpenGuide((event.target as HTMLDetailsElement).open)}>
@@ -849,9 +846,8 @@ export function App() {
         pendingApiDecisions={pendingApiDecisions}
         nlAwaitsDecision={nlAwaitsDecision}
         pendingActions={pendingActions}
-        onModuleControl={(moduleId, action) => void lifecycleControl(`module:${moduleId as PipelineModuleId}:${action}`, () => (
-          action === "pause" ? pauseModule(jobId, moduleId as PipelineModuleId) : resumeModule(jobId, moduleId as PipelineModuleId)
-        ))}
+        onPause={() => void lifecycleControl("pause", () => pauseJob(jobId))}
+        onResume={() => void lifecycleControl("resume", () => resumeJob(jobId))}
         onTerminate={() => { if (window.confirm(t("confirmTerminate"))) void lifecycleControl("terminate", () => cancelJob(jobId)); }}
         onRecover={() => { if (window.confirm(t("confirmRecover"))) void lifecycleControl("recover", () => recoverJob(jobId)); }}
         onDiscard={() => discardSelectedTask(jobId, snapshot?.job.parentJobId ?? null)}
