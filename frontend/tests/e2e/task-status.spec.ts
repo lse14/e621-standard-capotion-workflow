@@ -124,7 +124,7 @@ test.describe("task status and issue characterization", () => {
     await page.getByRole("button", { name: "Preflight", exact: true }).click();
     await expect.poll(() => mutationsFor(api, "POST", "/api/jobs/preflight").length).toBe(1);
     expect(mutationsFor(api, "POST", "/api/jobs/preflight")[0]?.body).toMatchObject({
-      config: { schemaVersion: 8, ocr: { enabled: true, device: "cuda" } },
+      config: { schemaVersion: 9, ocr: { enabled: true, device: "cuda" } },
       ocrExecution: {
         textDetLimitSideLen: { mode: "manual", value: 2560 },
         textBatchSize: { mode: "manual", value: 4 },
@@ -136,47 +136,101 @@ test.describe("task status and issue characterization", () => {
     await expect(page.getByLabel("OCR device", { exact: true })).toBeDisabled();
   });
 
-  test("module-lifecycle controls every module through the generic routes", async ({ page, api }) => {
-    const snapshot = makeSnapshot({ status: "running", currentModuleId: "caption", schemaVersion: 5 });
-    snapshot.modules = snapshot.modules.filter((module) => ["caption", "classify", "replace"].includes(module.module_id));
-    snapshot.modules.find((module) => module.module_id === "classify")!.status = "completed";
-    snapshot.modules.find((module) => module.module_id === "replace")!.status = "skipped";
+  test("task lifecycle exposes only global pause and resume controls", async ({ page, api }) => {
+    const snapshot = makeSnapshot({ status: "running", currentModuleId: "caption", schemaVersion: 9 });
     setJobSnapshot(api, snapshot);
     await openTrackedJob(page, "running");
 
     await expect(page.locator(".module-progress .module-row")).toHaveCount(snapshot.moduleOrder.length);
-    await expect(page.getByRole("button", { name: "Pause Classify module" })).toBeDisabled();
-    await expect(page.getByRole("button", { name: "Pause Replace module" })).toBeDisabled();
+    await expect(page.locator(".module-controls")).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Terminate task" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Pause task" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Pause task" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Resume task" })).toHaveCount(0);
+    await page.getByRole("button", { name: "Pause task" }).click();
+    await expect.poll(() => mutationsFor(api, "POST", `/api/jobs/${DEFAULT_JOB_ID}/pause`).length).toBe(1);
 
-    await page.getByRole("button", { name: "Pause NL module" }).click();
-    await expect.poll(() => mutationsFor(api, "POST", `/api/jobs/${DEFAULT_JOB_ID}/modules/nl/pause`).length).toBe(1);
-    await expect(page.getByRole("button", { name: "Resume NL module" })).toBeVisible();
-    await expect(page.locator(".task-monitor > .monitor-heading > .status")).toHaveText("running");
-
-    await page.getByRole("button", { name: "Resume NL module" }).click();
-    await expect.poll(() => mutationsFor(api, "POST", `/api/jobs/${DEFAULT_JOB_ID}/modules/nl/resume`).length).toBe(1);
-    await expect(page.getByRole("button", { name: "Pause NL module" })).toBeVisible();
-
-    const releaseCaptionPause = holdRoute(api, `POST /api/jobs/${DEFAULT_JOB_ID}/modules/caption/pause`);
-    try {
-      await page.getByRole("button", { name: "Pause Caption module" }).click();
-      await expect.poll(() => mutationsFor(api, "POST", `/api/jobs/${DEFAULT_JOB_ID}/modules/caption/pause`).length).toBe(1);
-      await expect(page.getByRole("button", { name: "Pause Caption module" })).toBeDisabled();
-      await expect(page.getByRole("button", { name: "Pause NL module" })).toBeEnabled();
-    } finally {
-      releaseCaptionPause();
-    }
-    await expect(page.getByRole("button", { name: "Resume Caption module" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Resume task" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Pause task" })).toHaveCount(0);
+    await page.getByRole("button", { name: "Resume task" }).click();
+    await expect.poll(() => mutationsFor(api, "POST", `/api/jobs/${DEFAULT_JOB_ID}/resume`).length).toBe(1);
 
     await page.setViewportSize({ width: 390, height: 844 });
-    await expect(page.getByRole("button", { name: "Resume Caption module" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Pause task" })).toBeVisible();
+  });
+
+  test("hides NL API controls without pending API decisions", async ({ page, api }) => {
+    setJobSnapshot(api, makeSnapshot({ status: "running", currentModuleId: "nl" }));
+    await openTrackedJob(page, "running");
+
+    await expect(page.getByLabel("Additional HTTP attempts")).toHaveCount(0);
+    await expect(page.getByText("Pending API decisions: 0", { exact: true })).toHaveCount(0);
+  });
+
+  test("修复子任务独立展示、切换并可删除任务", async ({ page, api }) => {
+    const parent = makeSnapshot({
+      jobId: DEFAULT_JOB_ID,
+      status: "failed",
+      currentModuleId: "export",
+    });
+    const childJobId = `${DEFAULT_JOB_ID}-repair`;
+    const child = makeSnapshot({
+      jobId: childJobId,
+      status: "failed",
+      currentModuleId: "caption",
+      parentJobId: DEFAULT_JOB_ID,
+    });
+
+    parent.repairChildren = [{
+      jobId: childJobId,
+      status: "failed",
+      currentModuleId: "caption",
+      sampleCount: 2,
+      targetCount: 2,
+      createdAt: child.job.createdAt,
+      finishedAt: child.job.finishedAt,
+    }];
+
+    setJobSnapshot(api, parent);
+    api.snapshots.set(childJobId, child);
+
+    await openApp(page, { jobId: DEFAULT_JOB_ID, language: "zh-CN" });
+
+    await expect(page.getByRole("heading", { name: "修复子任务", exact: true })).toBeVisible();
+    await expect(page.getByText(`创建于 ${child.job.createdAt}`, { exact: true })).toBeVisible();
+    await expect(page.getByLabel("最近任务").locator(`option[value="${childJobId}"]`)).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "固定任务" })).toHaveCount(0);
+    await expect(page.locator(".task-monitor .task-actions").getByRole("button", { name: "删除任务并释放训练集占用" })).toBeDisabled();
+    await expect(page.getByText("请先删除修复子任务")).toBeVisible();
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect.poll(() => page.locator(".repair-tasks-panel").evaluate((element) => (
+      element.getBoundingClientRect().right <= window.innerWidth
+    ))).toBe(true);
+
+    await page.getByRole("button", { name: "打开修复任务" }).click();
+    await expect(page.getByText("修复任务", { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "返回父任务" })).toBeVisible();
+    await expect(page.locator(".task-monitor .task-actions").getByRole("button", { name: "删除任务并释放训练集占用" })).toBeEnabled();
+
+    await page.getByRole("button", { name: "返回父任务" }).click();
+    await expect(page.getByLabel("任务 ID")).toHaveValue(DEFAULT_JOB_ID);
+    await expect(page.getByRole("heading", { name: "修复子任务", exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "打开修复任务" }).click();
+
+    page.once("dialog", (dialog) => {
+      expect(dialog.message()).toBe("确认删除该任务并释放训练集占用吗？未提交进度和任务记录将被删除，且无法恢复。");
+      dialog.accept();
+    });
+    await page.locator(".task-monitor .task-actions").getByRole("button", { name: "删除任务并释放训练集占用" }).click();
+    await expect.poll(() =>
+      mutationsFor(api, "POST", `/api/jobs/${childJobId}/discard`).length,
+    ).toBe(1);
+    await expect(page.getByLabel("任务 ID")).toHaveValue(DEFAULT_JOB_ID);
+    await expect(page.getByRole("heading", { name: "修复子任务", exact: true })).toHaveCount(0);
   });
 
   test("retries the selected current-page NL issues as one child after Export succeeds", async ({ page, api }) => {
-    const snapshot = makeSnapshot({ status: "succeeded", currentModuleId: "export", schemaVersion: 8 });
+    const snapshot = makeSnapshot({ status: "succeeded", currentModuleId: "export", schemaVersion: 9 });
     snapshot.issues = [
       { issue_id: "nl-failed-1", sample_id: 1, module_id: "nl", code: "nl_api_unavailable", severity: "error", message: "provider unavailable", retriable: 0, attempt: 1 },
       { issue_id: "nl-failed-2", sample_id: 2, module_id: "nl", code: "nl_response_invalid", severity: "error", message: "invalid provider response", retriable: 0, attempt: 1 },
@@ -200,7 +254,7 @@ test.describe("task status and issue characterization", () => {
   });
 
   test("disables individual NL actions while a selected batch retry is pending", async ({ page, api }) => {
-    const snapshot = makeSnapshot({ status: "succeeded", currentModuleId: "export", schemaVersion: 8 });
+    const snapshot = makeSnapshot({ status: "succeeded", currentModuleId: "export", schemaVersion: 9 });
     snapshot.issues = [
       { issue_id: "nl-failed-1", sample_id: 1, module_id: "nl", code: "nl_api_unavailable", severity: "error", message: "provider unavailable", retriable: 0, attempt: 1 },
       { issue_id: "nl-failed-2", sample_id: 2, module_id: "nl", code: "nl_response_invalid", severity: "error", message: "invalid provider response", retriable: 0, attempt: 1 },
@@ -230,8 +284,8 @@ test.describe("task status and issue characterization", () => {
     try {
       await expect.poll(async () => (await snapshotFetchProbe(page)).started).toBeGreaterThan(initialRequests);
       const inFlightRequests = (await snapshotFetchProbe(page)).started;
-      await page.getByRole("button", { name: "Pause Caption module" }).click();
-      await expect.poll(() => mutationsFor(api, "POST", `/api/jobs/${DEFAULT_JOB_ID}/modules/caption/pause`).length).toBe(1);
+      await page.getByRole("button", { name: "Pause task" }).click();
+      await expect.poll(() => mutationsFor(api, "POST", `/api/jobs/${DEFAULT_JOB_ID}/pause`).length).toBe(1);
       await expect.poll(async () => (await snapshotFetchProbe(page)).started, { timeout: 1_500 }).toBeGreaterThan(inFlightRequests);
     } finally {
       releasePoll();
@@ -274,10 +328,10 @@ test.describe("task status and issue characterization", () => {
     await openApp(page, { jobId: taskA, language: "en" });
     await expect(page.locator(".task-monitor > .monitor-heading > .status")).toHaveText("running");
 
-    const releasePause = holdRoute(api, `POST /api/jobs/${taskA}/modules/caption/pause`);
+    const releasePause = holdRoute(api, `POST /api/jobs/${taskA}/pause`);
     try {
-      await page.getByRole("button", { name: "Pause Caption module" }).click();
-      await expect.poll(() => mutationsFor(api, "POST", `/api/jobs/${taskA}/modules/caption/pause`).length).toBe(1);
+      await page.getByRole("button", { name: "Pause task" }).click();
+      await expect.poll(() => mutationsFor(api, "POST", `/api/jobs/${taskA}/pause`).length).toBe(1);
 
       await page.getByLabel("Task ID").fill(taskB);
       await expect(page.locator(".task-monitor > .monitor-heading > .status")).toHaveText("succeeded");
@@ -290,8 +344,8 @@ test.describe("task status and issue characterization", () => {
     }
 
     await expect(page.locator(".task-monitor > .monitor-heading > .status")).toHaveText("succeeded");
-    await expect.poll(() => mutationsFor(api, "POST", `/api/jobs/${taskA}/modules/caption/pause`).length).toBe(1);
-    expect(mutationsFor(api, "POST", `/api/jobs/${taskB}/modules/caption/pause`)).toHaveLength(0);
+    await expect.poll(() => mutationsFor(api, "POST", `/api/jobs/${taskA}/pause`).length).toBe(1);
+    expect(mutationsFor(api, "POST", `/api/jobs/${taskB}/pause`)).toHaveLength(0);
   });
 
   test("routes recovery to the task selected at click time", async ({ page, api }) => {

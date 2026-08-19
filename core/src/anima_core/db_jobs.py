@@ -82,6 +82,11 @@ class JobDatabaseMixin:
         if result.rowcount != 1:
             raise KeyError(f"job does not exist: {job_id}")
 
+    def has_repair_children(self, parent_job_id: str) -> bool:
+        return self.connection.execute(
+            "SELECT 1 FROM repair_jobs WHERE parent_job_id=? LIMIT 1", (parent_job_id,)
+        ).fetchone() is not None
+
     def delete_job_control_record(self, job_id: str) -> None:
         """Delete only control-plane rows. Backup paths are never tracked/deleted here."""
         result = self.connection.execute("DELETE FROM jobs WHERE job_id=?", (job_id,))
@@ -290,16 +295,34 @@ class JobDatabaseMixin:
         ).fetchone()[0])
 
     def create_repair_link(self, repair_job_id: str, parent_job_id: str) -> None:
-        self.connection.execute(
-            "INSERT INTO repair_jobs(repair_job_id,parent_job_id,created_at) VALUES (?,?,?)",
-            (repair_job_id, parent_job_id, utc_now()),
+        result = self.connection.execute(
+            """INSERT INTO repair_jobs(repair_job_id,parent_job_id,created_at)
+               SELECT ?,?,? WHERE EXISTS (
+                   SELECT 1 FROM jobs WHERE job_id=? AND status<>'discarded'
+               )""",
+            (repair_job_id, parent_job_id, utc_now(), parent_job_id),
         )
+        if result.rowcount != 1:
+            raise ValueError("parent task is unavailable for repair")
 
     def repair_parent_job_id(self, repair_job_id: str) -> str | None:
         row = self.connection.execute(
             "SELECT parent_job_id FROM repair_jobs WHERE repair_job_id=?", (repair_job_id,)
         ).fetchone()
         return None if row is None else str(row["parent_job_id"])
+
+    def repair_children(self, parent_job_id: str) -> list[sqlite3.Row]:
+        return list(self.connection.execute(
+            """SELECT jobs.job_id,jobs.status,jobs.current_module_id,jobs.sample_count,jobs.created_at,jobs.finished_at,
+                      COUNT(repair_targets.sample_id) AS target_count
+                 FROM repair_jobs
+                 JOIN jobs ON jobs.job_id=repair_jobs.repair_job_id
+                 LEFT JOIN repair_targets ON repair_targets.repair_job_id=repair_jobs.repair_job_id
+                WHERE repair_jobs.parent_job_id=?
+                GROUP BY jobs.job_id,jobs.status,jobs.current_module_id,jobs.sample_count,jobs.created_at,jobs.finished_at
+                ORDER BY jobs.created_at DESC, jobs.job_id DESC""",
+            (parent_job_id,),
+        ))
 
     def count_repair_targets(self, repair_job_id: str) -> int:
         return int(self.connection.execute(

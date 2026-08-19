@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   addNlBudget, cancelJob, confirmNlOutcomes, confirmWorkspace, deleteNlSecret, discardJob, listNlProfiles, manualNlRetry, manualNlRetryBatch, manualNlWrite,
-  pauseModule, preflightJob, recoverJob, restoreOriginalAnnotations, resumeModule, saveNlProfile,
-  setJobPin, repairJob, saveNlSecret, startPipeline, type NlProfile, type OcrExecutionRequest, type PreflightSummary,
+  pauseJob, preflightJob, recoverJob, restoreOriginalAnnotations, resumeJob, saveNlProfile,
+  repairJob, saveNlSecret, startPipeline, type NlProfile, type OcrExecutionRequest, type PreflightSummary,
   type PipelineModuleId, type ResourceCatalogResponse, type ResourceKind,
 } from "./api";
 import { CountReviewPanel } from "./CountReviewPanel";
@@ -10,6 +10,7 @@ import { IssuePanel } from "./components/IssuePanel";
 import { makeFieldGuidanceCopy, ToggleField } from "./components/FormField";
 import { resourceSelectable } from "./components/ResourcePicker";
 import { TaskMonitor } from "./components/TaskMonitor";
+import { RepairTasksPanel } from "./components/RepairTasksPanel";
 import { WorkflowRail } from "./components/WorkflowRail";
 import { CaptionStep } from "./components/steps/CaptionStep";
 import { ClassifyStep } from "./components/steps/ClassifyStep";
@@ -29,12 +30,11 @@ import { TokenBudgetReviewPanel } from "./TokenBudgetReviewPanel";
 import "./styles.css";
 
 type StepId = "setup" | PipelineModuleId;
-type ModuleAction = `module:${PipelineModuleId}:${"pause" | "resume"}`;
 type PendingAction =
   | "preflight" | "confirm_workspace" | "start" | "repair" | "recover"
-  | "terminate" | "pin" | "discard" | "restore" | "nl_manual_retry" | "nl_manual_retry_batch" | "nl_manual_write"
-  | "nl_budget" | "nl_confirm_outcomes"
-  | "profile_save" | "credential_delete" | ModuleAction
+  | "terminate" | "discard" | "restore" | "nl_manual_retry" | "nl_manual_retry_batch" | "nl_manual_write"
+  | "nl_budget" | "nl_confirm_outcomes" | "pause" | "resume"
+  | "profile_save" | "credential_delete"
   | null;
 type ActionName = Exclude<PendingAction, null>;
 
@@ -272,6 +272,19 @@ export function App() {
     await Promise.all([refreshJobs(), refreshSnapshot(undefined, true)]);
     return result;
   });
+  const discardSelectedTask = (targetJobId: string, parentJobId: string | null) => {
+    if (!window.confirm(t("confirmDiscard"))) return;
+    void runAction("discard", async () => {
+      await discardJob(targetJobId);
+      if (parentJobId) {
+        selectJob(parentJobId);
+        await Promise.all([refreshJobs(), refreshSnapshot(parentJobId, true)]);
+      } else {
+        selectJob("");
+        await refreshJobs();
+      }
+    });
+  };
   const runPreflight = async () => {
     const distribution = draft.nl.lengthDistribution;
     const distributionValues = Object.values(distribution);
@@ -460,13 +473,14 @@ export function App() {
     currentBatch: t("currentBatch"),
     taskActions: copy.taskActions,
     activeModule: t("activeModule"),
-    pauseModule: (module: string) => t("pauseModule", { module }),
-    resumeModule: (module: string) => t("resumeModule", { module }),
+    pauseTask: t("pauseTask"),
+    resumeTask: t("resumeTask"),
     terminateTask: t("terminateTask"),
     recoverTask: t("recoverTask"),
-    pinTask: t("pinTask"),
-    unpinTask: t("unpinTask"),
     discardTask: t("discardTask"),
+    repairDeleteBlocked: t("repairDeleteBlocked"),
+    repairTask: t("repairTask"),
+    backToParentTask: t("backToParentTask"),
     additionalAttempts: t("additionalAttempts"),
     addBudget: copy.addBudget,
     pendingApiDecisions: t("pendingApiDecisions"),
@@ -512,8 +526,6 @@ export function App() {
     total: module.total,
     issueCount: module.issue_count,
     isCurrent: module.module_id === snapshot?.job.currentModuleId,
-    isFuture: (snapshot?.moduleOrder.indexOf(module.module_id as PipelineModuleId) ?? -1) > (snapshot?.moduleOrder.indexOf(snapshot.job.currentModuleId as PipelineModuleId) ?? -1),
-    controlLabel: moduleLabel(language, module.module_id),
   }));
 
   const guide = <details className="module-guide" open={openGuide} onToggle={(event) => setOpenGuide((event.target as HTMLDetailsElement).open)}>
@@ -760,9 +772,10 @@ export function App() {
         snapshot={snapshot ? {
           status: snapshot.job.status,
           currentModuleId: snapshot.job.currentModuleId ?? null,
-          pinned: snapshot.job.pinned,
           ocrRuntime: snapshot.ocrRuntime,
         } : null}
+        isRepairTask={Boolean(snapshot?.job.parentJobId)}
+        hasRepairChildren={Boolean(snapshot?.repairChildren.length)}
         loading={snapshotLoading}
         error={snapshotError}
         statusLabel={statusLabel(language, snapshot?.job.status ?? "idle")}
@@ -771,24 +784,36 @@ export function App() {
         rawE621ConvertedMessage={rawE621Converted > 0 ? t("rawE621Converted", { count: rawE621Converted }) : null}
         modules={taskMonitorModules}
         labels={taskMonitorLabels}
-        canDiscard={Boolean(snapshot && ["ready", "interrupted", "reviewing", "cancelled_recoverable", "failed"].includes(snapshot.job.status))}
+        canDiscard={Boolean(snapshot && snapshot.repairChildren.length === 0 && ["ready", "interrupted", "reviewing", "cancelled_recoverable", "failed"].includes(snapshot.job.status))}
         budget={budget}
         pendingApiDecisions={pendingApiDecisions}
         nlAwaitsDecision={nlAwaitsDecision}
         pendingActions={pendingActions}
-        onModuleControl={(moduleId, action) => void lifecycleControl(`module:${moduleId as PipelineModuleId}:${action}`, () => (
-          action === "pause" ? pauseModule(jobId, moduleId as PipelineModuleId) : resumeModule(jobId, moduleId as PipelineModuleId)
-        ))}
+        onPause={() => void lifecycleControl("pause", () => pauseJob(jobId))}
+        onResume={() => void lifecycleControl("resume", () => resumeJob(jobId))}
         onTerminate={() => { if (window.confirm(t("confirmTerminate"))) void lifecycleControl("terminate", () => cancelJob(jobId)); }}
         onRecover={() => { if (window.confirm(t("confirmRecover"))) void lifecycleControl("recover", () => recoverJob(jobId)); }}
-        onPin={() => { if (snapshot) void control("pin", () => setJobPin(jobId, !snapshot.job.pinned)); }}
-        onDiscard={() => { if (window.confirm(t("confirmDiscard"))) void control("discard", () => discardJob(jobId)); }}
+        onDiscard={() => discardSelectedTask(jobId, snapshot?.job.parentJobId ?? null)}
+        onBackToParent={() => { if (snapshot?.job.parentJobId) selectJob(snapshot.job.parentJobId); }}
         onBudgetChange={setBudget}
         onAddBudget={() => void control("nl_budget", () => addNlBudget(jobId, Number(budget)))}
         onConfirmUnknown={() => { if (window.confirm(t("confirmUnknownPrompt", { count: pendingApiDecisions }))) void control("nl_confirm_outcomes", () => confirmNlOutcomes(jobId)); }}
         onRetry={() => void refreshSnapshot()}
       />
     </div>
+    {snapshot && !snapshot.job.parentJobId && snapshot.repairChildren.length > 0 && <RepairTasksPanel
+      tasks={snapshot.repairChildren}
+      pending={isActionPending("discard")}
+      labels={{
+        title: t("repairTasks"),
+        open: t("openRepairTask"),
+        delete: t("discardTask"),
+        targets: (sampleCount, targetCount) => t("repairTargets", { sampleCount, targetCount }),
+        createdAt: (createdAt) => t("repairCreatedAt", { createdAt }),
+      }}
+      onOpen={selectJob}
+      onDelete={(childJobId) => discardSelectedTask(childJobId, jobId)}
+    />}
     {snapshot && <IssuePanel
       issues={snapshot.issues.map((item) => ({
         issueId: item.issue_id,

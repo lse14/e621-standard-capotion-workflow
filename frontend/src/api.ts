@@ -26,7 +26,7 @@ export type JobSnapshot = {
     jobId: string; status: string; currentModuleId?: string; lastEventId: number; apiBudgetExtra: number;
     configSchemaVersion: number;
     apiBudgetRevision: number; pinned: boolean; configHash: string; manifestSchemaVersion: number;
-    createdAt: string; startedAt: string | null; cancelRequestedAt: string | null; finishedAt: string | null;
+    parentJobId: string | null; createdAt: string; startedAt: string | null; cancelRequestedAt: string | null; finishedAt: string | null;
   };
   moduleOrder: ReadonlyArray<PipelineModuleId>;
   modules: ReadonlyArray<{ module_id: string; status: string; completed: number; failed: number; skipped: number; total: number; issue_count: number }>;
@@ -37,6 +37,10 @@ export type JobSnapshot = {
   issues: ReadonlyArray<{ issue_id: string; sample_id: number; module_id: string; code: string; severity: string; message: string; retriable: number; attempt: number; repair_start_module?: string; field_errors_json?: string }>;
   exportSummary: null | { format: "json" | "flat_txt" | "both"; commitStatus: string; scanned: number; valid: number; invalid: number; exported: number; skipped: number; issueCount: number; issuesPageEndpoint: string; convertedSamples: number; conversions: Record<string, number> };
   repairPreview: { eligibleTargetCount: number; estimatedApiRequests: number } | null;
+  repairChildren: ReadonlyArray<{
+    jobId: string; status: string; currentModuleId: string | null; sampleCount: number;
+    targetCount: number; createdAt: string; finishedAt: string | null;
+  }>;
   ocrRuntime: OcrRuntimeStatus | null;
   nlPendingApiDecisions: number;
   nextAfterEventId: number;

@@ -152,12 +152,14 @@ export function makeSnapshot({
   jobId = DEFAULT_JOB_ID,
   status = "ready",
   currentModuleId,
+  parentJobId = null,
   schemaVersion = 3,
   ocrRuntime = null,
 }: {
   jobId?: string;
   status?: string;
   currentModuleId?: string;
+  parentJobId?: string | null;
   schemaVersion?: number;
   ocrRuntime?: OcrRuntimeStatus | null;
 } = {}): JobSnapshot {
@@ -178,6 +180,7 @@ export function makeSnapshot({
       startedAt: null,
       cancelRequestedAt: null,
       finishedAt: null,
+      parentJobId,
     },
     moduleOrder: [...moduleOrder],
     modules: moduleOrder.map((moduleId) => ({
@@ -196,6 +199,7 @@ export function makeSnapshot({
     issues: [],
     exportSummary: null,
     repairPreview: { eligibleTargetCount: 2, estimatedApiRequests: 0 },
+    repairChildren: [],
     ocrRuntime,
     nlPendingApiDecisions: 0,
     nextAfterEventId: 7,
@@ -841,7 +845,7 @@ async function handleApiRequest(scenario: ApiScenario, route: Route, pathname: s
   if (repairMatch && method === "POST") {
     const parentJobId = decodeURIComponent(repairMatch[1]);
     const jobId = `${parentJobId}-repair`;
-    const snapshot = makeSnapshot({ jobId, status: "running", currentModuleId: "caption" });
+    const snapshot = makeSnapshot({ jobId, status: "running", currentModuleId: "caption", parentJobId });
     scenario.snapshots.set(jobId, snapshot);
     return fulfillJson(route, { jobId, parentJobId, targetCount: 2, preparedTargetCount: 2, estimatedApiRequests: 0, started: true });
   }
@@ -864,7 +868,16 @@ async function handleApiRequest(scenario: ApiScenario, route: Route, pathname: s
   }
 
   const discardMatch = pathname.match(/^\/api\/jobs\/([^/]+)\/discard$/);
-  if (discardMatch && method === "POST") return fulfillJson(route, { jobId: decodeURIComponent(discardMatch[1]), overlayDeleted: true });
+  if (discardMatch && method === "POST") {
+    const jobId = decodeURIComponent(discardMatch[1]);
+    const target = scenario.snapshots.get(jobId);
+    scenario.snapshots.delete(jobId);
+    if (target?.job.parentJobId) {
+      const parent = scenario.snapshots.get(target.job.parentJobId);
+      if (parent) parent.repairChildren = parent.repairChildren.filter((child) => child.jobId !== jobId);
+    }
+    return fulfillJson(route, { jobId, overlayDeleted: true });
+  }
 
   const profileMatch = pathname.match(/^\/api\/nl\/profiles\/([^/]+)$/);
   if (profileMatch && method === "PUT") {
