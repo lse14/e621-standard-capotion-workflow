@@ -111,13 +111,13 @@ class _ShutdownBody(BaseModel):
 
 class _SelectPathBody(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
-    purpose: Literal["source_dataset", "output_dataset", "replacement_csv"]
+    purpose: Literal["source_dataset", "output_dataset", "replacement_csv", "classification_resource_json"]
     currentPath: str | None = Field(default=None, max_length=32_767)
 
 
 @dataclass(frozen=True)
 class SelectPathRequest:
-    purpose: Literal["source_dataset", "output_dataset", "replacement_csv"]
+    purpose: Literal["source_dataset", "output_dataset", "replacement_csv", "classification_resource_json"]
     current_path: str | None
 
 

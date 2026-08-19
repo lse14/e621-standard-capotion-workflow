@@ -302,10 +302,10 @@ class PipelineTests(unittest.TestCase):
         image = dataset / "image.png"
         Image.new("RGB", (3, 3), "white").save(image)
         config = JobConfig(
-            schemaVersion=2, profile="e621", workMode="in_place",
+            schemaVersion=9, profile="e621", workMode="in_place",
             overwriteMode="incremental", sourceRoot=str(dataset),
         )
-        config.nl["promptVersion"] = "nl-default-prompt-v1"
+        config.nl["promptVersion"] = "nl-default-prompt-v4"
         config.nl["apiEnabled"] = False
         job_id = "cancelled-caption-job"
         layout = OverlayLayout.create(dataset, job_id)
@@ -313,7 +313,7 @@ class PipelineTests(unittest.TestCase):
         database = StateDatabase.open(root / "state.db")
         try:
             database.insert_job({
-                "job_id": job_id, "config_schema_version": 2, "config_json": json.dumps(config.to_dict()),
+                "job_id": job_id, "config_schema_version": 9, "config_json": json.dumps(config.to_dict()),
                 "config_hash": config.config_hash, "profile": "e621", "work_mode": "in_place",
                 "overwrite_mode": "incremental", "source_root": str(dataset), "output_root": None,
                 "dataset_root": str(dataset), "dataset_root_key": windows_key(dataset),
@@ -359,6 +359,7 @@ class PipelineTests(unittest.TestCase):
         config.countReview["enabled"] = False  # type: ignore[index]
         config.dropout["enabled"] = True
         config.dropout["quality"]["enabled"] = False
+        config.tokenBudget["enabled"] = False  # type: ignore[index]
         preparation = JobPreparationService(root / "state.db")
         job_id = preparation.preflight(config.to_dict()).jobId
         preparation.confirm_workspace(job_id, confirmed=True, confirmed_rebuild=False)
@@ -368,7 +369,7 @@ class PipelineTests(unittest.TestCase):
     def _prepared_ocr_job(
         root: Path,
         *,
-        schema_version: int = 7,
+        schema_version: int = 9,
         enabled: bool = True,
         device: str = "cuda",
     ) -> tuple[JobPreparationService, str]:
@@ -386,7 +387,7 @@ class PipelineTests(unittest.TestCase):
         config.nl["enabled"] = config.dropout["enabled"] = False
         config.countReview["enabled"] = False  # type: ignore[index]
         config.ocr["enabled"] = enabled
-        if schema_version in {7, 8}:
+        if schema_version in {7, 8, 9}:
             config.ocr["device"] = device
         preparation = JobPreparationService(root / "state.db")
         job_id = preparation.preflight(config.to_dict()).jobId
@@ -488,11 +489,10 @@ class PipelineTests(unittest.TestCase):
                 pipeline._threads.pop(job_id, None)
                 preparation.close()
 
-    def test_start_gate_skips_auto_disabled_and_legacy_ocr_configurations(self) -> None:
+    def test_start_gate_skips_auto_and_disabled_ocr_configurations(self) -> None:
         cases = (
-            ("auto", 7, True, "auto"),
-            ("disabled", 7, False, "cuda"),
-            ("legacy", 6, True, "cuda"),
+            ("auto", 9, True, "auto"),
+            ("disabled", 9, False, "cuda"),
         )
         for label, schema_version, enabled, device in cases:
             with self.subTest(label=label), tempfile.TemporaryDirectory() as temporary:
@@ -620,6 +620,7 @@ class PipelineTests(unittest.TestCase):
             config.caption["enabled"] = config.classify["enabled"] = config.replace["enabled"] = False
             config.nl["enabled"] = config.dropout["enabled"] = False
             config.countReview["enabled"] = False  # type: ignore[index]
+            config.tokenBudget["enabled"] = False  # type: ignore[index]
             preparation = JobPreparationService(root / "state.db")
             job_id = preparation.preflight(config.to_dict()).jobId
             preparation.confirm_workspace(job_id, confirmed=True, confirmed_rebuild=False)
@@ -924,9 +925,9 @@ class PipelineTests(unittest.TestCase):
                 image_bytes = image.read_bytes()
                 config = JobConfig(
                     profile="e621", workMode="in_place", overwriteMode="incremental",
-                    sourceRoot=str(dataset), schemaVersion=5,
+                    sourceRoot=str(dataset), schemaVersion=9,
                 )
-                config.nl["promptVersion"] = "nl-default-prompt-v3"
+                config.nl["promptVersion"] = "nl-default-prompt-v4"
                 config.caption["enabled"] = config.classify["enabled"] = config.replace["enabled"] = False
                 config.nl["enabled"] = config.dropout["enabled"] = False
                 config.countReview["enabled"] = False  # type: ignore[index]
@@ -989,9 +990,9 @@ class PipelineTests(unittest.TestCase):
             image_bytes = image.read_bytes()
             config = JobConfig(
                 profile="e621", workMode="in_place", overwriteMode="incremental",
-                sourceRoot=str(dataset), schemaVersion=5,
+                sourceRoot=str(dataset), schemaVersion=9,
             )
-            config.nl["promptVersion"] = "nl-default-prompt-v3"
+            config.nl["promptVersion"] = "nl-default-prompt-v4"
             config.caption["enabled"] = config.classify["enabled"] = config.replace["enabled"] = False
             config.nl["enabled"] = config.dropout["enabled"] = False
             config.countReview["enabled"] = False  # type: ignore[index]
@@ -1145,7 +1146,7 @@ class PipelineTests(unittest.TestCase):
             database = StateDatabase.open(root / "state.db")
             try:
                 scheduler = BoundedScheduler(database)
-                for module_id in ("caption", "classify", "replace"):
+                for module_id in ("caption", "classify", "replace", "ocr"):
                     scheduler.start_module(job_id, module_id, enabled=False, profile="e621")
                 scheduler.start_module(job_id, "nl", enabled=True, profile="e621")
                 lease = scheduler.claim_batch(job_id, "nl", "nl-test", str(database.get_job(job_id)["config_hash"]))[0]
@@ -1185,13 +1186,14 @@ class PipelineTests(unittest.TestCase):
             config.countReview["enabled"] = False  # type: ignore[index]
             config.dropout["enabled"] = True
             config.dropout["quality"]["enabled"] = False
+            config.tokenBudget["enabled"] = False  # type: ignore[index]
             preparation = JobPreparationService(root / "state.db")
             job_id = preparation.preflight(config.to_dict()).jobId
             preparation.confirm_workspace(job_id, confirmed=True, confirmed_rebuild=False)
             database = StateDatabase.open(root / "state.db")
             try:
                 scheduler = BoundedScheduler(database, lease_id_factory=lambda: "policy-recovery-lease")
-                for module_id in ("caption", "classify", "replace", "nl"):
+                for module_id in ("caption", "classify", "replace", "ocr", "nl"):
                     scheduler.start_module(job_id, module_id, enabled=False, profile="e621")
                 scheduler.start_module(job_id, "count_review", enabled=False, profile="e621")
                 scheduler.start_module(job_id, "dropout", enabled=True, profile="e621")
@@ -1267,13 +1269,14 @@ class PipelineTests(unittest.TestCase):
             config.countReview["enabled"] = False  # type: ignore[index]
             config.dropout["enabled"] = True
             config.dropout["quality"]["enabled"] = False
+            config.tokenBudget["enabled"] = False  # type: ignore[index]
             preparation = JobPreparationService(root / "state.db")
             job_id = preparation.preflight(config.to_dict()).jobId
             preparation.confirm_workspace(job_id, confirmed=True, confirmed_rebuild=False)
             database = StateDatabase.open(root / "state.db")
             try:
                 scheduler = BoundedScheduler(database)
-                for module_id in ("caption", "classify", "replace", "nl"):
+                for module_id in ("caption", "classify", "replace", "ocr", "nl"):
                     scheduler.start_module(job_id, module_id, enabled=False, profile="e621")
                 scheduler.start_module(job_id, "count_review", enabled=False, profile="e621")
                 scheduler.start_module(job_id, "dropout", enabled=True, profile="e621")
@@ -1284,7 +1287,7 @@ class PipelineTests(unittest.TestCase):
             pipeline = PipelineService(root / "state.db", install_root=ROOT / ".runtime-build")
             try:
                 self.assertTrue(pipeline.resume(job_id))
-                for _ in range(200):
+                for _ in range(500):
                     if not pipeline.is_running(job_id):
                         break
                     time.sleep(0.01)
@@ -1604,6 +1607,7 @@ class PipelineTests(unittest.TestCase):
                 scheduler.finish_module(job_id, "caption")
                 scheduler.start_module(job_id, "classify", enabled=False, profile="e621")
                 scheduler.start_module(job_id, "replace", enabled=False, profile="e621")
+                scheduler.start_module(job_id, "ocr", enabled=False, profile="e621")
                 scheduler.pause_future_module(job_id, "nl", total=1)
                 self.assertEqual("paused", scheduler.start_module(job_id, "nl", enabled=True, profile="e621"))
             finally:
@@ -1617,8 +1621,7 @@ class PipelineTests(unittest.TestCase):
                 database = StateDatabase.open(root / "state.db")
                 try:
                     self.assertEqual(("running", "nl"), (database.get_job(job_id)["status"], database.get_job(job_id)["current_module_id"]))
-                    with self.assertRaises(KeyError):
-                        database.module_summary(job_id, "nl")
+                    self.assertEqual("pending", database.module_summary(job_id, "nl")["status"])
                     self.assertEqual(("caption", "completed", None), (
                         database.get_sample_state(job_id, 1)["current_module_id"],
                         database.get_sample_state(job_id, 1)["status"],
@@ -1713,6 +1716,10 @@ class PipelineTests(unittest.TestCase):
                     "created_at": "now", "started_at": "now", "cancel_requested_at": None, "finished_at": None,
                 })
                 database.initialize_module_summary(job_id, "dropout", total=0, status="paused")
+                database.connection.execute(
+                    "UPDATE module_summary SET started_at=? WHERE job_id=? AND module_id='dropout'",
+                    ("2026-08-18T00:00:00Z", job_id),
+                )
             finally:
                 database.close()
 
@@ -1735,6 +1742,49 @@ class PipelineTests(unittest.TestCase):
                 try:
                     self.assertEqual("cancelled_recoverable", database.get_job(job_id)["status"])
                     self.assertEqual("running", database.module_summary(job_id, "dropout")["status"])
+                finally:
+                    database.close()
+            finally:
+                pipeline.close()
+
+    def test_zero_work_paused_resume_start_failure_preserves_summary_after_concurrent_cancellation(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            job_id = "job-zero-work-paused-start-failure"
+            database = StateDatabase.open(root / "state.db")
+            try:
+                database.insert_job({
+                    "job_id": job_id, "config_schema_version": 5, "config_json": "{}", "config_hash": "a" * 64,
+                    "profile": "e621", "work_mode": "in_place", "overwrite_mode": "incremental", "source_root": str(root),
+                    "output_root": None, "dataset_root": str(root), "dataset_root_key": str(root), "manifest_schema_version": 1,
+                    "recursive": 0, "sample_count": 0, "manifest_generated_at": "now", "status": "paused",
+                    "current_module_id": "dropout", "last_event_id": 0, "pinned": 0, "api_budget_extra": 0,
+                    "api_budget_revision": 0, "overlay_root": None, "commit_journal_path": None, "resume_status": "running",
+                    "created_at": "now", "started_at": "now", "cancel_requested_at": None, "finished_at": None,
+                })
+                database.initialize_module_summary(job_id, "dropout", total=0, status="paused")
+            finally:
+                database.close()
+
+            def fail_start(*_args: object, **_kwargs: object) -> None:
+                concurrent = StateDatabase.open(root / "state.db")
+                try:
+                    concurrent.begin_cancellation(job_id)
+                    concurrent.settle_cancellation(job_id)
+                finally:
+                    concurrent.close()
+                raise RuntimeError("thread start failed")
+
+            pipeline = PipelineService(root / "state.db", install_root=ROOT / ".runtime-build")
+            try:
+                with patch("anima_core.pipeline.threading.Thread.start", side_effect=fail_start):
+                    with self.assertRaisesRegex(RuntimeError, "thread start failed"):
+                        pipeline.resume(job_id)
+                database = StateDatabase.open(root / "state.db")
+                try:
+                    summary = database.module_summary(job_id, "dropout")
+                    self.assertEqual(0, int(summary["total"]))
+                    self.assertEqual("pending", summary["status"])
                 finally:
                     database.close()
             finally:
@@ -1832,7 +1882,7 @@ class PipelineTests(unittest.TestCase):
             database = StateDatabase.open(root / "state.db")
             try:
                 scheduler = BoundedScheduler(database)
-                for module_id in ("caption", "classify", "replace", "nl", "count_review"):
+                for module_id in ("caption", "classify", "replace", "ocr", "nl", "count_review"):
                     scheduler.start_module(job_id, module_id, enabled=False, profile="e621")
                 scheduler.start_module(job_id, "dropout", enabled=True, profile="e621")
                 database.set_module_summary(job_id, "dropout", status="paused")
@@ -1875,6 +1925,7 @@ class PipelineTests(unittest.TestCase):
             config.dropout["enabled"] = True
             config.dropout["quality"]["enabled"] = False
             config.dropout["appearanceNl"]["enabled"] = False
+            config.tokenBudget["enabled"] = False  # type: ignore[index]
             preparation = JobPreparationService(root / "state.db")
             job_id = preparation.preflight(config.to_dict()).jobId
             preparation.confirm_workspace(job_id, confirmed=True, confirmed_rebuild=False)
@@ -1904,11 +1955,7 @@ class PipelineTests(unittest.TestCase):
 
     def test_versioned_pipeline_traverses_six_or_seven_module_order(self) -> None:
         cases = (
-            (2, ("caption", "classify", "replace", "nl", "dropout", "export")),
-            (3, ("caption", "classify", "replace", "nl", "count_review", "dropout", "export")),
-            (6, ("caption", "classify", "replace", "ocr", "nl", "count_review", "dropout", "token_budget", "export")),
-            (7, ("caption", "classify", "replace", "ocr", "nl", "count_review", "dropout", "token_budget", "export")),
-            (8, ("caption", "classify", "replace", "ocr", "nl", "count_review", "dropout", "token_budget", "export")),
+            (9, ("caption", "classify", "replace", "ocr", "nl", "count_review", "dropout", "token_budget", "export")),
         )
         for schema_version, expected_order in cases:
             with self.subTest(schema_version=schema_version), tempfile.TemporaryDirectory() as temporary:
@@ -1927,12 +1974,10 @@ class PipelineTests(unittest.TestCase):
                     overwriteMode="incremental",
                     sourceRoot=str(dataset),
                     schemaVersion=schema_version,
-                    countReview=None if schema_version == 2 else {"enabled": False, "protocolVersion": "count-review-v1"},
+                    countReview={"enabled": False, "protocolVersion": "count-review-v1"},
                 )
-                if schema_version == 2:
-                    config.nl["promptVersion"] = "nl-default-prompt-v1"
-                if schema_version in (6, 7, 8):
-                    config.tokenBudget["enabled"] = False  # type: ignore[index]
+                config.nl["promptVersion"] = "nl-default-prompt-v4"
+                config.tokenBudget["enabled"] = False  # type: ignore[index]
                 config.caption["enabled"] = False
                 config.classify["enabled"] = False
                 config.replace["enabled"] = False
@@ -1946,7 +1991,9 @@ class PipelineTests(unittest.TestCase):
                     visited: list[str] = []
                     original_start_module = BoundedScheduler.start_module
 
-                    def recording_start_module(scheduler, candidate_job_id, module_id, *, enabled, profile):
+                    def recording_start_module(
+                        scheduler, candidate_job_id, module_id, *, enabled, profile=None,
+                    ):
                         if candidate_job_id == job_id:
                             visited.append(module_id)
                         return original_start_module(
@@ -1974,14 +2021,14 @@ class PipelineTests(unittest.TestCase):
                     pipeline.close()
                     preparation.close()
 
-    def test_v8_input_nl_dispatches_without_resolving_credentials(self) -> None:
+    def test_v9_input_nl_dispatches_without_resolving_credentials(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             dataset = root / "dataset"
             dataset.mkdir()
             Image.new("RGB", (3, 3), "white").save(dataset / "image.png")
             config = JobConfig(
-                schemaVersion=8,
+                schemaVersion=9,
                 profile="e621",
                 workMode="in_place",
                 overwriteMode="incremental",
@@ -2032,6 +2079,7 @@ class PipelineTests(unittest.TestCase):
             config.dropout["artist"]["enabled"] = False
             config.dropout["quality"]["enabled"] = False
             config.dropout["appearanceNl"]["enabled"] = False
+            config.tokenBudget["enabled"] = False  # type: ignore[index]
             preparation = JobPreparationService(root / "state.db")
             job_id = preparation.preflight(config.to_dict()).jobId
             preparation.confirm_workspace(job_id, confirmed=True, confirmed_rebuild=False)
@@ -2046,8 +2094,16 @@ class PipelineTests(unittest.TestCase):
             try:
                 self.assertEqual("reviewing", database.get_job(job_id)["status"])
                 summaries = {str(row["module_id"]): str(row["status"]) for row in database.module_summaries(job_id)}
-                self.assertEqual({"caption", "classify", "replace", "nl", "count_review", "dropout", "export"}, set(summaries))
-                self.assertEqual({"caption": "skipped", "classify": "skipped", "replace": "skipped", "nl": "skipped", "count_review": "skipped", "dropout": "skipped", "export": "completed_with_issues"}, summaries)
+                self.assertEqual(
+                    {"caption", "classify", "replace", "ocr", "nl", "count_review", "dropout", "token_budget", "export"},
+                    set(summaries),
+                )
+                self.assertEqual({
+                    "caption": "skipped", "classify": "skipped", "replace": "skipped",
+                    "ocr": "skipped", "nl": "skipped", "count_review": "skipped",
+                    "dropout": "skipped", "token_budget": "skipped",
+                    "export": "completed_with_issues",
+                }, summaries)
                 self.assertEqual(1, database.count("issues", job_id))
                 self.assertFalse((dataset / "image.json").exists())
                 self.assertFalse((dataset / "image.txt").exists())
@@ -2058,7 +2114,7 @@ class PipelineTests(unittest.TestCase):
                 database.close()
                 preparation.close()
 
-    def test_v6_enabled_missing_token_budget_record_blocks_before_export_transport(self) -> None:
+    def test_v9_enabled_missing_token_budget_record_blocks_before_export_transport(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             dataset = root / "dataset"
@@ -2068,7 +2124,7 @@ class PipelineTests(unittest.TestCase):
                 "quality": [], "count": "solo", "character": "", "series": "", "artist": "",
                 "appearance": [], "tags": ["smile"], "environment": [], "nl": "",
             }))
-            config = JobConfig(schemaVersion=6, profile="e621", workMode="in_place", overwriteMode="incremental", sourceRoot=str(dataset))
+            config = JobConfig(schemaVersion=9, profile="e621", workMode="in_place", overwriteMode="incremental", sourceRoot=str(dataset))
             config.caption["enabled"] = config.classify["enabled"] = config.replace["enabled"] = config.ocr["enabled"] = config.nl["enabled"] = config.dropout["enabled"] = False
             config.countReview["enabled"] = False  # type: ignore[index]
             preparation = JobPreparationService(root / "state.db")
@@ -2085,7 +2141,7 @@ class PipelineTests(unittest.TestCase):
                 database.close()
                 preparation.close()
 
-    def test_v7_enabled_missing_token_budget_record_blocks_before_export_transport(self) -> None:
+    def test_v9_enabled_missing_token_budget_record_blocks_before_export_transport(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             dataset = root / "dataset"
@@ -2095,7 +2151,7 @@ class PipelineTests(unittest.TestCase):
                 "quality": [], "count": "solo", "character": "", "series": "", "artist": "",
                 "appearance": [], "tags": ["smile"], "environment": [], "nl": "",
             }))
-            config = JobConfig(schemaVersion=7, profile="e621", workMode="in_place", overwriteMode="incremental", sourceRoot=str(dataset))
+            config = JobConfig(schemaVersion=9, profile="e621", workMode="in_place", overwriteMode="incremental", sourceRoot=str(dataset))
             config.caption["enabled"] = config.classify["enabled"] = config.replace["enabled"] = config.ocr["enabled"] = config.nl["enabled"] = config.dropout["enabled"] = False
             config.countReview["enabled"] = False  # type: ignore[index]
             preparation = JobPreparationService(root / "state.db")
@@ -2121,7 +2177,7 @@ class PipelineTests(unittest.TestCase):
                 "quality": [], "count": "solo", "character": "", "series": "", "artist": "",
                 "appearance": [], "tags": ["smile"], "environment": [], "nl": "",
             }))
-            config = JobConfig(schemaVersion=6, profile="e621", workMode="in_place", overwriteMode="incremental", sourceRoot=str(dataset))
+            config = JobConfig(schemaVersion=9, profile="e621", workMode="in_place", overwriteMode="incremental", sourceRoot=str(dataset))
             config.caption["enabled"] = config.classify["enabled"] = config.replace["enabled"] = config.ocr["enabled"] = config.nl["enabled"] = config.dropout["enabled"] = False
             config.countReview["enabled"] = False  # type: ignore[index]
             preparation = JobPreparationService(root / "state.db")
@@ -2154,7 +2210,7 @@ class PipelineTests(unittest.TestCase):
                     pipeline.close()
                 preparation.close()
 
-    def test_v6_overflow_blocker_does_not_create_a_second_export_gate_issue(self) -> None:
+    def test_v9_overflow_blocker_does_not_create_a_second_export_gate_issue(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             dataset = root / "dataset"
@@ -2164,7 +2220,7 @@ class PipelineTests(unittest.TestCase):
                 "quality": [], "count": "solo", "character": "", "series": "", "artist": "",
                 "appearance": [], "tags": ["smile"], "environment": [], "nl": "",
             }))
-            config = JobConfig(schemaVersion=6, profile="e621", workMode="in_place", overwriteMode="incremental", sourceRoot=str(dataset))
+            config = JobConfig(schemaVersion=9, profile="e621", workMode="in_place", overwriteMode="incremental", sourceRoot=str(dataset))
             config.caption["enabled"] = config.classify["enabled"] = config.replace["enabled"] = config.ocr["enabled"] = config.nl["enabled"] = config.dropout["enabled"] = False
             config.countReview["enabled"] = False  # type: ignore[index]
             preparation = JobPreparationService(root / "state.db")
@@ -2185,7 +2241,7 @@ class PipelineTests(unittest.TestCase):
                 database.close()
                 preparation.close()
 
-    def test_v6_disabled_token_budget_skips_runtime_and_overlay_before_export(self) -> None:
+    def test_v9_disabled_token_budget_skips_runtime_and_overlay_before_export(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             dataset = root / "dataset"
@@ -2195,7 +2251,7 @@ class PipelineTests(unittest.TestCase):
                 "quality": [], "count": "solo", "character": "", "series": "", "artist": "",
                 "appearance": [], "tags": ["smile"], "environment": [], "nl": "",
             }))
-            config = JobConfig(schemaVersion=6, profile="e621", workMode="in_place", overwriteMode="incremental", sourceRoot=str(dataset))
+            config = JobConfig(schemaVersion=9, profile="e621", workMode="in_place", overwriteMode="incremental", sourceRoot=str(dataset))
             config.caption["enabled"] = config.classify["enabled"] = config.replace["enabled"] = config.ocr["enabled"] = config.nl["enabled"] = config.dropout["enabled"] = False
             config.countReview["enabled"] = False  # type: ignore[index]
             config.tokenBudget["enabled"] = False  # type: ignore[index]
@@ -2219,7 +2275,7 @@ class PipelineTests(unittest.TestCase):
                 pipeline.close()
                 preparation.close()
 
-    def test_v6_token_budget_export_gate_accepts_json_and_both_with_the_same_flat_text_record(self) -> None:
+    def test_v9_token_budget_export_gate_accepts_json_and_both_with_the_same_flat_text_record(self) -> None:
         for export_format in ("json", "both"):
             with self.subTest(export_format=export_format), tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary)
@@ -2228,7 +2284,7 @@ class PipelineTests(unittest.TestCase):
                 Image.new("RGB", (3, 3), "white").save(dataset / "image.png")
                 annotation = {"quality": [], "count": "solo", "character": "", "series": "", "artist": "", "appearance": [], "tags": ["smile"], "environment": [], "nl": ""}
                 (dataset / "image.json").write_bytes(serialize_annotation_json(annotation))
-                config = JobConfig(schemaVersion=6, profile="e621", workMode="in_place", overwriteMode="incremental", sourceRoot=str(dataset))
+                config = JobConfig(schemaVersion=9, profile="e621", workMode="in_place", overwriteMode="incremental", sourceRoot=str(dataset))
                 config.caption["enabled"] = config.classify["enabled"] = config.replace["enabled"] = config.ocr["enabled"] = config.nl["enabled"] = config.dropout["enabled"] = False
                 config.countReview["enabled"] = False  # type: ignore[index]
                 config.export["format"] = export_format
@@ -2256,7 +2312,7 @@ class PipelineTests(unittest.TestCase):
                     database.close()
                     preparation.close()
 
-    def test_v6_token_budget_export_gate_rejects_over_limit_record_before_export(self) -> None:
+    def test_v9_token_budget_export_gate_rejects_over_limit_record_before_export(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             dataset = root / "dataset"
@@ -2264,7 +2320,7 @@ class PipelineTests(unittest.TestCase):
             Image.new("RGB", (3, 3), "white").save(dataset / "image.png")
             annotation = {"quality": [], "count": "solo", "character": "", "series": "", "artist": "", "appearance": [], "tags": ["smile"], "environment": [], "nl": ""}
             (dataset / "image.json").write_bytes(serialize_annotation_json(annotation))
-            config = JobConfig(schemaVersion=6, profile="e621", workMode="in_place", overwriteMode="incremental", sourceRoot=str(dataset))
+            config = JobConfig(schemaVersion=9, profile="e621", workMode="in_place", overwriteMode="incremental", sourceRoot=str(dataset))
             config.caption["enabled"] = config.classify["enabled"] = config.replace["enabled"] = config.ocr["enabled"] = config.nl["enabled"] = config.dropout["enabled"] = False
             config.countReview["enabled"] = False  # type: ignore[index]
             preparation = JobPreparationService(root / "state.db")
@@ -2307,7 +2363,7 @@ class PipelineTests(unittest.TestCase):
                 "appearance": [], "tags": ["smile"], "environment": [], "nl": "",
             }
             (dataset / "image.json").write_bytes(serialize_annotation_json(annotation))
-            config = JobConfig(schemaVersion=6, profile="e621", workMode="in_place", overwriteMode="incremental", sourceRoot=str(dataset))
+            config = JobConfig(schemaVersion=9, profile="e621", workMode="in_place", overwriteMode="incremental", sourceRoot=str(dataset))
             config.caption["enabled"] = config.classify["enabled"] = config.replace["enabled"] = config.ocr["enabled"] = config.nl["enabled"] = config.dropout["enabled"] = False
             config.countReview["enabled"] = False  # type: ignore[index]
             preparation = JobPreparationService(root / "state.db")
@@ -2400,7 +2456,7 @@ class PipelineTests(unittest.TestCase):
                 "quality": [], "count": "solo", "character": "", "series": "", "artist": "",
                 "appearance": [], "tags": ["smile"], "environment": [], "nl": "",
             }))
-            config = JobConfig(schemaVersion=6, profile="e621", workMode="in_place", overwriteMode="incremental", sourceRoot=str(dataset))
+            config = JobConfig(schemaVersion=9, profile="e621", workMode="in_place", overwriteMode="incremental", sourceRoot=str(dataset))
             config.caption["enabled"] = config.classify["enabled"] = config.replace["enabled"] = config.ocr["enabled"] = config.nl["enabled"] = config.dropout["enabled"] = False
             config.countReview["enabled"] = False  # type: ignore[index]
             preparation = JobPreparationService(root / "state.db")

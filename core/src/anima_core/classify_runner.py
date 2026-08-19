@@ -32,7 +32,6 @@ from .contracts import (
     SampleIssue,
     WorkLease,
     job_config_supports_caption_input_txt_mode,
-    profile_supports_job_config_schema,
     sha256_json,
 )
 from .db import StateDatabase
@@ -136,14 +135,17 @@ class ClassifyRunner:
         classify = config.get("classify")
         caption = config.get("caption")
         config_schema_version = config.get("schemaVersion")
-        profile = job["profile"]
-        required_classify = {"enabled", "overwriteJson", "overwriteCount", "wikiDataSourceId"}
+        required_classify = {
+            "enabled", "indexMode", "overwriteJson", "overwriteCount", "wikiDataSourceId",
+            "dictionaryEntryCount", "resourceProfile", "resourceId",
+            "resourceManifestRelativePath", "resourceFingerprint",
+        }
         allowed_classify = required_classify | {
-            "resourceId", "resourceManifestRelativePath", "resourceFingerprint"
+            "customResourcePath", "customResourceContentSha256",
         }
         if (
-            not profile_supports_job_config_schema(profile, config_schema_version)
-            or config.get("profile") != profile
+            config_schema_version != 9
+            or "profile" in config
             or config_schema_version != int(job["config_schema_version"])
             or not isinstance(classify, dict) or not required_classify.issubset(classify)
             or set(classify) - allowed_classify
@@ -170,9 +172,15 @@ class ClassifyRunner:
             )
         except ClassifyResourceError as exc:
             raise self._fatal("classify_resource_invalid", f"core resource validation failed: {exc}") from exc
-        if manifest.profile != profile:
-            raise self._fatal("classify_resource_invalid", "resource profile does not match JobConfig")
-        if manifest.wikiDataSourceId != classify["wikiDataSourceId"]:
+        profile = manifest.profile
+        if (
+            classify.get("resourceId") != manifest.resourceId
+            or classify.get("resourceManifestRelativePath") != self.resource_manifest_relative_path
+            or classify.get("resourceFingerprint") != self.resource_fingerprint
+            or classify.get("resourceProfile") != profile
+            or classify.get("dictionaryEntryCount") != manifest.dictionaryEntryCount
+            or manifest.wikiDataSourceId != classify["wikiDataSourceId"]
+        ):
             raise self._fatal("classify_resource_invalid", "resource Wiki data source does not match JobConfig")
         self._expected_entry_count = manifest.dictionaryEntryCount
         self._expected_wiki_data_source_id = manifest.wikiDataSourceId

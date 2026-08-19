@@ -65,6 +65,7 @@ dt { color: #5d6d77; } dd { margin: 0; color: #25343d; font-weight: 600; overflo
 .step-intro p, .hint { color: #63747e; font-size: 13px; }
 .profile-selector { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; margin-bottom: 18px; }
 .top-profile-selector { max-width: 1440px; justify-content: center; margin: 16px auto 0; padding: 0 24px; }
+.setup-profile-selector { grid-column: 1 / -1; margin: 0; }
 .profile-selector > span { color: #485865; font-size: 13px; font-weight: 700; }
 .profile-selector > small { flex-basis: 100%; line-height: 1.45; }
 .profile-switch { display: inline-grid; grid-template-columns: repeat(2, minmax(92px, 1fr)); min-width: 220px; overflow: hidden; border: 1px solid #aab6be; border-radius: 5px; background: #fff; }

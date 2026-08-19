@@ -18,7 +18,6 @@ export type CaptionStepProps = {
   taskLocked: boolean;
   rebuild: boolean;
   language: UiLanguage;
-  annotationProfile: string;
   resources: ResourcePickerProps["resources"];
   resourcesLoading: boolean;
   resourceError: string | null;
@@ -40,7 +39,7 @@ export type CaptionStepProps = {
 };
 
 export function CaptionStep({
-  draft, defaults, taskLocked, rebuild, language, annotationProfile, resources, resourcesLoading, resourceError, invalidResourceCount,
+  draft, defaults, taskLocked, rebuild, language, resources, resourcesLoading, resourceError, invalidResourceCount,
   resourcePickerCopy, selectedTagger, triggerInput, t, guidanceCopy, copy, onCaptionChange, onInputTxtModeChange, onCaptionFormatChange, onSelectTagger,
   onRefreshResources, onThresholdModeChange, onCategoryThresholdChange, onTriggerInputChange,
 }: CaptionStepProps) {
@@ -59,7 +58,7 @@ export function CaptionStep({
     {!inputTxtNl && <ToggleField id="caption-tagger-fallback" label={t("taggerFallbackOnMissingTxt")} checked={draft.caption.taggerFallbackOnMissingTxt} disabled={captionOff} onChange={(taggerFallbackOnMissingTxt) => onCaptionChange({ taggerFallbackOnMissingTxt })} copy={guidanceCopy} guidance={{ description: t("fieldHelp_taggerFallbackOnMissingTxt"), defaultValue: defaults.caption.taggerFallbackOnMissingTxt ? t("fieldEnabled") : t("fieldDisabled") }} />}
     <ResourcePicker
       id="caption-tagging-model"
-      label={copy.captionModel} language={language} profile={annotationProfile} selectedId={draft.caption.resourceId ?? ""} resources={resources}
+      label={copy.captionModel} language={language} selectedId={draft.caption.resourceId ?? ""} resources={resources}
       loading={resourcesLoading} error={resourceError} invalidCount={invalidResourceCount}
       guidance={{ description: t("fieldHelp_captionModel") }} guidanceCopy={guidanceCopy}
       selectionDisabled={captionOff} refreshDisabled={taskLocked} note={copy.captionModelHelp} copy={resourcePickerCopy}

@@ -42,6 +42,24 @@ test.describe("workflow field guidance foundation", () => {
 });
 
 test.describe("workflow guidance for resource-backed steps", () => {
+  test("uses independent resources without a task annotation profile", async ({ page }) => {
+    await openApp(page, { language: "en" });
+    const setup = page.locator('[data-config-surface="setup"]');
+    await expect(setup.getByText("Annotation profile", { exact: true })).toHaveCount(0);
+    await expect(setup.getByRole("button", { name: "E621", exact: true })).toHaveCount(0);
+    await expect(setup.getByRole("button", { name: "Danbooru", exact: true })).toHaveCount(0);
+
+    await page.locator(".workflow-rail").getByRole("button", { name: /Classify/ }).click();
+    await expect(page.getByRole("button", { name: "Bundled resource", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Custom resource", exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Custom resource", exact: true }).click();
+    await expect(page.getByLabel("Classification resource.json", { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Select path", exact: true })).toBeVisible();
+
+    await page.locator(".workflow-rail").getByRole("button", { name: /Replace/ }).click();
+    await expect(page.getByRole("checkbox", { name: "Enable E621 replacement", exact: true })).toBeChecked();
+  });
+
   test("shows the selected resource explanation and profile recommendation", async ({ page }) => {
     await openApp(page, { language: "en" });
     await page.locator(".workflow-rail").getByRole("button", { name: /Caption/ }).click();
@@ -49,9 +67,9 @@ test.describe("workflow guidance for resource-backed steps", () => {
     await info.click();
     await expect(page.getByRole("tooltip")).toContainText("Recommended: E621 tagger");
 
-    await page.getByRole("button", { name: "Danbooru", exact: true }).click();
-    await info.click();
-    await expect(page.getByRole("tooltip")).toContainText("Recommended: Danbooru tagger");
+    await page.locator(".workflow-rail").getByRole("button", { name: /Classify/ }).click();
+    await page.getByRole("button", { name: "Classification and Count index information" }).click();
+    await expect(page.getByRole("tooltip")).toContainText("Recommended: E621 classify index");
   });
 
   test("wraps every visible Caption, Classify, and Replace control in a setting field", async ({ page }) => {
@@ -104,7 +122,7 @@ test.describe("workflow guidance for remaining modules", () => {
   test("separates Token Budget defaults from the tokenizer range", async ({ page, api }) => {
     const tokenizer = api.resources.resources.find((item) => item.resourceId === "tokenizer-qwen3-0.6b-anima-v1");
     if (!tokenizer) throw new Error("tokenizer fixture missing");
-    tokenizer.defaultForProfiles = ["shared"];
+    tokenizer.default = true;
     await openApp(page, { language: "en" });
     await page.locator(".workflow-rail").getByRole("button", { name: /Token Budget/ }).click();
     await page.getByRole("button", { name: "Maximum training tokens information" }).click();

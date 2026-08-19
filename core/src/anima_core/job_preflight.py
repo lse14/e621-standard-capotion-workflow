@@ -6,7 +6,6 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from .contracts import (
-    RESOURCE_REFERENCE_FIELDS,
     CaptionFormatPolicy,
     ImageDecodePolicy,
     JobConfig,
@@ -19,6 +18,12 @@ from .contracts import (
     validate_job_config,
 )
 from .custom_replace_index import CustomReplaceIndex, CustomReplaceIndexError, inspect_custom_replace_index
+from .custom_classification_resource import (
+    CustomClassificationResource,
+    CustomClassificationResourceError,
+    freeze_custom_classification_resource,
+    inspect_custom_classification_resource,
+)
 from .db import StateDatabase, assert_database_outside_datasets
 from .locks import DatasetLock, DatasetLockError
 from .manifest import ManifestBuilder, ManifestError
@@ -37,7 +42,6 @@ from .resource_catalog import (
     ResourceCatalogSnapshot,
     ResourceKind,
     ResourcePackage,
-    danbooru_resource_install_message,
     default_resource_library_root,
     verify_tagger_dictionary_compatibility,
 )
@@ -92,14 +96,25 @@ def config_from_dict(value: object) -> JobConfig:
         image_decode = value["imageDecode"]
         if not isinstance(caption_format, dict) or not isinstance(image_decode, dict):
             raise TypeError("nested policy is invalid")
-        schema_version = value.get("schemaVersion", 2)
+        schema_version = value.get("schemaVersion")
+        if schema_version != 9:
+            raise JobPreflightError(
+                "legacy JobConfig is incompatible; reinitialize the state database and create a new task"
+            )
+        allowed_fields = {
+            "schemaVersion", "workMode", "overwriteMode", "sourceRoot", "outputRoot",
+            "annotationBackup", "recursive", "captionFormat", "imageDecode", "caption",
+            "classify", "replace", "ocr", "nl", "countReview", "dropout", "tokenBudget", "export",
+        }
+        if set(value) - allowed_fields:
+            raise JobPreflightError("JobConfig shape is invalid; task profile is not supported by schema v9")
         if not job_config_supports_ocr(schema_version) and "ocr" in value:
             raise JobPreflightError("OCR is only supported by JobConfig v5 through v7")
         count_review = value.get("countReview")
         ocr = value.get("ocr")
         config = JobConfig(
-            profile=value["profile"], workMode=value["workMode"], overwriteMode=value["overwriteMode"],
-            sourceRoot=value["sourceRoot"], outputRoot=value.get("outputRoot"), annotationBackup=value.get("annotationBackup", "required"),
+            workMode=value["workMode"], overwriteMode=value["overwriteMode"], sourceRoot=value["sourceRoot"],
+            outputRoot=value.get("outputRoot"), annotationBackup=value.get("annotationBackup", "required"),
             recursive=value["recursive"], captionFormat=CaptionFormatPolicy(**{**caption_format, "triggerTerms": tuple(caption_format.get("triggerTerms", ())) }),
             imageDecode=ImageDecodePolicy(**image_decode), caption=dict(value["caption"]), classify=dict(value["classify"]),
             replace=dict(value["replace"]), ocr=dict(ocr) if ocr is not None else {}, nl=dict(value["nl"]),
@@ -109,7 +124,10 @@ def config_from_dict(value: object) -> JobConfig:
         )
     except (KeyError, TypeError) as exc:
         raise JobPreflightError("JobConfig shape is invalid") from exc
-    validate_job_config(config)
+    try:
+        validate_job_config(config)
+    except ValueError as exc:
+        raise JobPreflightError(str(exc)) from exc
     if _nl_api_work_enabled(config) and not isinstance(config.nl.get("systemPrompt"), str):
         raise JobPreflightError("NL system prompt is invalid")
     if _nl_api_work_enabled(config) and not str(config.nl.get("systemPrompt", "")).strip():
@@ -148,7 +166,11 @@ class JobPreparationService:
             sections.append(dropout.get("quality"))
         if any(
             isinstance(section, dict)
-            and ({"resourceManifestRelativePath", "resourceFingerprint", "contextLimit"} & set(section))
+            and ({
+                "resourceManifestRelativePath", "resourceFingerprint", "contextLimit",
+                "wikiDataSourceId", "dictionaryEntryCount", "resourceProfile",
+                "customResourceContentSha256",
+            } & set(section))
             for section in sections
         ):
             raise JobPreflightError("resource path and fingerprint are assigned by preflight")
@@ -178,7 +200,7 @@ class JobPreparationService:
             and config.tokenBudget.get("enabled") is True
         )
         snapshot = self.resource_catalog.scan(include_tokenizers=token_budget_enabled)
-        profile_defaults = snapshot.defaults_for(config.profile)
+        defaults = snapshot.defaults_for()
         selected: dict[str, ResourcePackage] = {}
 
         def resolve(
@@ -188,20 +210,8 @@ class JobPreparationService:
             default_key: str,
             active: bool,
         ) -> ResourcePackage:
-            resource_id = self._resource_id(section, profile_defaults[default_key], name)
-            try:
-                package = snapshot.package(
-                    kind,
-                    resource_id,
-                    verify_hashes=active,
-                    profile=config.profile,
-                )
-            except ResourceCatalogError as exc:
-                if config.profile == "danbooru" and kind in {"tagging-model", "classification-index"}:
-                    raise ResourceCatalogError(
-                        danbooru_resource_install_message(kind, resource_id)
-                    ) from exc
-                raise
+            resource_id = self._resource_id(section, defaults[default_key], name)
+            package = snapshot.package(kind, resource_id, verify_hashes=active)
             frozen_path = section.get("resourceManifestRelativePath")
             frozen_fingerprint = section.get("resourceFingerprint")
             if freeze or (frozen_path is None and frozen_fingerprint is None):
@@ -218,11 +228,35 @@ class JobPreparationService:
         caption = resolve(
             "caption", "tagging-model", config.caption, "taggingModel", config.caption.get("enabled") is True,
         )
-        classify = resolve(
-            "classify", "classification-index", config.classify, "classificationIndex",
-            config.classify.get("enabled") is True or config.caption.get("enabled") is True,
-        )
-        config.classify["wikiDataSourceId"] = classify.metadata["wikiDataSourceId"]
+        if config.classify.get("indexMode") == "custom":
+            custom_path = config.classify.get("customResourcePath")
+            if not isinstance(custom_path, str):
+                raise ResourceCatalogError("custom classification resource path is invalid")
+            inspected = inspect_custom_classification_resource(custom_path)
+            classify = inspected.package
+            expected_identity = {
+                "resourceId": classify.resource_id,
+                "resourceFingerprint": classify.fingerprint,
+                "resourceProfile": classify.profile,
+                "dictionaryEntryCount": classify.metadata["dictionaryEntryCount"],
+                "wikiDataSourceId": classify.metadata["wikiDataSourceId"],
+                "customResourceContentSha256": inspected.content_sha256,
+            }
+            if freeze:
+                config.classify.update(expected_identity)
+            elif any(config.classify.get(key) != value for key, value in expected_identity.items()):
+                raise ResourceCatalogError(
+                    "custom classification resource changed after preflight; run preflight again"
+                )
+            selected["classify"] = classify
+        else:
+            classify = resolve(
+                "classify", "classification-index", config.classify, "classificationIndex",
+                config.classify.get("enabled") is True or config.caption.get("enabled") is True,
+            )
+            config.classify["wikiDataSourceId"] = classify.metadata["wikiDataSourceId"]
+            config.classify["dictionaryEntryCount"] = classify.metadata["dictionaryEntryCount"]
+            config.classify["resourceProfile"] = classify.profile
         if config.caption.get("enabled") is True:
             caption.verify_files(verify_hashes=True)
             classify.verify_files(verify_hashes=True)
@@ -296,10 +330,7 @@ class JobPreparationService:
                 raise ResourceCatalogError("tokenBudget maxTokens must not exceed contextLimit")
             selected["tokenBudget"] = tokenizer_package
         validate_job_config(config, adjustable_categories=caption.adjustable_categories)
-        if config.profile == "danbooru":
-            for field_name in RESOURCE_REFERENCE_FIELDS:
-                config.replace.pop(field_name, None)
-        elif config.replace.get("indexMode") == "bundled":
+        if config.replace.get("indexMode") == "bundled":
             resolve(
                 "replace", "replacement-index", config.replace, "replacementIndex",
                 config.replace.get("enabled") is True,
@@ -329,7 +360,7 @@ class JobPreparationService:
     def _job_row(job_id: str, config: JobConfig, dataset_root: Path) -> dict[str, object]:
         return {
             "job_id": job_id, "config_schema_version": config.schemaVersion, "config_json": json.dumps(config.to_dict(), ensure_ascii=False),
-            "config_hash": config.config_hash, "profile": config.profile, "work_mode": config.workMode,
+            "config_hash": config.config_hash, "work_mode": config.workMode,
             "overwrite_mode": config.overwriteMode, "source_root": config.sourceRoot, "output_root": config.outputRoot,
             "dataset_root": str(dataset_root), "dataset_root_key": windows_key(dataset_root), "manifest_schema_version": 1,
             "recursive": int(config.recursive), "sample_count": 0, "manifest_generated_at": None, "status": "preflighting",
@@ -477,7 +508,7 @@ class JobPreparationService:
                     ocr_execution or OcrExecutionRequestV1.auto(),
                 )
             builder = ManifestBuilder(
-                source.value, recursive=config.recursive, profile=config.profile,
+                source.value, recursive=config.recursive, profile=str(config.classify["resourceProfile"]),
                 invalid_image_action=config.imageDecode.invalidImageAction,
             )
             builder.scan_into(database, job_id)
@@ -493,14 +524,12 @@ class JobPreparationService:
                 self._validate_character_manifest(database, job_id)
             config = self._freeze_nl_attempt_budget(database, job_id, config, scoped)
             database.set_job_status(job_id, "ready")
-            replace_summary = None
-            if config.profile == "e621":
-                replace_summary = replace_index.summary() if replace_index else {
-                    "mode": "bundled",
-                    "resourceId": selected_resources["replace"].resource_id,
-                    "sha256": selected_resources["replace"].fingerprint,
-                    "ruleCount": selected_resources["replace"].metadata["ruleCount"],
-                }
+            replace_summary = replace_index.summary() if replace_index else {
+                "mode": "bundled",
+                "resourceId": selected_resources["replace"].resource_id,
+                "sha256": selected_resources["replace"].fingerprint,
+                "ruleCount": selected_resources["replace"].metadata["ruleCount"],
+            }
             return PreflightSummary(
                 job_id, samples, scoped, samples - scoped, int(counts["txt"]), int(counts["json"]), config.config_hash,
                 replace_summary,
@@ -530,7 +559,12 @@ class JobPreparationService:
                 raise JobPreflightError("only a ready preflight job can prepare a workspace")
             config = config_from_dict(json.loads(str(job["config_json"])))
             previous_hash = config.config_hash
-            self._resolve_resources(config, freeze=False)
+            try:
+                self._resolve_resources(config, freeze=False)
+            except CustomClassificationResourceError as exc:
+                raise JobPreflightError(
+                    "custom classification resource changed after preflight; run preflight again"
+                ) from exc
             if config.config_hash != previous_hash:
                 database.update_preflight_config(
                     job_id,
@@ -559,6 +593,34 @@ class JobPreparationService:
             if job_config_supports_ocr_device(config.schemaVersion) and config.ocr.get("enabled") is True:
                 request = read_execution_request(self._preflight_ocr_request_path(job_id))
                 write_execution_request(layout.resource_path("ocr-execution-request-v1.json"), request)
+            if config.classify.get("indexMode") == "custom":
+                current = inspect_custom_classification_resource(str(config.classify["customResourcePath"]))
+                if (
+                    current.package.fingerprint != config.classify.get("resourceFingerprint")
+                    or current.content_sha256 != config.classify.get("customResourceContentSha256")
+                ):
+                    raise JobPreflightError(
+                        "custom classification resource changed after preflight; run preflight again"
+                    )
+                manifest_relative_path, frozen_package = freeze_custom_classification_resource(layout, current)
+                expected_hash = config.config_hash
+                config.classify.pop("customResourcePath", None)
+                config.classify.pop("customResourceContentSha256", None)
+                config.classify.update({
+                    "resourceId": frozen_package.resource_id,
+                    "resourceManifestRelativePath": manifest_relative_path,
+                    "resourceFingerprint": frozen_package.fingerprint,
+                    "wikiDataSourceId": frozen_package.metadata["wikiDataSourceId"],
+                    "dictionaryEntryCount": frozen_package.metadata["dictionaryEntryCount"],
+                    "resourceProfile": frozen_package.profile,
+                })
+                validate_job_config(config)
+                database.update_preflight_config(
+                    job_id,
+                    expected_config_hash=expected_hash,
+                    config_json=json.dumps(config.to_dict(), ensure_ascii=False),
+                    config_hash=config.config_hash,
+                )
             if config.replace["indexMode"] == "custom":
                 current = inspect_custom_replace_index(str(config.replace["customIndexPath"]))
                 if current.sha256 != config.replace["customIndexSha256"] or current.rule_count != config.replace["customIndexRuleCount"]:

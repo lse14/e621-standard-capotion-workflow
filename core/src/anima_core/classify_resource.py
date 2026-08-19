@@ -326,6 +326,7 @@ def load_classify_resource_from_install(
     expected_fingerprint: str,
     *,
     verify_hashes: bool = True,
+    allow_external_package: bool = False,
 ) -> tuple[ClassifyResourceManifestV1 | CatalogClassifyResourceIdentity, dict[str, Path]]:
     try:
         install = canonicalize(install_root, must_exist=True, directory=True).value
@@ -339,7 +340,12 @@ def load_classify_resource_from_install(
         raise ClassifyResourceError("classify resource manifest is unreadable") from exc
     if isinstance(raw, dict) and raw.get("kind") == "classification-index":
         try:
-            package = ResourcePackage.load(install, manifest_path, "classification-index")
+            package = ResourcePackage.load(
+                install,
+                manifest_path,
+                "classification-index",
+                allow_external_package=allow_external_package,
+            )
             if package.fingerprint != _sha256(expected_fingerprint, "expected resource fingerprint"):
                 raise ClassifyResourceError("selected classify resource fingerprint does not match the manifest")
             package.verify_files(verify_hashes=verify_hashes)

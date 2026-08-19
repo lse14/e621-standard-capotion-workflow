@@ -16,7 +16,6 @@ from .contracts import (
     job_config_supports_nl_v4,
     job_config_supports_ocr,
     job_config_supports_ocr_device,
-    profile_supports_job_config_schema,
     sha256_json,
 )
 from .db import StateDatabase
@@ -225,7 +224,6 @@ class NlRunner:
         except json.JSONDecodeError as exc:
             raise self._fatal("nl_protocol_violation", "frozen JobConfig is invalid JSON") from exc
         config_schema_version = config.get("schemaVersion") if isinstance(config, dict) else None
-        profile = job["profile"]
         expected_prompt_version = (
             "nl-default-prompt-v1" if config_schema_version == 2
             else "nl-default-prompt-v4" if job_config_supports_nl_v4(config_schema_version)
@@ -235,8 +233,8 @@ class NlRunner:
         if (
             not isinstance(config, dict)
             or sha256_json(config) != job["config_hash"]
-            or config.get("profile") != profile
-            or not profile_supports_job_config_schema(profile, config_schema_version)
+            or config_schema_version != 9
+            or "profile" in config
             or not isinstance(config.get("nl"), dict)
             or config_schema_version != int(job["config_schema_version"])
             or config["nl"].get("promptVersion") != expected_prompt_version

@@ -10,7 +10,6 @@ export type PolicyStepProps = {
   draft: Pick<Draft, "dropout">;
   defaults: Pick<Draft, "dropout">;
   taskLocked: boolean;
-  annotationProfile: string;
   language: UiLanguage;
   resources: ResourcePickerProps["resources"];
   resourcesLoading: boolean;
@@ -29,7 +28,7 @@ export type PolicyStepProps = {
 };
 
 export function PolicyStep({
-  draft, defaults, taskLocked, annotationProfile, language, resources, resourcesLoading, resourceError, invalidResourceCount,
+  draft, defaults, taskLocked, language, resources, resourcesLoading, resourceError, invalidResourceCount,
   resourcePickerCopy, t, guidanceCopy, copy, onDropoutChange, onArtistChange, onQualityChange, onAppearanceNlChange,
   onAppearanceProbabilityChange, onRefreshResources,
 }: PolicyStepProps) {
@@ -51,7 +50,7 @@ export function PolicyStep({
     </div>
     {draft.dropout.enabled && draft.dropout.quality.enabled && <ResourcePicker
       id="policy-quality-model"
-      label={copy.qualityModel} language={language} profile={annotationProfile} selectedId={draft.dropout.quality.resourceId ?? ""} resources={resources}
+      label={copy.qualityModel} language={language} selectedId={draft.dropout.quality.resourceId ?? ""} resources={resources}
       loading={resourcesLoading} error={resourceError} invalidCount={invalidResourceCount}
       guidance={{ description: t("fieldHelp_qualityModel") }} guidanceCopy={guidanceCopy}
       selectionDisabled={taskLocked} refreshDisabled={taskLocked} note={copy.qualityModelHelp} copy={resourcePickerCopy}

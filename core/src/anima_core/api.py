@@ -19,6 +19,7 @@ from .api_models import (
     _CountReviewBatchItem,
     _CountReviewDecisionBody,
     _NlDiagnosticCredentialsBody,
+    _NlManualRetryBatchBody,
     _NlManualRetryBody,
     _NlManualWriteBody,
     _NlModelDiscoveryBody,

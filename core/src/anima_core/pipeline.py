@@ -13,7 +13,6 @@ from .contracts import (
     job_config_supports_ocr_device,
     job_config_supports_token_budget,
     pipeline_module_ids,
-    profile_supports_job_config_schema,
     sha256_json,
 )
 from .count_review_service import CountReviewService
@@ -504,13 +503,12 @@ class PipelineService(PipelineRecoveryMixin, PipelineDispatchMixin):
                 config = json.loads(str(job["config_json"]))
             except json.JSONDecodeError as exc:
                 raise PipelineError("frozen JobConfig is invalid JSON") from exc
-            profile = job["profile"]
             if (
                 not isinstance(config, dict)
-                or config.get("profile") != profile
-                or not profile_supports_job_config_schema(profile, config.get("schemaVersion"))
+                or config.get("schemaVersion") != 9
+                or "profile" in config
             ):
-                raise PipelineError("frozen JobConfig profile or schema version cannot run")
+                raise PipelineError("frozen JobConfig schema version cannot run")
             if config.get("schemaVersion") != job["config_schema_version"]:
                 raise PipelineError("frozen JobConfig schema version does not match the task record")
             scheduler = BoundedScheduler(database)
@@ -546,7 +544,7 @@ class PipelineService(PipelineRecoveryMixin, PipelineDispatchMixin):
                             raise PipelineError("frozen dropout subfeature configuration is invalid")
                         # With no policy action selected, starting the worker would only read and rewrite JSON.
                         enabled = enabled and any(child["enabled"] for child in children)
-                state = scheduler.start_module(job_id, module_id, enabled=enabled, profile=str(profile))
+                state = scheduler.start_module(job_id, module_id, enabled=enabled)
                 if state == "paused":
                     return
                 if state == "running":

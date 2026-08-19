@@ -77,6 +77,39 @@ def _job_row(job_id: str, dataset_root: Path) -> dict[str, object]:
 
 
 class FoundationTests(unittest.TestCase):
+    def test_fresh_state_database_uses_schema4_without_a_job_profile_column(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            database = StateDatabase.open(Path(temporary) / "state.db")
+            try:
+                self.assertEqual(4, int(database.connection.execute("PRAGMA user_version").fetchone()[0]))
+                columns = {
+                    str(row["name"])
+                    for row in database.connection.execute("PRAGMA table_info(jobs)")
+                }
+                self.assertNotIn("profile", columns)
+            finally:
+                database.close()
+
+    def test_existing_schema1_to3_is_rejected_without_writing(self) -> None:
+        for version in (1, 2, 3):
+            with self.subTest(version=version), tempfile.TemporaryDirectory() as temporary:
+                path = Path(temporary) / "state.db"
+                connection = sqlite3.connect(path)
+                connection.execute("CREATE TABLE legacy_marker(value TEXT NOT NULL)")
+                connection.execute("INSERT INTO legacy_marker(value) VALUES ('keep')")
+                connection.execute(f"PRAGMA user_version = {version}")
+                connection.commit()
+                connection.close()
+                before = sha256_file(path)
+                try:
+                    database = StateDatabase.open(path)
+                except RuntimeError as exc:
+                    self.assertRegex(str(exc), "incompatible|reinitialize|重新初始化")
+                else:
+                    database.close()
+                    self.fail("legacy state database was accepted")
+                self.assertEqual(before, sha256_file(path))
+
     def test_dropout_supports_running_and_configured_skip(self) -> None:
         self.assertEqual("running", transition_module("pending", "running", module_id="dropout"))
         self.assertEqual("skipped", transition_module("pending", "skipped", module_id="dropout"))
@@ -190,7 +223,7 @@ class FoundationTests(unittest.TestCase):
             for table in ("repair_target_issues", "repair_targets", "repair_jobs", "export_artifacts"):
                 connection.execute(f"DROP TABLE {table}")
             connection.execute("ALTER TABLE jobs DROP COLUMN resume_status")
-            columns = [name for name in job_row if name != "resume_status"]
+            columns = [name for name in job_row if name not in {"profile", "resume_status"}]
             connection.execute(
                 f"INSERT INTO jobs({','.join(columns)}) VALUES ({','.join('?' for _ in columns)})",
                 [job_row[name] for name in columns],
@@ -205,96 +238,30 @@ class FoundationTests(unittest.TestCase):
             connection.close()
 
     @unittest.skipIf(sqlite3.sqlite_version_info < (3, 35), "ALTER TABLE DROP COLUMN requires SQLite 3.35")
-    def test_schema_v1_migration_adds_tables_columns_and_only_then_bumps_user_version(self) -> None:
+    def test_schema_v1_is_rejected_without_migration(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             target = root / "state.db"
             self._write_v1_database(target, _job_row("job-v1", root))
-            database = StateDatabase.open(target)
-            try:
-                # Before the fix a v1 database only gained the new tables while
-                # user_version was rewritten to 2 regardless of the outcome.
-                self.assertEqual(SCHEMA_VERSION, database.connection.execute("PRAGMA user_version").fetchone()[0])
-                self.assertIn(
-                    "resume_status",
-                    {str(row["name"]) for row in database.connection.execute("PRAGMA table_info(jobs)")},
-                )
-                self.assertEqual(
-                    {"export_artifacts", "repair_jobs", "repair_targets", "repair_target_issues"},
-                    {
-                        str(row[0])
-                        for row in database.connection.execute(
-                            "SELECT name FROM sqlite_master WHERE type='table' AND name IN"
-                            " ('export_artifacts','repair_jobs','repair_targets','repair_target_issues')"
-                        )
-                    },
-                )
-                self.assertIsNone(database.get_job("job-v1")["resume_status"])
-                recorded = database.connection.execute(
-                    "SELECT checksum FROM schema_migrations WHERE version=?", (SCHEMA_VERSION,)
-                ).fetchone()
-                self.assertIsNotNone(recorded)
-            finally:
-                database.close()
+            before = sha256_file(target)
+            with self.assertRaisesRegex(RuntimeError, "incompatible|reinitialize"):
+                StateDatabase.open(target)
+            self.assertEqual(before, sha256_file(target))
 
-    def test_schema_v2_to_v3_only_adds_count_tables_and_preserves_existing_rows(self) -> None:
+    def test_schema_v2_is_rejected_without_migration(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             target = root / "state.db"
             database = StateDatabase.open(target)
-            try:
-                database.insert_job(_job_row("job-v2", root))
-                database.insert_samples("job-v2", [{
-                    "sample_id": 1, "relative_image_path": "one.png", "annotation_key": "one",
-                    "source": "e621", "in_processing_scope": True, "image_format": "png",
-                    "image_frame_count": 1, "original_txt_state": "missing_or_blank",
-                    "original_json_state": "missing_or_blank",
-                }])
-                database.initialize_module_summary("job-v2", "caption", total=1)
-                database.upsert_issue(SampleIssue(
-                    issueId="legacy-issue", jobId="job-v2", sampleId=1, relativeImagePath="one.png",
-                    moduleId="caption", code="legacy_warning", severity="warning", blocking=False,
-                    retriable=False, message="preserve me",
-                ))
-            finally:
-                database.close()
-
+            database.close()
             connection = sqlite3.connect(target)
-            connection.row_factory = sqlite3.Row
-            try:
-                for table in ("count_evidence", "count_observations", "count_review_decisions"):
-                    connection.execute(f"DROP TABLE {table}")
-                connection.execute("DELETE FROM schema_migrations WHERE version=3")
-                connection.execute(
-                    "INSERT OR REPLACE INTO schema_migrations(version,checksum,applied_at) VALUES (2,'legacy-v2','2026-07-24T00:00:00Z')"
-                )
-                connection.execute("PRAGMA user_version = 2")
-                preserved = {
-                    table: [tuple(row) for row in connection.execute(f"SELECT * FROM {table} ORDER BY rowid")]
-                    for table in ("jobs", "samples", "sample_state", "issues", "module_summary")
-                }
-                connection.commit()
-            finally:
-                connection.close()
-
-            database = StateDatabase.open(target)
-            try:
-                self.assertEqual(3, database.connection.execute("PRAGMA user_version").fetchone()[0])
-                self.assertEqual(
-                    {"count_evidence", "count_observations", "count_review_decisions"},
-                    {
-                        str(row[0]) for row in database.connection.execute(
-                            """SELECT name FROM sqlite_master WHERE type='table'
-                               AND name IN ('count_evidence','count_observations','count_review_decisions')"""
-                        )
-                    },
-                )
-                for table, rows in preserved.items():
-                    self.assertEqual(rows, [tuple(row) for row in database.connection.execute(
-                        f"SELECT * FROM {table} ORDER BY rowid"
-                    )], table)
-            finally:
-                database.close()
+            connection.execute("PRAGMA user_version = 2")
+            connection.commit()
+            connection.close()
+            before = sha256_file(target)
+            with self.assertRaisesRegex(RuntimeError, "incompatible|reinitialize"):
+                StateDatabase.open(target)
+            self.assertEqual(before, sha256_file(target))
 
     def test_schema_open_rejects_a_newer_database_without_writing_to_it(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

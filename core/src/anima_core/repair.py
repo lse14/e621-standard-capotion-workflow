@@ -6,7 +6,12 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
-from .contracts import pipeline_module_ids, utc_now
+from .contracts import JobConfig, pipeline_module_ids, utc_now
+from .custom_classification_resource import (
+    CustomClassificationResourceError,
+    freeze_custom_classification_resource,
+    inspect_custom_classification_resource,
+)
 from .db import MAX_PAGE_SIZE, StateDatabase
 from .job_preflight import config_from_dict
 from .locks import DatasetLock
@@ -39,7 +44,7 @@ class RepairPreparationService:
         return {
             "job_id": repair_job_id,
             "config_schema_version": parent["config_schema_version"], "config_json": parent["config_json"],
-            "config_hash": parent["config_hash"], "profile": parent["profile"],
+            "config_hash": parent["config_hash"],
             "work_mode": parent["work_mode"], "overwrite_mode": parent["overwrite_mode"],
             "source_root": str(dataset), "output_root": parent["output_root"], "dataset_root": str(dataset),
             "dataset_root_key": windows_key(dataset), "manifest_schema_version": 1, "recursive": parent["recursive"],
@@ -71,6 +76,42 @@ class RepairPreparationService:
         )
         return count
 
+    @staticmethod
+    def _inherit_custom_classification_resource(
+        parent: object,
+        config: JobConfig,
+        child_layout: OverlayLayout,
+    ) -> None:
+        if config.classify.get("indexMode") != "custom":
+            return
+        parent_overlay = parent["overlay_root"]
+        manifest_relative = config.classify.get("resourceManifestRelativePath")
+        fingerprint = config.classify.get("resourceFingerprint")
+        if not all(isinstance(value, str) and value for value in (
+            parent_overlay, manifest_relative, fingerprint,
+        )):
+            raise RepairPreparationError("parent frozen custom classification reference is invalid")
+        try:
+            parent_layout = OverlayLayout.open_existing(str(parent_overlay), str(parent["job_id"]))
+            inspected = inspect_custom_classification_resource(
+                parent_layout.resource_path(str(manifest_relative)),
+            )
+            if inspected.package.fingerprint != fingerprint:
+                raise CustomClassificationResourceError(
+                    "parent frozen classification resource fingerprint changed"
+                )
+            inherited_relative, inherited = freeze_custom_classification_resource(
+                child_layout, inspected,
+            )
+            if inherited_relative != manifest_relative or inherited.fingerprint != fingerprint:
+                raise CustomClassificationResourceError(
+                    "repair classification resource identity changed"
+                )
+        except (CustomClassificationResourceError, OSError, ValueError) as exc:
+            raise RepairPreparationError(
+                "parent frozen custom classification resource is invalid"
+            ) from exc
+
     def prepare(self, parent_job_id: str) -> RepairPreparationResult:
         database = StateDatabase.open(self.database_path)
         layout: OverlayLayout | None = None
@@ -87,7 +128,6 @@ class RepairPreparationService:
                 raise RepairPreparationError("parent frozen JobConfig is invalid") from exc
             if (
                 config.config_hash != parent["config_hash"]
-                or config.profile != parent["profile"]
                 or config.schemaVersion != int(parent["config_schema_version"])
             ):
                 raise RepairPreparationError("parent frozen JobConfig identity does not match")
@@ -113,6 +153,7 @@ class RepairPreparationService:
             except ValueError as exc:
                 raise RepairPreparationError(str(exc)) from exc
             layout = OverlayLayout.create(dataset, repair_job_id)
+            self._inherit_custom_classification_resource(parent, config, layout)
             database.set_workspace_metadata(repair_job_id, dataset_root=str(dataset), dataset_root_key=windows_key(dataset), overlay_root=str(layout.root))
             database.set_job_status(repair_job_id, "preparing_workspace", current_module_id="workspace")
             self._locks[repair_job_id] = acquired
@@ -182,7 +223,6 @@ class RepairPreparationService:
                 raise RepairPreparationError("parent frozen JobConfig is invalid") from exc
             if (
                 config.config_hash != parent["config_hash"]
-                or config.profile != parent["profile"]
                 or config.schemaVersion != int(parent["config_schema_version"])
             ):
                 raise RepairPreparationError("parent frozen JobConfig identity does not match")
@@ -236,6 +276,7 @@ class RepairPreparationService:
                 if isinstance(config.countReview, dict) and config.countReview.get("enabled") is True:
                     database.inherit_repair_count_evidence(repair_job_id, parent_job_id)
                 layout = OverlayLayout.create(dataset, repair_job_id)
+                self._inherit_custom_classification_resource(parent, config, layout)
                 parent_overlay = parent["overlay_root"]
                 if isinstance(parent_overlay, str) and parent_overlay:
                     parent_layout = OverlayLayout.open_existing(parent_overlay, parent_job_id)
@@ -316,7 +357,6 @@ class RepairPreparationService:
                 raise RepairPreparationError("parent frozen JobConfig is invalid") from exc
             if (
                 config.config_hash != parent["config_hash"]
-                or config.profile != parent["profile"]
                 or config.schemaVersion != int(parent["config_schema_version"])
             ):
                 raise RepairPreparationError("parent frozen JobConfig identity does not match")
@@ -377,6 +417,7 @@ class RepairPreparationService:
             if isinstance(config.countReview, dict) and config.countReview.get("enabled") is True:
                 database.inherit_repair_count_evidence(repair_job_id, parent_job_id)
             layout = OverlayLayout.create(dataset, repair_job_id)
+            self._inherit_custom_classification_resource(parent, config, layout)
             parent_overlay = parent["overlay_root"]
             if isinstance(parent_overlay, str) and parent_overlay:
                 parent_layout = OverlayLayout.open_existing(parent_overlay, parent_job_id)

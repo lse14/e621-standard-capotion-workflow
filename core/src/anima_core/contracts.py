@@ -20,12 +20,12 @@ LEGACY_PIPELINE_MODULE_IDS = ("caption", "classify", "replace", "nl", "dropout",
 CURRENT_PIPELINE_MODULE_IDS = ("caption", "classify", "replace", "nl", "count_review", "dropout", "export")
 OCR_PIPELINE_MODULE_IDS = ("caption", "classify", "replace", "ocr", "nl", "count_review", "dropout", "export")
 TOKEN_BUDGET_PIPELINE_MODULE_IDS = ("caption", "classify", "replace", "ocr", "nl", "count_review", "dropout", "token_budget", "export")
-COUNT_REVIEW_SCHEMA_VERSIONS = frozenset({3, 4, 5, 6, 7, 8})
-OCR_JOB_CONFIG_SCHEMA_VERSIONS = frozenset({5, 6, 7, 8})
-OCR_DEVICE_JOB_CONFIG_SCHEMA_VERSIONS = frozenset({7, 8})
-CAPTION_INPUT_TXT_MODE_SCHEMA_VERSIONS = frozenset({8})
-NL_V4_JOB_CONFIG_SCHEMA_VERSIONS = frozenset({6, 7, 8})
-TOKEN_BUDGET_JOB_CONFIG_SCHEMA_VERSIONS = frozenset({6, 7, 8})
+COUNT_REVIEW_SCHEMA_VERSIONS = frozenset({3, 4, 5, 6, 7, 8, 9})
+OCR_JOB_CONFIG_SCHEMA_VERSIONS = frozenset({5, 6, 7, 8, 9})
+OCR_DEVICE_JOB_CONFIG_SCHEMA_VERSIONS = frozenset({7, 8, 9})
+CAPTION_INPUT_TXT_MODE_SCHEMA_VERSIONS = frozenset({8, 9})
+NL_V4_JOB_CONFIG_SCHEMA_VERSIONS = frozenset({6, 7, 8, 9})
+TOKEN_BUDGET_JOB_CONFIG_SCHEMA_VERSIONS = frozenset({6, 7, 8, 9})
 RESOURCE_ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,127}$")
 TOKENIZER_RESOURCE_ID = re.compile(r"^[a-z0-9][a-z0-9.-]{0,127}$")
 RESOURCE_FINGERPRINT = re.compile(r"^[0-9a-f]{64}$")
@@ -135,7 +135,6 @@ def _default_nl_config() -> dict[str, Any]:
 
 @dataclass(frozen=True)
 class JobConfig:
-    profile: Profile
     workMode: WorkMode
     overwriteMode: OverwriteMode
     sourceRoot: str
@@ -152,9 +151,9 @@ class JobConfig:
     })
     classify: dict[str, Any] = field(default_factory=lambda: {
         "enabled": True,
+        "indexMode": "bundled",
         "overwriteJson": False,
         "overwriteCount": False,
-        "wikiDataSourceId": "e621-wiki-count-20260724-v1",
         "resourceId": "classify-e621-20260724-v1",
     })
     replace: dict[str, Any] = field(default_factory=lambda: {
@@ -194,7 +193,8 @@ class JobConfig:
     })
     export: dict[str, Any] = field(default_factory=lambda: {"format": "both"})
     tokenBudget: dict[str, Any] | None = None
-    schemaVersion: int = 3
+    schemaVersion: int = 9
+    profile: Profile | None = None
 
     def __post_init__(self) -> None:
         if type(self.nl) is _DefaultNlConfig:
@@ -226,6 +226,8 @@ class JobConfig:
 
     def to_dict(self) -> dict[str, Any]:
         value = asdict(self)
+        if self.schemaVersion == 9:
+            value.pop("profile")
         value["captionFormat"]["triggerTerms"] = list(self.captionFormat.triggerTerms)
         if not job_config_supports_ocr(self.schemaVersion):
             value.pop("ocr")
@@ -359,7 +361,7 @@ def validate_job_config(
     allow_unavailable_profile: bool = False,
     adjustable_categories: tuple[str, ...] | None = None,
 ) -> None:
-    if config.schemaVersion not in {2, 3, 4, 5, 6, 7, 8}:
+    if config.schemaVersion not in {2, 3, 4, 5, 6, 7, 8, 9}:
         raise ValueError("unsupported JobConfig schemaVersion")
     if config.schemaVersion == 2:
         if config.countReview is not None:
@@ -403,10 +405,11 @@ def validate_job_config(
         length_seed = nl.get("lengthSeed")
         if not isinstance(length_seed, str) or not length_seed.strip() or len(length_seed.encode("utf-8")) > 256:
             raise ValueError("nl lengthSeed must be non-blank and at most 256 UTF-8 bytes")
-    if config.profile not in ("e621", "danbooru"):
-        raise ValueError("unsupported profile")
-    if config.profile == "danbooru" and config.schemaVersion in {2, 3} and not allow_unavailable_profile:
-        raise ValueError("profile_not_available:danbooru")
+    if config.schemaVersion != 9:
+        if config.profile not in ("e621", "danbooru"):
+            raise ValueError("unsupported profile")
+        if config.profile == "danbooru" and config.schemaVersion in {2, 3} and not allow_unavailable_profile:
+            raise ValueError("profile_not_available:danbooru")
     if config.workMode == "in_place" and config.outputRoot is not None:
         raise ValueError("in_place must omit outputRoot")
     if config.workMode == "full_copy" and not config.outputRoot:
@@ -487,7 +490,56 @@ def validate_job_config(
 
     resource_reference(config.caption, "caption")
     classify = config.classify
-    if not isinstance(classify, dict) or set(classify) - {
+    classify_identity_fields = {
+        "resourceId", "resourceFingerprint", "wikiDataSourceId",
+        "dictionaryEntryCount", "resourceProfile",
+    }
+    classify_frozen_fields = classify_identity_fields | {"resourceManifestRelativePath"}
+    classify_base_fields = {
+        "enabled", "indexMode", "overwriteJson", "overwriteCount",
+        "resourceId", "customResourcePath", "customResourceContentSha256",
+    }
+    if config.schemaVersion == 9:
+        if (
+            not isinstance(classify, dict)
+            or set(classify) - (classify_base_fields | classify_frozen_fields)
+            or not {"enabled", "indexMode", "overwriteJson", "overwriteCount"}.issubset(classify)
+        ):
+            raise ValueError("classify configuration fields are invalid")
+        index_mode = classify.get("indexMode")
+        if index_mode not in {"bundled", "custom"}:
+            raise ValueError("classify indexMode is invalid")
+        if index_mode == "bundled":
+            if (
+                "customResourcePath" in classify
+                or "customResourceContentSha256" in classify
+                or "resourceId" not in classify
+            ):
+                raise ValueError("bundled classify configuration is invalid")
+        else:
+            has_external_path = "customResourcePath" in classify
+            has_any_identity = bool(classify_identity_fields & set(classify))
+            has_frozen_reference = classify_frozen_fields <= set(classify)
+            has_any_frozen_metadata = has_any_identity or "resourceManifestRelativePath" in classify
+            has_content_digest = "customResourceContentSha256" in classify
+            valid_input = has_external_path and not has_any_frozen_metadata and not has_content_digest
+            valid_inspected = (
+                has_external_path
+                and classify_identity_fields <= set(classify)
+                and has_content_digest
+                and not has_frozen_reference
+            )
+            valid_frozen = not has_external_path and has_frozen_reference and not has_content_digest
+            if sum((valid_input, valid_inspected, valid_frozen)) != 1:
+                raise ValueError(
+                    "custom classify configuration must contain an external input, inspected identity, or frozen reference"
+                )
+            content_digest = classify.get("customResourceContentSha256")
+            if has_content_digest and (
+                not isinstance(content_digest, str) or not RESOURCE_FINGERPRINT.fullmatch(content_digest)
+            ):
+                raise ValueError("custom classify content digest is invalid")
+    elif not isinstance(classify, dict) or set(classify) - {
         "enabled", "overwriteJson", "overwriteCount", "wikiDataSourceId", *RESOURCE_REFERENCE_FIELDS
     } or not {"enabled", "overwriteJson", "overwriteCount", "wikiDataSourceId"}.issubset(classify):
         raise ValueError("classify configuration fields are invalid")
@@ -495,12 +547,19 @@ def validate_job_config(
         if type(classify.get(field_name)) is not bool:
             raise ValueError(f"classify {field_name} must be boolean")
     wiki_data_source_id = classify.get("wikiDataSourceId")
-    if (
+    if wiki_data_source_id is not None and (
         not isinstance(wiki_data_source_id, str) or not RESOURCE_ID.fullmatch(wiki_data_source_id)
         or len(wiki_data_source_id) > 128
     ):
         raise ValueError("classify wikiDataSourceId is invalid")
-    resource_reference(classify, "classify")
+    if config.schemaVersion != 9:
+        resource_reference(classify, "classify")
+    elif "resourceManifestRelativePath" in classify:
+        resource_reference(classify, "classify", resource_id_required=True)
+        if type(classify.get("dictionaryEntryCount")) is not int or classify["dictionaryEntryCount"] < 1:
+            raise ValueError("classify dictionaryEntryCount is invalid")
+        if classify.get("resourceProfile") not in {"e621", "danbooru"}:
+            raise ValueError("classify resourceProfile is invalid")
     if config.schemaVersion in {3, 4, 5} and config.countReview is not None and config.countReview["enabled"] and not classify["enabled"]:
         raise ValueError("countReview requires classify to be enabled")
 
@@ -642,7 +701,7 @@ def validate_job_config(
             raise ValueError("custom replace index digest is invalid")
         if "customIndexRuleCount" in replace and (type(replace["customIndexRuleCount"]) is not int or not 1 <= replace["customIndexRuleCount"] <= 250_000):
             raise ValueError("custom replace index rule count is invalid")
-    if config.profile == "danbooru" and (
+    if config.schemaVersion != 9 and config.profile == "danbooru" and (
         replace.get("enabled") is not False or replace_mode != "bundled"
     ):
         raise ValueError("Danbooru replacement must be disabled and use the profile-skipped bundled mode")

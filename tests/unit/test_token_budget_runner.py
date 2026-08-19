@@ -33,7 +33,7 @@ class TokenBudgetRunnerContractTests(unittest.TestCase):
         )
 
     def _runner(
-        self, root: Path, status: str, *, schema_version: int = 6,
+        self, root: Path, status: str, *, schema_version: int = 9,
     ) -> tuple[StateDatabase, JobPreparationService, str, TokenBudgetRunner]:
         dataset = root / "dataset"
         dataset.mkdir()
@@ -82,7 +82,7 @@ class TokenBudgetRunnerContractTests(unittest.TestCase):
         return database, preparation, job_id, runner
 
     def test_v6_and_v7_overflow_are_settled_once_as_a_blocking_issue_without_annotation(self) -> None:
-        for schema_version in (6, 7):
+        for schema_version in (9,):
             with self.subTest(schema_version=schema_version), tempfile.TemporaryDirectory() as temporary:
                 database, preparation, job_id, runner = self._runner(
                     Path(temporary), "overflow", schema_version=schema_version,
@@ -105,7 +105,7 @@ class TokenBudgetRunnerContractTests(unittest.TestCase):
                     preparation.close()
 
     def test_v6_and_v7_runner_send_hello_and_process_a_within_budget_sample(self) -> None:
-        for schema_version in (6, 7):
+        for schema_version in (9,):
             with self.subTest(schema_version=schema_version), tempfile.TemporaryDirectory() as temporary:
                 database, preparation, _job_id, runner = self._runner(
                     Path(temporary), "within_budget", schema_version=schema_version,

@@ -33,18 +33,17 @@ class ExportRunnerTests(unittest.TestCase):
  def _runner(self,root,bad,conversions=None,*,schema_version=None):
   dataset=root/'d';dataset.mkdir();Image.new('RGB',(2,2)).save(dataset/'a.png');(dataset/'a.json').write_bytes(serialize_annotation_json({'quality':[],'count':'solo','character':'','series':'','artist':'','appearance':[],'tags':['ok'],'environment':[],'nl':''}))
   config_kwargs={} if schema_version is None else {'schemaVersion':schema_version}
-  cfg=JobConfig(profile='e621',workMode='in_place',overwriteMode='incremental',sourceRoot=str(dataset),recursive=True,**config_kwargs);cfg.caption['enabled']=cfg.replace['enabled']=cfg.nl['enabled']=cfg.dropout['enabled']=False;cfg.classify['enabled']=True;cfg.export['format']='json'
-  if schema_version==7:cfg.tokenBudget['enabled']=False
+  cfg=JobConfig(profile='e621',workMode='in_place',overwriteMode='incremental',sourceRoot=str(dataset),recursive=True,**config_kwargs);cfg.caption['enabled']=cfg.replace['enabled']=cfg.nl['enabled']=cfg.dropout['enabled']=False;cfg.classify['enabled']=True;cfg.export['format']='json';cfg.tokenBudget['enabled']=False
   prep=JobPreparationService(root/'s.db');job=prep.preflight(cfg.to_dict()).jobId;prep.confirm_workspace(job,confirmed=True,confirmed_rebuild=False);db=StateDatabase.open(root/'s.db')
-  if schema_version==7:
+  if schema_version==9:
    frozen=json.loads(str(db.get_job(job)['config_json']));frozen['tokenBudget'].update({'enabled':True,'resourceManifestRelativePath':r'tokenizers\tokenizer-qwen3-0.6b-anima-v1\resource.json','resourceFingerprint':'a'*64,'contextLimit':512});db.connection.execute('UPDATE jobs SET config_json=?,config_hash=? WHERE job_id=?',(json.dumps(frozen),sha256_json(frozen),job))
   sch=BoundedScheduler(db)
-  for m in ('caption','classify','replace') + (('ocr',) if schema_version == 7 else ()) + ('nl','count_review','dropout') + (('token_budget',) if schema_version == 7 else ()):sch.start_module(job,m,enabled=False,profile='e621')
+  for m in ('caption','classify','replace') + (('ocr',) if schema_version in {7,8,9} or schema_version is None else ()) + ('nl','count_review','dropout') + (('token_budget',) if schema_version in {7,8,9} or schema_version is None else ()):sch.start_module(job,m,enabled=False,profile='e621')
   sch.start_module(job,'export',enabled=True,profile='e621');layout=OverlayLayout.open_existing(str(db.get_job(job)['overlay_root']),job)
   return db,prep,job,ExportRunner(db,sch,_Transport(layout,bad,conversions),WorkingAnnotationView(BaselineView(dataset),layout),job_id=job,worker_instance_id='e')
- def test_v7_enabled_token_budget_blocks_export_before_transport_without_a_frozen_record(self):
+ def test_v9_enabled_token_budget_blocks_export_before_transport_without_a_frozen_record(self):
   with tempfile.TemporaryDirectory() as t:
-   db,p,j,r=self._runner(Path(t),False,schema_version=7)
+   db,p,j,r=self._runner(Path(t),False,schema_version=9)
    try:
     with self.assertRaisesRegex(ExportRunnerError,'Token Budget gate'):
      r.run()

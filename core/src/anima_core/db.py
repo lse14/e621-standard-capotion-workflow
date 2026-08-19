@@ -56,15 +56,15 @@ class StateDatabase(
         connection.create_collation("WIN_ORDINAL_NOCASE", _ordinal_nocase)
         connection.execute("PRAGMA foreign_keys=ON")
         connection.execute("PRAGMA busy_timeout=5000")
-        connection.execute("PRAGMA journal_mode=WAL")
-        connection.execute("PRAGMA synchronous=FULL")
-        connection.execute("PRAGMA journal_size_limit=67108864")
-        connection.execute("PRAGMA wal_autocheckpoint=1000")
         try:
             migrate(connection)
         except Exception:
             connection.close()
             raise
+        connection.execute("PRAGMA journal_mode=WAL")
+        connection.execute("PRAGMA synchronous=FULL")
+        connection.execute("PRAGMA journal_size_limit=67108864")
+        connection.execute("PRAGMA wal_autocheckpoint=1000")
         return cls(target, connection)
 
     @classmethod
@@ -99,4 +99,3 @@ class StateDatabase(
         if table not in {"samples", "sample_state", "issues", "event_ring"}:
             raise ValueError("unsupported count table")
         return int(self.connection.execute(f"SELECT COUNT(*) FROM {table} WHERE job_id=?", (job_id,)).fetchone()[0])
-

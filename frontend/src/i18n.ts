@@ -4,7 +4,7 @@ const languageStorageKey = "anima.ui.language.v1";
 
 const messages: Record<UiLanguage, Record<string, string>> = {
   en: {
-    taskId: "Task ID", language: "Language", pipelineSubtitle: "{profile} annotation pipeline", automatic: "Auto", newTask: "New task", e621Only: "E621 only",
+    taskId: "Task ID", language: "Language", pipelineSubtitle: "Independent resource annotation pipeline", automatic: "Auto", newTask: "New task", e621Only: "E621 only",
     sourceDataset: "Source dataset", outputDataset: "Output dataset", absoluteWindowsPath: "Absolute Windows path", selectPath: "Select path", selectingPath: "Selecting...", pathPickerBusy: "Another path selector is open.", pathPickerUnavailable: "Windows path selection is unavailable; enter the path manually.", pathPickerFailed: "Could not select a path.",
     emptyOrAbsentDirectory: "Empty or absent directory", workMode: "Work mode", inPlace: "In place", fullCopy: "Full copy",
     overwriteMode: "Overwrite mode", incremental: "Incremental", rebuild: "Rebuild", searchSubfolders: "Search subfolders",
@@ -88,7 +88,7 @@ const messages: Record<UiLanguage, Record<string, string>> = {
     status_prepared: "prepared", status_backup_verified: "backup verified", status_committed: "committed", status_rolled_back: "rolled back", status_rollback_required: "rollback required",
   },
   "zh-CN": {
-    taskId: "任务 ID", language: "语言", pipelineSubtitle: "{profile} 标注流水线", automatic: "自动", newTask: "新建任务", e621Only: "仅 E621",
+    taskId: "任务 ID", language: "语言", pipelineSubtitle: "独立资源标注流水线", automatic: "自动", newTask: "新建任务", e621Only: "仅 E621",
     sourceDataset: "源数据集", outputDataset: "输出数据集", absoluteWindowsPath: "Windows 绝对路径", selectPath: "选择路径", selectingPath: "正在选择...", pathPickerBusy: "另一个路径选择窗口已打开。", pathPickerUnavailable: "Windows 路径选择不可用；请手动输入路径。", pathPickerFailed: "无法选择路径。",
     emptyOrAbsentDirectory: "为空或不存在的目录", workMode: "工作模式", inPlace: "原地标注", fullCopy: "完整副本",
     overwriteMode: "覆写模式", incremental: "增量更新", rebuild: "完全重建", searchSubfolders: "搜索子文件夹",
@@ -173,6 +173,16 @@ const messages: Record<UiLanguage, Record<string, string>> = {
   },
 };
 
+const independentResourceHelp: Record<string, Partial<Record<UiLanguage, string>>> = {
+  fieldHelp_captionModel: { en: "Model resource used by Caption; resource selection is independent.", "zh-CN": "Caption 使用的模型资源；各资源独立选择。" },
+  fieldHelp_enableClassify: { en: "Build structured JSON/count using the selected classification resource.", "zh-CN": "使用所选分类资源生成结构化 JSON/count。" },
+  fieldHelp_classificationIndex: { en: "Build structured JSON/count using the selected classification resource.", "zh-CN": "使用所选分类资源生成结构化 JSON/count。" },
+  fieldHelp_enableReplacement: { en: "Apply the replacement table after classification when enabled; this module runs independently.", "zh-CN": "启用后在分类完成后应用替换表；本模块独立运行。" },
+  fieldHelp_replaceMode: { en: "Bundled uses the verified resource; custom uses the complete table.", "zh-CN": "内置模式使用已验证资源；自定义模式使用完整表。" },
+  fieldHelp_tokenizer: { en: "Tokenizer resource used for exact counting; the recommended resource is shown.", "zh-CN": "用于精确计数的 tokenizer 资源；界面会显示推荐资源。" },
+  fieldHelp_qualityModel: { en: "Quality scorer resource; the recommended resource is shown.", "zh-CN": "Quality scorer 资源；界面会显示推荐资源。" },
+};
+
 export function loadUiLanguage(): UiLanguage {
   try {
     return window.localStorage.getItem(languageStorageKey) === "en" ? "en" : "zh-CN";
@@ -186,7 +196,7 @@ export function saveUiLanguage(language: UiLanguage): void {
 }
 
 export function translate(language: UiLanguage, key: string, values: Record<string, string | number> = {}): string {
-  const template = messages[language][key] ?? messages.en[key] ?? key;
+  const template = independentResourceHelp[key]?.[language] ?? messages[language][key] ?? messages.en[key] ?? key;
   return template.replace(/\{(\w+)\}/g, (_, name: string) => String(values[name] ?? `{${name}}`));
 }
 

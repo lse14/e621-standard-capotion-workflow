@@ -8,7 +8,7 @@ from __future__ import annotations
 import hashlib, json, uuid
 from typing import Protocol
 
-from .contracts import SampleIssue, WorkLease, job_config_supports_token_budget, profile_supports_job_config_schema, sha256_json
+from .contracts import SampleIssue, WorkLease, job_config_supports_token_budget, sha256_json
 from .db import MAX_PAGE_SIZE, StateDatabase
 from .export_summary import CONVERSION_CODES, CONVERTED_SAMPLES_CODE
 from .overlay import WorkingAnnotationView
@@ -33,8 +33,8 @@ class ExportRunner:
         self.database,self.scheduler,self.transport,self.view=database,scheduler,transport,view; self.job_id,self.worker_instance_id=job_id,worker_instance_id; self._hello=False
     def _config(self)->tuple[str,dict[str,object]]:
         job=self.database.get_job(self.job_id); config=json.loads(str(job["config_json"]))
-        profile=job["profile"]; schema_version=config.get("schemaVersion") if isinstance(config,dict) else None
-        if not isinstance(config,dict) or sha256_json(config)!=job["config_hash"] or config.get("profile")!=profile or not profile_supports_job_config_schema(profile,schema_version) or schema_version!=int(job["config_schema_version"]) or config.get("export",{}).get("format") not in {"json","flat_txt","both"}: raise ExportRunnerError("frozen export configuration is invalid")
+        schema_version=config.get("schemaVersion") if isinstance(config,dict) else None
+        if not isinstance(config,dict) or sha256_json(config)!=job["config_hash"] or schema_version != 9 or "profile" in config or schema_version!=int(job["config_schema_version"]) or config.get("export",{}).get("format") not in {"json","flat_txt","both"}: raise ExportRunnerError("frozen export configuration is invalid")
         return str(job["config_hash"]),config
     def _exchange(self,method:str,payload:dict[str,object],config_hash:str)->dict[str,object]:
         request=ProtocolEnvelopeV1("1.0","request",f"export-{uuid.uuid4().hex}",RUNTIME_ID,OWNER,method,payload,jobId=self.job_id,configHash=config_hash)

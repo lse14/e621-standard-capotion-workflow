@@ -9,7 +9,6 @@ from typing import Callable
 from . import PROTOCOL_VERSION
 from .contracts import ModuleId, SampleIssue, SampleRunState, WorkLease, pipeline_module_ids
 from .db import MAX_PAGE_SIZE, StateDatabase
-from .profiles import module_availability, require_available
 from .state_machine import transition_module
 
 
@@ -152,18 +151,27 @@ class BoundedScheduler:
             job_id, module_id, current_module_id=current_module_id, active_status=str(job["status"]),
         )
 
-    def start_module(self, job_id: str, module_id: ModuleId, *, enabled: bool, profile: str) -> str:
+    def start_module(
+        self,
+        job_id: str,
+        module_id: ModuleId,
+        *,
+        enabled: bool,
+        profile: str | None = None,
+    ) -> str:
         job = self.database.get_job(job_id)
-        if profile != job["profile"]:
-            raise SchedulerError("requested profile does not match the immutable job profile")
-        require_available(profile)
         allowed_job_states = {"ready", "running", "paused", "reviewing", "exporting"}
         if module_id == "caption":
             allowed_job_states.add("preparing_workspace")
         if job["status"] not in allowed_job_states:
             raise SchedulerError(f"job state {job['status']} cannot start a module")
         self._assert_module_order(job_id, module_id)
-        availability = module_availability(profile, module_id, enabled=enabled)
+        if module_id not in {
+            "caption", "classify", "replace", "ocr", "nl", "count_review",
+            "dropout", "token_budget", "export",
+        }:
+            raise SchedulerError(f"unknown module:{module_id}")
+        availability = "pending" if enabled or module_id == "export" else "skipped"
         try:
             summary = self.database.module_summary(job_id, module_id)
         except KeyError:
@@ -255,7 +263,6 @@ class BoundedScheduler:
 
     def claim_batch(self, job_id: str, module_id: ModuleId, worker_instance_id: str, config_hash: str, *, limit: int | None = None) -> list[WorkLease]:
         job = self.database.get_job(job_id)
-        require_available(job["profile"])
         expected_job_status = "exporting" if module_id == "export" else "running"
         if job["status"] != expected_job_status or job["current_module_id"] != module_id:
             return []

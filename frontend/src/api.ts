@@ -1,6 +1,6 @@
 export type PipelineModuleId = "caption" | "classify" | "replace" | "ocr" | "nl" | "count_review" | "dropout" | "token_budget" | "export";
 export type AnnotationProfile = "e621" | "danbooru";
-export type PathPickerPurpose = "source_dataset" | "output_dataset" | "replacement_csv";
+export type PathPickerPurpose = "source_dataset" | "output_dataset" | "replacement_csv" | "classification_resource_json";
 export type SelectLocalPathResponse = { cancelled: boolean; path: string | null };
 export type OcrDevice = "auto" | "cuda" | "cpu";
 export type OcrExecutionTuning = { mode: "auto"; value: null } | { mode: "manual"; value: number };
@@ -24,7 +24,7 @@ export type CreateJobRequest = { config: Record<string, unknown>; ocrExecution?:
 export type JobSnapshot = {
   job: {
     jobId: string; status: string; currentModuleId?: string; lastEventId: number; apiBudgetExtra: number;
-    profile: AnnotationProfile; configSchemaVersion: number;
+    configSchemaVersion: number;
     apiBudgetRevision: number; pinned: boolean; configHash: string; manifestSchemaVersion: number;
     createdAt: string; startedAt: string | null; cancelRequestedAt: string | null; finishedAt: string | null;
   };
@@ -46,7 +46,7 @@ export type JobSnapshot = {
 };
 
 export type JobListEntry = {
-  jobId: string; status: string; currentModuleId: string | null; profile: AnnotationProfile; datasetRoot: string;
+  jobId: string; status: string; currentModuleId: string | null; datasetRoot: string;
   sampleCount: number; pinned: boolean; createdAt: string; finishedAt: string | null;
 };
 export type JobListPage = { jobs: JobListEntry[]; nextAfterCreatedAt: string | null; nextAfterJobId: string | null };
@@ -77,17 +77,16 @@ export type ResourceEntry = {
   officialModelId?: string;
   contextLimit?: number;
 };
-export type ProfileResourceDefaults = {
+export type ResourceDefaults = {
   taggingModel: string;
   classificationIndex: string;
   dropoutModel: string;
-  replacementIndex?: string;
+  replacementIndex: string;
 };
 export type ResourceCatalogResponse = {
-  schemaVersion: 2;
+  schemaVersion: 3;
   defaultsSchemaVersion: number;
-  defaults: Record<AnnotationProfile, ProfileResourceDefaults>;
-  profiles: Record<AnnotationProfile, { available: boolean; missingDefaults: ReadonlyArray<{ kind: string; resourceId: string }> }>;
+  defaults: ResourceDefaults;
   resources: ResourceEntry[];
   invalidResources: ReadonlyArray<{ relativePath: string; reason: string }>;
 };

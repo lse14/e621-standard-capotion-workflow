@@ -6,7 +6,6 @@ import tempfile
 import unittest
 from collections.abc import Callable
 from pathlib import Path
-from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -71,7 +70,7 @@ def _job(
     overwrite_mode: str = "incremental",
     overwrite_txt: bool = False,
     profile: str = "e621",
-    schema_version: int = 3,
+    schema_version: int = 9,
     input_txt_mode: str | None = None,
     tagger_fallback_on_missing_txt: bool | None = None,
 ) -> dict[str, object]:
@@ -224,7 +223,7 @@ class CaptionRunnerTests(unittest.TestCase):
         overwrite_mode: str = "incremental",
         overwrite_txt: bool = False,
         profile: str = "e621",
-        schema_version: int = 3,
+        schema_version: int = 9,
         input_txt_mode: str | None = None,
         tagger_fallback_on_missing_txt: bool | None = None,
     ) -> tuple[StateDatabase, BoundedScheduler]:
@@ -271,6 +270,7 @@ class CaptionRunnerTests(unittest.TestCase):
             worker_instance_id="caption-worker-1",
             resource_manifest_relative_path=CAPTION_MANIFEST,
             resource_fingerprint=RESOURCE_FINGERPRINT,
+            resource_profile="e621",
             result_consumer=result_consumer,
             progress_consumer=progress_consumer,
             install_root=install_root,
@@ -528,6 +528,7 @@ class CaptionRunnerTests(unittest.TestCase):
                     original_txt_state="nonblank",
                     overwrite_mode=overwrite_mode,
                     overwrite_txt=overwrite_txt,
+                    input_txt_mode="nl",
                 )
                 transport = FakeCaptionTransport()
                 try:
@@ -545,7 +546,7 @@ class CaptionRunnerTests(unittest.TestCase):
                 finally:
                     database.close()
 
-    def test_v8_tag_nonblank_txt_skips_tagger_even_when_overwrite_is_requested(self) -> None:
+    def test_v9_tag_nonblank_txt_skips_tagger_even_when_overwrite_is_requested(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             database, scheduler = self._database(
                 Path(temporary),
@@ -553,7 +554,7 @@ class CaptionRunnerTests(unittest.TestCase):
                 original_txt_state="nonblank",
                 overwrite_mode="rebuild",
                 overwrite_txt=True,
-                schema_version=8,
+                schema_version=9,
                 input_txt_mode="tag",
             )
             transport = FakeCaptionTransport()
@@ -562,7 +563,7 @@ class CaptionRunnerTests(unittest.TestCase):
                     database,
                     scheduler,
                     transport,
-                    result_consumer=lambda *_: self.fail("v8 Tag TXT must skip inference"),
+                    result_consumer=lambda *_: self.fail("v9 Tag TXT must skip inference"),
                 ).run()
                 self.assertEqual(("completed", 0, 1), (report.status, report.completed, report.skipped))
                 self.assertEqual((0, 0), (transport.hello_requests, transport.process_requests))
@@ -571,13 +572,13 @@ class CaptionRunnerTests(unittest.TestCase):
             finally:
                 database.close()
 
-    def test_v8_tag_missing_or_blank_txt_uses_tagger_when_fallback_is_enabled(self) -> None:
+    def test_v9_tag_missing_or_blank_txt_uses_tagger_when_fallback_is_enabled(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             database, scheduler = self._database(
                 Path(temporary),
                 1,
                 original_txt_state="missing_or_blank",
-                schema_version=8,
+                schema_version=9,
                 input_txt_mode="tag",
                 tagger_fallback_on_missing_txt=True,
             )
@@ -591,13 +592,13 @@ class CaptionRunnerTests(unittest.TestCase):
             finally:
                 database.close()
 
-    def test_v8_tag_missing_or_blank_txt_without_fallback_warns_and_fails_sample(self) -> None:
+    def test_v9_tag_missing_or_blank_txt_without_fallback_warns_and_fails_sample(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             database, scheduler = self._database(
                 Path(temporary),
                 1,
                 original_txt_state="missing_or_blank",
-                schema_version=8,
+                schema_version=9,
                 input_txt_mode="tag",
                 tagger_fallback_on_missing_txt=False,
             )
@@ -620,31 +621,6 @@ class CaptionRunnerTests(unittest.TestCase):
                 self.assertEqual("failed", database.get_sample_state("job-caption", 1)["status"])
             finally:
                 database.close()
-
-    def test_v4_danbooru_job_preserves_profile_through_hello_item_and_result(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            with (
-                mock.patch("anima_core.scheduler.require_available"),
-                mock.patch("anima_core.scheduler.module_availability", return_value="pending"),
-            ):
-                database, scheduler = self._database(
-                    Path(temporary),
-                    1,
-                    profile="danbooru",
-                    schema_version=4,
-                )
-                observed: list[tuple[str, str]] = []
-                try:
-                    report = self._runner(
-                        database,
-                        scheduler,
-                        FakeCaptionTransport(),
-                        result_consumer=lambda item, result: observed.append((item.source, result.source)),
-                    ).run()
-                    self.assertEqual("completed", report.status)
-                    self.assertEqual([("danbooru", "danbooru")], observed)
-                finally:
-                    database.close()
 
     def test_disabled_caption_sets_bounded_provenance_without_a_worker(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

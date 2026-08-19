@@ -1,6 +1,5 @@
 import type { OcrDevice, OcrExecutionRequest, ResourceCatalogResponse, ResourceKind } from "./api";
 
-export type DraftProfile = "e621" | "danbooru";
 export type WorkMode = "in_place" | "full_copy";
 export type OverwriteMode = "incremental" | "rebuild";
 export type CaptionThresholdMode = "model_default" | "uniform" | "per_category";
@@ -38,10 +37,12 @@ export type CaptionDraft = {
 
 export type ClassifyDraft = {
   enabled: boolean;
+  indexMode: "bundled" | "custom";
   overwriteJson: boolean;
   overwriteCount: boolean;
   wikiDataSourceId?: string;
   resourceId?: string;
+  customResourcePath?: string;
 };
 
 export type ReplaceDraft = {
@@ -131,8 +132,7 @@ export type ExportDraft = {
 };
 
 export type Draft = {
-  schemaVersion: 8;
-  profile: DraftProfile;
+  schemaVersion: 9;
   workMode: WorkMode;
   overwriteMode: OverwriteMode;
   sourceRoot: string;
@@ -167,11 +167,11 @@ export type DraftSectionKey =
 
 export function newDraft(): Draft {
   return {
-    schemaVersion: 8, profile: "e621", workMode: "in_place", overwriteMode: "incremental", sourceRoot: "", annotationBackup: "required", recursive: false,
+    schemaVersion: 9, workMode: "in_place", overwriteMode: "incremental", sourceRoot: "", annotationBackup: "required", recursive: false,
     captionFormat: { replaceUnderscoresWithSpaces: true, preserveEscapes: true, triggersEnabled: false, triggerTerms: [] },
     imageDecode: { extensions: [".jpg", ".jpeg", ".png", ".webp", ".bmp"], rejectMultiFrame: true, applyExifTranspose: true, alphaBackground: "#FFFFFF", invalidImageAction: "block" },
     caption: { enabled: true, thresholdMode: "model_default", overwriteTxt: false, inputTxtMode: "tag", taggerFallbackOnMissingTxt: true, resourceId: "caption-e621-eva02-large-full-v1" },
-    classify: { enabled: true, overwriteJson: false, overwriteCount: false, wikiDataSourceId: "e621-wiki-count-20260724-v1", resourceId: "classify-e621-20260724-v1" },
+    classify: { enabled: true, indexMode: "bundled", overwriteJson: false, overwriteCount: false, wikiDataSourceId: "e621-wiki-count-20260724-v1", resourceId: "classify-e621-20260724-v1" },
     replace: { enabled: true, indexMode: "bundled", resourceId: "replace-e621-20260726-v2" },
     ocr: { enabled: false, device: "auto", llmMinConfidence: 0.5, forceReprocess: false, resourceId: "ocr-ppocrv5-server-paddle-v1" },
     nl: { enabled: true, reuseOriginalNl: true, apiEnabled: true, useImage: true, useFullJson: false, systemPrompt: "", promptVersion: "nl-default-prompt-v4", captionPreset: "general", lengthDistribution: { short: 33, medium: 34, long: 33 }, lengthSeed: "anima-nl-length-v1", apiProfileId: "default", apiPolicy: { concurrency: 3, maxRequestsPerMinute: 60, backupEnabled: false } },
@@ -206,10 +206,10 @@ export function patchDraftSection<K extends DraftSectionKey>(
 }
 
 export function applyResourceCatalogDefaults(draft: Draft, catalog: ResourceCatalogResponse): Draft {
-  const defaults = catalog.defaults[draft.profile];
+  const defaults = catalog.defaults;
   const configured = (kind: ResourceKind, resourceId: string | undefined) => typeof resourceId === "string" && catalog.resources.some((item) =>
     item.kind === kind && item.resourceId === resourceId && item.available
-    && (kind === "dropout-model" || item.profile === draft.profile),
+    && !["incompatible", "unavailable"].includes(item.compatibility.status),
   );
 
   return {
@@ -220,11 +220,11 @@ export function applyResourceCatalogDefaults(draft: Draft, catalog: ResourceCata
     },
     classify: {
       ...draft.classify,
-      resourceId: configured("classification-index", draft.classify.resourceId) ? draft.classify.resourceId : defaults.classificationIndex,
+      ...(draft.classify.indexMode === "custom"
+        ? { indexMode: "custom" as const }
+        : { indexMode: "bundled" as const, resourceId: configured("classification-index", draft.classify.resourceId) ? draft.classify.resourceId : defaults.classificationIndex }),
     },
-    replace: draft.profile === "danbooru"
-      ? { enabled: false, indexMode: "bundled" }
-      : draft.replace.indexMode === "bundled" ? {
+    replace: draft.replace.indexMode === "bundled" ? {
         ...draft.replace,
         resourceId: configured("replacement-index", draft.replace.resourceId) ? draft.replace.resourceId : defaults.replacementIndex,
       } : draft.replace,

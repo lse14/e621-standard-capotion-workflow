@@ -113,15 +113,13 @@ class SchedulerTests(unittest.TestCase):
             finally:
                 database.close()
 
-    def test_module_order_profile_and_dropout_are_enforced(self) -> None:
+    def test_module_order_and_dropout_are_enforced(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             database = self._database(Path(temporary), count=1)
             try:
                 scheduler = BoundedScheduler(database)
                 with self.assertRaises(SchedulerError):
                     scheduler.start_module("job-1", "classify", enabled=True, profile="e621")
-                with self.assertRaises(SchedulerError):
-                    scheduler.start_module("job-1", "caption", enabled=True, profile="danbooru")
                 self.assertEqual("skipped", scheduler.start_module("job-1", "caption", enabled=False, profile="e621"))
                 self.assertEqual("skipped", scheduler.start_module("job-1", "classify", enabled=False, profile="e621"))
                 self.assertEqual("skipped", scheduler.start_module("job-1", "replace", enabled=False, profile="e621"))
@@ -141,6 +139,7 @@ class SchedulerTests(unittest.TestCase):
                 scheduler = BoundedScheduler(database, lease_id_factory=lambda: "caption-lease")
                 self.assertEqual("running", scheduler.start_module("job-1", "caption", enabled=True, profile="e621"))
                 scheduler.pause_future_module("job-1", "nl", total=1)
+                self.assertIsNone(database.module_summary("job-1", "nl")["started_at"])
 
                 caption_lease = scheduler.claim_batch(
                     "job-1", "caption", "caption-worker", str(database.get_job("job-1")["config_hash"])
@@ -362,6 +361,27 @@ class SchedulerTests(unittest.TestCase):
                 self.assertEqual("paused", database.module_summary("job-1", "caption")["status"])
             finally:
                 database.close()
+
+    def test_active_pause_stamps_zero_work_summary_as_started(self) -> None:
+        for module_id, active_status in (
+            ("count_review", "running"),
+            ("dropout", "running"),
+            ("export", "exporting"),
+        ):
+            with self.subTest(module_id=module_id), tempfile.TemporaryDirectory() as temporary:
+                database = self._database(Path(temporary), count=0)
+                try:
+                    database.initialize_module_summary(module_id=module_id, job_id="job-1", total=0, status="running")
+                    database.connection.execute(
+                        "UPDATE jobs SET status=?,current_module_id=? WHERE job_id='job-1'",
+                        (active_status, module_id),
+                    )
+                    database.pause_active_module("job-1", module_id, active_status=active_status)
+                    active = database.module_summary("job-1", module_id)
+                    self.assertEqual("paused", active["status"])
+                    self.assertIsNotNone(active["started_at"])
+                finally:
+                    database.close()
 
     def test_module_cannot_finish_until_all_work_is_settled(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

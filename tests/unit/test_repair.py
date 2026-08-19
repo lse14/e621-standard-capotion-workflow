@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import sys
 import tempfile
 import time
@@ -40,6 +41,80 @@ def _count_evidence(value: str = "solo") -> CountEvidenceV1:
 
 
 class RepairPreparationTests(unittest.TestCase):
+    def test_profileless_repair_inherits_frozen_custom_classification_resource(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            dataset = root / "dataset"
+            dataset.mkdir()
+            Image.new("RGB", (3, 3), "white").save(dataset / "target.png")
+            external_package = root / "external" / "classification"
+            shutil.copytree(
+                ROOT / "resource-library" / "classification-indexes" / "e621-classify-20260724-v1",
+                external_package,
+            )
+
+            config = JobConfig(
+                workMode="in_place", overwriteMode="incremental", sourceRoot=str(dataset),
+            )
+            config.caption["enabled"] = False
+            config.classify.update({
+                "enabled": True,
+                "indexMode": "custom",
+                "customResourcePath": str(external_package / "resource.json"),
+            })
+            config.classify.pop("resourceId", None)
+            config.replace["enabled"] = False
+            config.ocr["enabled"] = False
+            config.nl["enabled"] = False
+            config.countReview["enabled"] = False  # type: ignore[index]
+            config.dropout["enabled"] = False
+            config.dropout["quality"]["enabled"] = False
+            assert config.tokenBudget is not None
+            config.tokenBudget["enabled"] = False
+
+            preparation = JobPreparationService(root / "state.db")
+            parent_id = preparation.preflight(config.to_dict()).jobId
+            preparation.confirm_workspace(parent_id, confirmed=True, confirmed_rebuild=False)
+            database = StateDatabase.open(root / "state.db")
+            try:
+                parent = database.get_job(parent_id)
+                frozen = json.loads(str(parent["config_json"]))
+                manifest_relative = str(frozen["classify"]["resourceManifestRelativePath"])
+                fingerprint = str(frozen["classify"]["resourceFingerprint"])
+                self.assertNotIn("customResourcePath", frozen["classify"])
+                sample = database.page_samples(parent_id, limit=1)[0]
+                database.set_job_status(parent_id, "running", current_module_id="classify")
+                database.set_job_status(parent_id, "reviewing", current_module_id="export")
+                database.upsert_issue(SampleIssue(
+                    issueId="custom-classify-repair", jobId=parent_id,
+                    sampleId=int(sample["sample_id"]), relativeImagePath="target.png",
+                    moduleId="classify", code="retry_json", severity="error",
+                    blocking=True, retriable=True, repairStartModule="classify",
+                    message="retry", attempt=1,
+                ))
+            finally:
+                database.close()
+
+            shutil.rmtree(external_package.parent)
+            repair = RepairPreparationService(root / "state.db")
+            try:
+                self.assertTrue(preparation.release_lock_for_repair(parent_id))
+                result = repair.prepare(parent_id)
+                database = StateDatabase.open(root / "state.db")
+                try:
+                    child = database.get_job(result.repairJobId)
+                    self.assertEqual(frozen, json.loads(str(child["config_json"])))
+                    child_manifest = Path(result.overlayRoot) / "resources" / Path(
+                        manifest_relative.replace("\\", "/")
+                    )
+                    self.assertTrue(child_manifest.is_file())
+                    self.assertIn(fingerprint, manifest_relative)
+                finally:
+                    database.close()
+            finally:
+                repair.close()
+                preparation.close()
+
     def test_dropout_repair_runs_through_export_and_closes_the_parent_issue(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -57,6 +132,8 @@ class RepairPreparationTests(unittest.TestCase):
             config.dropout["enabled"] = True
             config.dropout["quality"]["enabled"] = False
             config.dropout["appearanceNl"]["enabled"] = False
+            assert config.tokenBudget is not None
+            config.tokenBudget["enabled"] = False
             preparation = JobPreparationService(root / "state.db")
             parent_id = preparation.preflight(config.to_dict()).jobId
             preparation.confirm_workspace(parent_id, confirmed=True, confirmed_rebuild=False)
@@ -79,7 +156,7 @@ class RepairPreparationTests(unittest.TestCase):
                 pipeline = PipelineService(root / "state.db", install_root=ROOT / ".runtime-build")
                 try:
                     pipeline.start(repair_job_id)
-                    for _ in range(200):
+                    for _ in range(500):
                         if not pipeline.is_running(repair_job_id):
                             break
                         time.sleep(0.01)
@@ -372,7 +449,7 @@ class RepairPreparationTests(unittest.TestCase):
                 repair.close()
                 preparation.close()
 
-    def test_v2_repair_preserves_frozen_version_and_does_not_create_count_rows(self) -> None:
+    def test_v9_repair_preserves_frozen_version_and_inherits_count_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             dataset = root / "dataset"
@@ -380,9 +457,9 @@ class RepairPreparationTests(unittest.TestCase):
             Image.new("RGB", (3, 3), "white").save(dataset / "target.png")
             config = JobConfig(
                 profile="e621", workMode="in_place", overwriteMode="incremental",
-                sourceRoot=str(dataset), schemaVersion=2, countReview=None,
+                sourceRoot=str(dataset), schemaVersion=9,
             )
-            config.nl["promptVersion"] = "nl-default-prompt-v1"
+            config.nl["promptVersion"] = "nl-default-prompt-v4"
             config.nl["systemPrompt"] = "describe the visible image"
             preparation = JobPreparationService(root / "state.db")
             parent_id = preparation.preflight(config.to_dict()).jobId
@@ -390,6 +467,19 @@ class RepairPreparationTests(unittest.TestCase):
             database = StateDatabase.open(root / "state.db")
             try:
                 sample = database.page_samples(parent_id, limit=1)[0]
+                evidence = _count_evidence()
+                now = "2026-08-18T00:00:00Z"
+                database.connection.execute(
+                    """INSERT INTO count_evidence(
+                           job_id,sample_id,schema_version,value,decision_json,
+                           review_warning_codes_json,created_at,updated_at
+                       ) VALUES (?,?,?,?,?,?,?,?)""",
+                    (
+                        parent_id, int(sample["sample_id"]), 1, evidence.value,
+                        evidence.decision_json, evidence.review_warning_codes_json,
+                        now, now,
+                    ),
+                )
                 database.set_job_status(parent_id, "running", current_module_id="dropout")
                 database.set_job_status(parent_id, "reviewing", current_module_id="export")
                 database.upsert_issue(SampleIssue(
@@ -408,10 +498,14 @@ class RepairPreparationTests(unittest.TestCase):
                 try:
                     child = database.get_job(result.repairJobId)
                     self.assertEqual(
-                        (2, parent["config_json"], parent["config_hash"]),
+                        (9, parent["config_json"], parent["config_hash"]),
                         (child["config_schema_version"], child["config_json"], child["config_hash"]),
                     )
-                    for table in ("count_evidence", "count_observations", "count_review_decisions"):
+                    self.assertEqual(1, database.connection.execute(
+                        "SELECT COUNT(*) FROM count_evidence WHERE job_id=?",
+                        (result.repairJobId,),
+                    ).fetchone()[0])
+                    for table in ("count_observations", "count_review_decisions"):
                         self.assertEqual(0, database.connection.execute(
                             f"SELECT COUNT(*) FROM {table} WHERE job_id=?", (result.repairJobId,)
                         ).fetchone()[0])
@@ -421,7 +515,7 @@ class RepairPreparationTests(unittest.TestCase):
                 repair.close()
                 preparation.close()
 
-    def test_v5_ocr_repair_targets_only_retriable_inference_failures(self) -> None:
+    def test_v9_ocr_repair_targets_only_retriable_inference_failures(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             dataset = root / "dataset"
@@ -430,9 +524,9 @@ class RepairPreparationTests(unittest.TestCase):
             Image.new("RGB", (3, 3), "black").save(dataset / "oversize.png")
             config = JobConfig(
                 profile="e621", workMode="in_place", overwriteMode="incremental",
-                sourceRoot=str(dataset), schemaVersion=5,
+                sourceRoot=str(dataset), schemaVersion=9,
             )
-            config.nl["promptVersion"] = "nl-default-prompt-v3"
+            config.nl["promptVersion"] = "nl-default-prompt-v4"
             config.caption["enabled"] = config.classify["enabled"] = config.replace["enabled"] = False
             config.nl["enabled"] = config.dropout["enabled"] = False
             config.countReview["enabled"] = False  # type: ignore[index]
@@ -483,7 +577,7 @@ class RepairPreparationTests(unittest.TestCase):
                 repair.close()
                 preparation.close()
 
-    def test_v6_token_budget_issue_repairs_from_token_budget_without_replaying_upstream(self) -> None:
+    def test_v9_token_budget_issue_repairs_from_token_budget_without_replaying_upstream(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             dataset = root / "dataset"
@@ -493,7 +587,7 @@ class RepairPreparationTests(unittest.TestCase):
                 "quality": [], "count": "solo", "character": "", "series": "", "artist": "",
                 "appearance": [], "tags": ["tag"], "environment": [], "nl": "",
             }))
-            config = JobConfig(schemaVersion=6, profile="e621", workMode="in_place", overwriteMode="incremental", sourceRoot=str(dataset))
+            config = JobConfig(schemaVersion=9, profile="e621", workMode="in_place", overwriteMode="incremental", sourceRoot=str(dataset))
             config.caption["enabled"] = config.classify["enabled"] = config.replace["enabled"] = config.ocr["enabled"] = config.nl["enabled"] = config.dropout["enabled"] = False
             config.countReview["enabled"] = False  # type: ignore[index]
             preparation = JobPreparationService(root / "state.db")

@@ -17,12 +17,12 @@
   },
   "oneOf": [
     {
-      "type": "object", "required": ["schemaVersion", "payloadType", "jobId", "configHash", "profile", "resourceManifestRelativePath", "resourceFingerprint"],
-      "properties": {"schemaVersion": {"const": 1}, "payloadType": {"const": "replace_hello_request"}, "profile": {"const": "e621"}, "jobId": {"type": "string"}, "configHash": {"type": "string", "pattern": "^[0-9a-f]{64}$"}, "resourceManifestRelativePath": {"type": "string", "minLength": 1}, "resourceFingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}, "additionalProperties": false
+      "type": "object", "required": ["schemaVersion", "payloadType", "jobId", "configHash", "resourceManifestRelativePath", "resourceFingerprint"],
+      "properties": {"schemaVersion": {"const": 1}, "payloadType": {"const": "replace_hello_request"}, "jobId": {"type": "string"}, "configHash": {"type": "string", "pattern": "^[0-9a-f]{64}$"}, "resourceManifestRelativePath": {"type": "string", "minLength": 1}, "resourceFingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}, "additionalProperties": false
     },
     {
-      "type": "object", "required": ["schemaVersion", "payloadType", "jobId", "configHash", "profile", "customIndexOverlayRoot", "customIndexPath", "customIndexSha256", "customIndexRuleCount"],
-      "properties": {"schemaVersion": {"const": 1}, "payloadType": {"const": "replace_hello_request"}, "profile": {"const": "e621"}, "jobId": {"type": "string"}, "configHash": {"type": "string", "pattern": "^[0-9a-f]{64}$"}, "customIndexOverlayRoot": {"type": "string", "minLength": 1}, "customIndexPath": {"type": "string", "minLength": 1}, "customIndexSha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}, "customIndexRuleCount": {"type": "integer", "minimum": 1, "maximum": 250000}}, "additionalProperties": false
+      "type": "object", "required": ["schemaVersion", "payloadType", "jobId", "configHash", "customIndexOverlayRoot", "customIndexPath", "customIndexSha256", "customIndexRuleCount"],
+      "properties": {"schemaVersion": {"const": 1}, "payloadType": {"const": "replace_hello_request"}, "jobId": {"type": "string"}, "configHash": {"type": "string", "pattern": "^[0-9a-f]{64}$"}, "customIndexOverlayRoot": {"type": "string", "minLength": 1}, "customIndexPath": {"type": "string", "minLength": 1}, "customIndexSha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}, "customIndexRuleCount": {"type": "integer", "minimum": 1, "maximum": 250000}}, "additionalProperties": false
     },
     {
       "type": "object", "required": ["schemaVersion", "payloadType", "ready", "indexLoads", "ruleCount", "resourceFingerprint", "keepNonCanonical", "canonicalDirectionConflict"],

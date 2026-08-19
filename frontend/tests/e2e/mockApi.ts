@@ -111,24 +111,13 @@ function resource(
 
 function createResources(): ResourceCatalogResponse {
   return {
-    schemaVersion: 2,
-    defaultsSchemaVersion: 2,
+    schemaVersion: 3,
+    defaultsSchemaVersion: 3,
     defaults: {
-      e621: {
-        taggingModel: "caption-e621-eva02-large-full-v1",
-        classificationIndex: "classify-e621-20260724-v1",
-        dropoutModel: "lse14-scorer-5k-v1",
-        replacementIndex: "replace-e621-20260726-v2",
-      },
-      danbooru: {
-        taggingModel: "caption-danbooru-cl-tagger-v2-00",
-        classificationIndex: "classify-danbooru-test-v1",
-        dropoutModel: "lse14-scorer-5k-v1",
-      },
-    },
-    profiles: {
-      e621: { available: true, missingDefaults: [] },
-      danbooru: { available: true, missingDefaults: [] },
+      taggingModel: "caption-e621-eva02-large-full-v1",
+      classificationIndex: "classify-e621-20260724-v1",
+      dropoutModel: "lse14-scorer-5k-v1",
+      replacementIndex: "replace-e621-20260726-v2",
     },
     resources: [
       resource("tagging-model", "caption-e621-eva02-large-full-v1", "E621 tagger", ["general"]),
@@ -180,7 +169,6 @@ export function makeSnapshot({
       currentModuleId,
       lastEventId: 7,
       apiBudgetExtra: 0,
-      profile: "e621",
       configSchemaVersion: schemaVersion,
       apiBudgetRevision: 0,
       pinned: false,
@@ -389,6 +377,7 @@ export function createApiScenario(): ApiScenario {
       source_dataset: "E:\\picked\\source",
       output_dataset: "E:\\picked\\output",
       replacement_csv: "E:\\picked\\replace.csv",
+      classification_resource_json: "E:\\picked\\resource.json",
     },
     failures: new Map(),
     holds: new Map(),
@@ -407,7 +396,6 @@ export function setJobSnapshot(scenario: ApiScenario, snapshot: JobSnapshot): vo
     jobId: snapshot.job.jobId,
     status: snapshot.job.status,
     currentModuleId: snapshot.job.currentModuleId ?? null,
-    profile: snapshot.job.profile,
     datasetRoot: "E:\\datasets\\browser-characterization",
     sampleCount: 3,
     pinned: snapshot.job.pinned,
@@ -624,7 +612,7 @@ async function handleApiRequest(scenario: ApiScenario, route: Route, pathname: s
       return fulfillJson(route, { detail: "ocr_resource_install_required: selected OCR resource is unavailable" }, 400);
     }
     const schemaVersion = config && (config as { schemaVersion?: unknown }).schemaVersion;
-    const snapshot = schemaVersion === 7 || schemaVersion === 8
+    const snapshot = schemaVersion === 7 || schemaVersion === 8 || schemaVersion === 9
       ? makeSnapshot({
         jobId: scenario.preflight.jobId,
         schemaVersion,

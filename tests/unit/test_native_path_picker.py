@@ -95,6 +95,17 @@ class NativePathPickerTests(unittest.TestCase):
         self.assertIn("UnmanagedType.LPArray", script)
 
     @patch("anima_core.native_path_picker.subprocess.run")
+    def test_windows_dialog_uses_a_resource_json_file_filter(self, run: object) -> None:
+        run.return_value = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")  # type: ignore[attr-defined]
+
+        self.assertIsNone(_select_with_windows_dialog("classification_resource_json", None))
+
+        command = run.call_args.args[0]  # type: ignore[attr-defined]
+        script = base64.b64decode(command[-1]).decode("utf-16-le")
+        self.assertIn("resource.json", script)
+        self.assertIn("FOS_FILEMUSTEXIST", script)
+
+    @patch("anima_core.native_path_picker.subprocess.run")
     def test_windows_dialog_uses_the_foreground_window_as_owner(self, run: object) -> None:
         run.return_value = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")  # type: ignore[attr-defined]
 
@@ -144,6 +155,24 @@ class NativePathPickerTests(unittest.TestCase):
         self.assertEqual(1, len(tkinter.roots))
         self.assertTrue(tkinter.roots[0].withdrawn)
         self.assertTrue(tkinter.roots[0].destroyed)
+
+    def test_classification_resource_uses_resource_json_file_filter_and_cancellation_is_none(self) -> None:
+        tkinter = FakeTk()
+        dialog = FakeFileDialog(file_result="")
+        picker = NativePathPicker(tk_loader=lambda: (tkinter, dialog))
+
+        self.assertIsNone(picker.select("classification_resource_json", r"E:\resources\resource.json"))
+
+        self.assertEqual((("resource.json", "resource.json"),), dialog.file_calls[0]["filetypes"])
+        self.assertEqual([], dialog.directory_calls)
+
+    def test_classification_resource_rejects_a_non_resource_json_filename(self) -> None:
+        tkinter = FakeTk()
+        dialog = FakeFileDialog(file_result=r"E:\resources\other.json")
+        picker = NativePathPicker(tk_loader=lambda: (tkinter, dialog))
+
+        with self.assertRaises(NativePathPickerUnavailableError):
+            picker.select("classification_resource_json", None)
 
     def test_invalid_purpose_busy_and_loader_failure_have_stable_errors(self) -> None:
         unavailable = NativePathPicker(tk_loader=lambda: (_ for _ in ()).throw(ImportError("missing")))

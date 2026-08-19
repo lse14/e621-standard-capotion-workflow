@@ -159,7 +159,7 @@ class CrashingNlTransport(FakeNlTransport):
 
 
 class NlFixture:
-    def __init__(self, root: Path, *, baseline_nl: str = "old caption", working_json: bool = True, sample_count: int = 1, schema_version: int = 3, profile: str = "e621") -> None:
+    def __init__(self, root: Path, *, baseline_nl: str = "old caption", working_json: bool = True, sample_count: int = 1, schema_version: int = 9, profile: str = "e621") -> None:
         self.dataset = root / "dataset"
         self.dataset.mkdir(parents=True)
         for sample_id in range(1, sample_count + 1):
@@ -188,7 +188,7 @@ class NlFixture:
         self.scheduler = BoundedScheduler(self.database, lease_id_factory=lambda: "lease-nl")
         for module in ("caption", "classify", "replace"):
             self.scheduler.start_module("job-nl", module, enabled=False, profile=profile)
-        if schema_version in {5, 6, 7, 8}:
+        if schema_version in {5, 6, 7, 8, 9}:
             # These focused NL tests start after the separately-owned OCR stage is final.
             self.scheduler.start_module("job-nl", "ocr", enabled=False, profile=profile)
         self.scheduler.start_module("job-nl", "nl", enabled=True, profile=profile)
@@ -222,7 +222,7 @@ class NlProtocolValidationTests(unittest.TestCase):
 class NlRunnerTests(unittest.TestCase):
     def test_api_enabled_json_only_is_rejected_before_worker_request(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
-            fixture = NlFixture(Path(temporary), baseline_nl="", schema_version=8)
+            fixture = NlFixture(Path(temporary), baseline_nl="", schema_version=9)
             try:
                 fixture.config.nl.update({
                     "enabled": True,
@@ -240,7 +240,7 @@ class NlRunnerTests(unittest.TestCase):
 
     def test_missing_local_image_is_issue_without_worker_request(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
-            fixture = NlFixture(Path(temporary), baseline_nl="", schema_version=8)
+            fixture = NlFixture(Path(temporary), baseline_nl="", schema_version=9)
             try:
                 (fixture.dataset / "sample.png").unlink()
                 fixture.config.nl.update({
@@ -260,10 +260,38 @@ class NlRunnerTests(unittest.TestCase):
             finally:
                 fixture.close()
 
+    def test_v9_profileless_missing_local_image_is_issue_without_worker_request(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = NlFixture(Path(temporary), baseline_nl="", schema_version=9)
+            try:
+                (fixture.dataset / "sample.png").unlink()
+                fixture.config.nl.update({
+                    "enabled": True,
+                    "apiEnabled": True,
+                    "reuseOriginalNl": False,
+                    "useImage": True,
+                    "useFullJson": False,
+                    "systemPrompt": "describe visible content",
+                })
+                fixture.refresh_config()
+                transport = FakeNlTransport()
+                self.assertEqual(
+                    "completed_with_issues",
+                    fixture.runner(
+                        transport,
+                        NlApiCredentials("https://example.test/v1", "model", "secret"),
+                    ).run(),
+                )
+                issue = fixture.database.page_issues("job-nl", limit=1)[0]
+                self.assertEqual(("nl_image_missing", 1, 0), (issue["code"], issue["blocking"], issue["retriable"]))
+                self.assertEqual((0, 0), (transport.hello, transport.process))
+            finally:
+                fixture.close()
+
     def test_terminal_api_failures_are_nonblocking_and_leave_the_sample_for_review(self) -> None:
         for issue_code in ("nl_api_unavailable", "nl_response_invalid"):
             with self.subTest(issue_code=issue_code), tempfile.TemporaryDirectory() as temporary:
-                fixture = NlFixture(Path(temporary), baseline_nl="", sample_count=2, schema_version=8)
+                fixture = NlFixture(Path(temporary), baseline_nl="", sample_count=2, schema_version=9)
                 try:
                     fixture.config.nl.update({
                         "enabled": True,
@@ -297,7 +325,7 @@ class NlRunnerTests(unittest.TestCase):
                     fixture.close()
 
     def test_api_enabled_configuration_requires_use_image(self) -> None:
-        config = JobConfig(schemaVersion=8, profile="e621", workMode="in_place", overwriteMode="incremental", sourceRoot="E:\\dataset")
+        config = JobConfig(schemaVersion=9, profile="e621", workMode="in_place", overwriteMode="incremental", sourceRoot="E:\\dataset")
         config.nl.update({"apiEnabled": True, "useImage": False, "useFullJson": True})
         with self.assertRaisesRegex(ValueError, "image"):
             validate_job_config(config)
@@ -305,7 +333,7 @@ class NlRunnerTests(unittest.TestCase):
     def test_v8_input_nl_completes_without_api_or_baseline_json(self) -> None:
         for injected_nl in ("from TXT", ""):
             with self.subTest(injected_nl=injected_nl), tempfile.TemporaryDirectory() as temporary:
-                fixture = NlFixture(Path(temporary), baseline_nl="unrelated baseline", schema_version=8)
+                fixture = NlFixture(Path(temporary), baseline_nl="unrelated baseline", schema_version=9)
                 try:
                     fixture.config.caption["inputTxtMode"] = "nl"
                     fixture.config.nl.update({
@@ -452,7 +480,7 @@ class NlRunnerTests(unittest.TestCase):
             "useImage": True,
             "useFullJson": True,
             "systemPrompt": "describe visible content",
-            "promptVersion": "nl-default-prompt-v3",
+            "promptVersion": "nl-default-prompt-v4",
         })
         fixture.config.ocr.update({"enabled": ocr_enabled, "llmMinConfidence": threshold})
         fixture.refresh_config()
@@ -466,11 +494,11 @@ class NlRunnerTests(unittest.TestCase):
         try:
             return fixture.runner(transport, NlApiCredentials("https://example.test/v1", "model", "secret")).run()
         except NlRunnerError as exc:
-            self.fail(f"v5 NL run must accept the frozen v3 prompt: {exc.code}: {exc}")
+            self.fail(f"v9 NL run must accept the frozen v4 prompt: {exc.code}: {exc}")
 
     def test_v6_and_v7_items_use_structured_preset_length_character_and_untrusted_context_fields(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
-            for schema_version in (6, 7):
+            for schema_version in (9,):
                 with self.subTest(schema_version=schema_version):
                     fixture = NlFixture(Path(temporary) / str(schema_version), baseline_nl="", schema_version=schema_version)
                     try:
@@ -520,7 +548,7 @@ class NlRunnerTests(unittest.TestCase):
             root = Path(temporary)
             for enabled in (True, False):
                 with self.subTest(ocr_enabled=enabled):
-                    fixture = NlFixture(root / str(enabled), baseline_nl="", schema_version=7)
+                    fixture = NlFixture(root / str(enabled), baseline_nl="", schema_version=9)
                     try:
                         fixture.config.nl.update({
                             "enabled": True,
@@ -556,7 +584,7 @@ class NlRunnerTests(unittest.TestCase):
 
     def test_v5_ocr_context_recomputes_threshold_and_preserves_order_and_duplicates(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
-            fixture = NlFixture(Path(temporary), baseline_nl="", schema_version=5)
+            fixture = NlFixture(Path(temporary), baseline_nl="", schema_version=9)
             try:
                 self._configure_v5(fixture, threshold=0.5)
                 image_bytes = (fixture.dataset / "sample.png").read_bytes()
@@ -580,7 +608,11 @@ class NlRunnerTests(unittest.TestCase):
                     item["ocrContext"],
                 )
                 self.assertEqual(
-                    {"schemaVersion", "sampleId", "leaseId", "relativeImagePath", "imagePath", "jsonContext", "ocrContext"},
+                    {
+                        "schemaVersion", "sampleId", "leaseId", "relativeImagePath", "imagePath",
+                        "captionPreset", "lengthTier", "primaryCharacterName", "userSupplement",
+                        "jsonContext", "ocrContext",
+                    },
                     set(item),
                 )
                 self.assertNotIn("confidence", json.dumps(item["ocrContext"]))
@@ -593,7 +625,7 @@ class NlRunnerTests(unittest.TestCase):
             root = Path(temporary)
             for mode in ("no_text", "disabled"):
                 with self.subTest(mode=mode):
-                    fixture = NlFixture(root / mode, baseline_nl="", schema_version=5)
+                    fixture = NlFixture(root / mode, baseline_nl="", schema_version=9)
                     try:
                         self._configure_v5(fixture, ocr_enabled=mode != "disabled")
                         if mode == "no_text":
@@ -622,7 +654,7 @@ class NlRunnerTests(unittest.TestCase):
                 ("invalid", "nl_ocr_sidecar_invalid"),
             ):
                 with self.subTest(state=state):
-                    fixture = NlFixture(root / state, baseline_nl="", schema_version=5)
+                    fixture = NlFixture(root / state, baseline_nl="", schema_version=9)
                     try:
                         self._configure_v5(fixture)
                         if state == "failed":
@@ -653,7 +685,7 @@ class NlRunnerTests(unittest.TestCase):
             root = Path(temporary)
             for extra_byte, expected_context, expected_warning in ((0, True, False), (1, False, True)):
                 with self.subTest(extra_byte=extra_byte):
-                    fixture = NlFixture(root / str(extra_byte), baseline_nl="", schema_version=5)
+                    fixture = NlFixture(root / str(extra_byte), baseline_nl="", schema_version=9)
                     try:
                         self._configure_v5(fixture)
                         image_bytes = (fixture.dataset / "sample.png").read_bytes()
@@ -682,7 +714,7 @@ class NlRunnerTests(unittest.TestCase):
     def test_danbooru_v4_uses_the_existing_single_nl_count_request(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             fixture = NlFixture(
-                Path(temporary), baseline_nl="", schema_version=4, profile="danbooru"
+                Path(temporary), baseline_nl="", schema_version=9, profile="danbooru"
             )
             try:
                 fixture.config.nl.update({
@@ -764,15 +796,19 @@ class NlRunnerTests(unittest.TestCase):
                 finally:
                     fixture.close()
 
-    def test_legacy_v2_job_uses_plain_nl_protocol_without_observation(self) -> None:
+    def test_legacy_v2_job_is_rejected_without_worker_request(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             fixture = NlFixture(Path(temporary), baseline_nl="", schema_version=2)
             try:
                 fixture.config.nl.update({"apiEnabled": True, "reuseOriginalNl": False, "useImage": True, "useFullJson": True, "systemPrompt": "describe"})
                 fixture.refresh_config()
                 transport = FakeNlTransport()
-                self.assertEqual("completed", fixture.runner(transport, NlApiCredentials("https://example.test/v1", "model", "secret")).run())
-                self.assertEqual(("nl-v1", 1), (transport.response_protocol, transport.process))
+                with self.assertRaisesRegex(NlRunnerError, "frozen NL configuration is invalid"):
+                    fixture.runner(
+                        transport,
+                        NlApiCredentials("https://example.test/v1", "model", "secret"),
+                    ).run()
+                self.assertEqual((0, 0), (transport.hello, transport.process))
                 self.assertEqual(0, len(fixture.database.page_count_observations("job-nl", limit=1)))
             finally:
                 fixture.close()

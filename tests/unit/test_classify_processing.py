@@ -62,6 +62,43 @@ def _work_item(text: str, provenance: str = "original_preserved") -> dict[str, o
 
 
 class ClassifyProcessingTests(unittest.TestCase):
+    def test_danbooru_temporary_fallback_uses_the_e621_classification_resource(self) -> None:
+        manifest = json.loads((RESOURCE_ROOT / Path(RESOURCE_MANIFEST.replace("\\", "/"))).read_text(encoding="utf-8"))
+        worker = ClassifyWorker()
+        try:
+            hello = worker.initialize({
+                "schemaVersion": 1,
+                "payloadType": "classify_hello_request",
+                "jobId": "job-danbooru-fallback",
+                "configHash": "a" * 64,
+                "profile": "danbooru",
+                "resourceManifestRelativePath": RESOURCE_MANIFEST,
+                "resourceFingerprint": RESOURCE_FINGERPRINT,
+                "wikiDataSourceId": manifest["metadata"]["wikiDataSourceId"],
+                "overwriteCount": False,
+                "captionFormat": {
+                    "replaceUnderscoresWithSpaces": True,
+                    "preserveEscapes": True,
+                    "triggersEnabled": False,
+                    "triggerTerms": [],
+                },
+            }, install_root=RESOURCE_ROOT)
+            self.assertEqual(120_978, hello["entryCount"])
+            result = worker.process({
+                "schemaVersion": 1,
+                "sampleId": 8,
+                "leaseId": "lease-8",
+                "source": "danbooru",
+                "relativeImagePath": "sample.png",
+                "annotationKey": "sample",
+                "txtText": "solo, blue eyes",
+                "txtProvenance": "module1_written",
+                "originalCount": None,
+            })
+            self.assertEqual(("classify_result", "solo"), (result["payloadType"], result["projection"]["count"]))
+        finally:
+            worker.close()
+
     def test_real_resource_initialization_and_processing(self) -> None:
         manifest = json.loads((RESOURCE_ROOT / Path(RESOURCE_MANIFEST.replace("\\", "/"))).read_text(encoding="utf-8"))
         worker = ClassifyWorker()

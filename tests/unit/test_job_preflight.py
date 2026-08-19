@@ -5,6 +5,7 @@ import importlib
 import importlib.util
 import json
 import os
+import shutil
 import sys
 import tempfile
 import unittest
@@ -187,6 +188,65 @@ def _write_test_resource_library(root: Path, *, include_ocr: bool) -> tuple[Reso
 
 
 class JobPreflightTests(unittest.TestCase):
+    def test_v9_config_has_no_task_profile_and_rejects_legacy_job_configs(self) -> None:
+        legacy = JobConfig(
+            profile="e621", workMode="in_place", overwriteMode="incremental",
+            sourceRoot="C:\\dataset", schemaVersion=8,
+        ).to_dict()
+        candidate = {
+            **legacy,
+            "schemaVersion": 9,
+            "classify": {
+                "enabled": True,
+                "indexMode": "bundled",
+                "resourceId": "classify-e621-20260724-v1",
+                "overwriteJson": False,
+                "overwriteCount": False,
+            },
+        }
+        candidate.pop("profile")
+        candidate["nl"]["systemPrompt"] = "Describe the visible image."
+
+        try:
+            parsed = config_from_dict(candidate)
+        except JobPreflightError as exc:
+            self.fail(f"JobConfig v9 without a task profile must be accepted: {exc}")
+        self.assertNotIn("profile", parsed.to_dict())
+        self.assertEqual("bundled", parsed.classify["indexMode"])
+
+        with self.assertRaisesRegex(JobPreflightError, "incompatible|reinitialize|重新初始化"):
+            config_from_dict(legacy)
+        candidate["profile"] = "e621"
+        with self.assertRaisesRegex(JobPreflightError, "profile|shape"):
+            config_from_dict(candidate)
+
+    def test_v9_classify_mode_rejects_mixed_client_inputs_and_frozen_metadata(self) -> None:
+        base = JobConfig(
+            profile="e621", workMode="in_place", overwriteMode="incremental",
+            sourceRoot="C:\\dataset", schemaVersion=8,
+        ).to_dict()
+        base.pop("profile")
+        base["schemaVersion"] = 9
+        base["nl"]["systemPrompt"] = "Describe the visible image."
+        base["classify"] = {
+            "enabled": True,
+            "indexMode": "custom",
+            "customResourcePath": "C:\\resources\\resource.json",
+            "overwriteJson": False,
+            "overwriteCount": False,
+        }
+
+        mixed = json.loads(json.dumps(base))
+        mixed["classify"]["resourceId"] = "classify-e621-20260724-v1"
+        with self.assertRaisesRegex(JobPreflightError, "custom|classify"):
+            config_from_dict(mixed)
+
+        frozen = json.loads(json.dumps(base))
+        frozen["classify"]["resourceManifestRelativePath"] = "classification-indexes\\custom\\resource.json"
+        frozen["classify"]["resourceFingerprint"] = "a" * 64
+        with self.assertRaisesRegex(JobPreflightError, "assigned by preflight"):
+            JobPreparationService._reject_client_frozen_resources(frozen)
+
     @staticmethod
     def _binding_api():
         spec = importlib.util.find_spec("anima_core.ocr_runtime_binding")
@@ -1113,6 +1173,57 @@ class JobPreflightTests(unittest.TestCase):
                 index.write_text("source_tag,canonical_e621_tag,action,replacement_tags\nold,,drop,\n", encoding="utf-8")
                 with self.assertRaisesRegex(JobPreflightError, "changed after preflight"):
                     service.confirm_workspace(summary.jobId, confirmed=True, confirmed_rebuild=False)
+            finally:
+                service.close()
+
+    def test_custom_classification_change_before_confirmation_leaves_no_workspace_or_claim(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "dataset"
+            source.mkdir()
+            Image.new("RGB", (3, 3), "white").save(source / "image.png")
+            external_package = root / "external" / "classification"
+            shutil.copytree(
+                ROOT / "resource-library" / "classification-indexes" / "e621-classify-20260724-v1",
+                external_package,
+            )
+            config = JobConfig(
+                workMode="in_place", overwriteMode="incremental", sourceRoot=str(source),
+            )
+            config.caption["enabled"] = False
+            config.classify.update({
+                "enabled": True,
+                "indexMode": "custom",
+                "customResourcePath": str(external_package / "resource.json"),
+            })
+            config.classify.pop("resourceId", None)
+            config.replace["enabled"] = False
+            config.ocr["enabled"] = False
+            config.nl["enabled"] = False
+            config.countReview["enabled"] = False  # type: ignore[index]
+            config.dropout["enabled"] = False
+            config.dropout["quality"]["enabled"] = False
+            assert config.tokenBudget is not None
+            config.tokenBudget["enabled"] = False
+
+            service = JobPreparationService(root / "state.db")
+            try:
+                summary = service.preflight(config.to_dict())
+                dictionary = external_package / "e621_tag_dictionary.json"
+                dictionary.write_bytes(dictionary.read_bytes() + b"\n")
+                with self.assertRaisesRegex(JobPreflightError, "changed after preflight"):
+                    service.confirm_workspace(summary.jobId, confirmed=True, confirmed_rebuild=False)
+
+                database = StateDatabase.open(root / "state.db")
+                try:
+                    job = database.get_job(summary.jobId)
+                    self.assertIsNone(job["overlay_root"])
+                    self.assertEqual(0, database.connection.execute(
+                        "SELECT COUNT(*) FROM dataset_claims WHERE job_id=?", (summary.jobId,),
+                    ).fetchone()[0])
+                finally:
+                    database.close()
+                self.assertFalse((source.parent / f".{source.name}.anima-overlay-{summary.jobId}").exists())
             finally:
                 service.close()
 

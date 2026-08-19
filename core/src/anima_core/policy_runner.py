@@ -13,7 +13,6 @@ from .contracts import (
     ProgressEvent,
     SampleIssue,
     WorkLease,
-    profile_supports_job_config_schema,
     sha256_json,
 )
 from .db import StateDatabase
@@ -86,13 +85,12 @@ class PolicyRunner:
             config = json.loads(str(job["config_json"]))
         except json.JSONDecodeError as exc:
             raise self._fatal("policy_protocol_violation", "frozen JobConfig is invalid JSON") from exc
-        profile = job["profile"]
         schema_version = config.get("schemaVersion") if isinstance(config, dict) else None
         if (
             not isinstance(config, dict)
             or sha256_json(config) != job["config_hash"]
-            or config.get("profile") != profile
-            or not profile_supports_job_config_schema(profile, schema_version)
+            or schema_version != 9
+            or "profile" in config
             or schema_version != int(job["config_schema_version"])
             or not isinstance(config.get("dropout"), dict)
         ):

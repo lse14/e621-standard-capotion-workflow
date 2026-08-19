@@ -11,6 +11,7 @@ from pathlib import Path
 from .caption_overlay import CaptionOverlayWriter
 from .caption_runner import CaptionRunner
 from .classify_overlay import ClassifyOverlayWriter
+from .classify_resource import ClassifyResourceError, load_classify_resource_from_install
 from .classify_runner import ClassifyRunner
 from .contracts import job_config_supports_caption_input_txt_mode, job_config_supports_ocr_device
 from .count_review_overlay import CountReviewOverlayWriter
@@ -37,7 +38,7 @@ from .replace_runner import ReplaceRunner
 from .resource_catalog import (
     ResourceCatalogError,
     ResourceKind,
-    danbooru_resource_install_message,
+    ResourcePackage,
 )
 from .scheduler import BoundedScheduler
 from .stdio_transport import StdioJsonlTransport
@@ -244,22 +245,13 @@ class PipelineDispatchMixin:
             raw_section = raw_section.get("quality")
         if not isinstance(raw_section, dict):
             raise PipelineError(f"frozen {module_id} resource selection is invalid")
-        profile = config.get("profile")
-        if not isinstance(profile, str):
-            raise PipelineError("frozen profile is invalid")
         try:
             snapshot = self.resource_catalog.scan()
-            resource_id = raw_section.get("resourceId", snapshot.defaults_for(profile)[default_key])
+            resource_id = raw_section.get("resourceId", snapshot.defaults_for()[default_key])
             if not isinstance(resource_id, str):
                 raise ResourceCatalogError(f"{module_id} resourceId is invalid")
-            package = snapshot.package(kind, resource_id, verify_hashes=False, profile=profile)
+            package = snapshot.package(kind, resource_id, verify_hashes=True)
         except ResourceCatalogError as exc:
-            if profile == "danbooru" and kind in {"tagging-model", "classification-index"}:
-                selected_id = raw_section.get("resourceId")
-                if isinstance(selected_id, str):
-                    raise PipelineError(
-                        danbooru_resource_install_message(kind, selected_id)
-                    ) from exc
             raise PipelineError(str(exc)) from exc
         relative = raw_section.get("resourceManifestRelativePath")
         fingerprint = raw_section.get("resourceFingerprint")
@@ -268,6 +260,70 @@ class PipelineDispatchMixin:
         if relative != package.manifest_relative_path or fingerprint != package.fingerprint:
             raise PipelineError(f"frozen {module_id} resource no longer matches the resource library")
         return package.manifest_relative_path, package.fingerprint
+
+    def _selected_catalog_package(self, config: dict[str, object], module_id: str) -> ResourcePackage:
+        mapping: dict[str, tuple[ResourceKind, str, str]] = {
+            "caption": ("tagging-model", "caption", "taggingModel"),
+            "classify": ("classification-index", "classify", "classificationIndex"),
+            "replace": ("replacement-index", "replace", "replacementIndex"),
+            "dropout": ("dropout-model", "dropout", "dropoutModel"),
+        }
+        try:
+            kind, section_name, default_key = mapping[module_id]
+        except KeyError as exc:
+            raise PipelineError(f"bundled resource selection is unsupported: {module_id}") from exc
+        section = config.get(section_name)
+        if module_id == "dropout" and isinstance(section, dict):
+            section = section.get("quality")
+        if not isinstance(section, dict):
+            raise PipelineError(f"frozen {module_id} resource selection is invalid")
+        resource_id = section.get("resourceId")
+        if not isinstance(resource_id, str):
+            resource_id = self.resource_catalog.scan().defaults_for()[default_key]
+        try:
+            package = self.resource_catalog.scan().package(kind, resource_id, verify_hashes=True)
+        except ResourceCatalogError as exc:
+            raise PipelineError(str(exc)) from exc
+        if (
+            section.get("resourceManifestRelativePath") != package.manifest_relative_path
+            or section.get("resourceFingerprint") != package.fingerprint
+        ):
+            raise PipelineError(f"frozen {module_id} resource no longer matches the resource library")
+        return package
+
+    def _selected_classify_resource(
+        self,
+        config: dict[str, object],
+        layout: OverlayLayout,
+    ) -> tuple[Path, str, str, str]:
+        section = config.get("classify")
+        if not isinstance(section, dict):
+            raise PipelineError("frozen classify resource selection is invalid")
+        if section.get("indexMode") == "custom":
+            relative = section.get("resourceManifestRelativePath")
+            fingerprint = section.get("resourceFingerprint")
+            if not isinstance(relative, str) or not isinstance(fingerprint, str):
+                raise PipelineError("frozen custom classification resource is incomplete")
+            root = Path(layout.root) / "resources"
+            try:
+                manifest, _ = load_classify_resource_from_install(
+                    root, relative, fingerprint, verify_hashes=True,
+                )
+            except ClassifyResourceError as exc:
+                raise PipelineError(f"frozen custom classification resource is invalid: {exc}") from exc
+            if (
+                section.get("resourceId") != manifest.resourceId
+                or section.get("resourceProfile") != manifest.profile
+                or section.get("dictionaryEntryCount") != manifest.dictionaryEntryCount
+                or section.get("wikiDataSourceId") != manifest.wikiDataSourceId
+            ):
+                raise PipelineError("frozen custom classification metadata does not match the overlay resource")
+            return root, relative, fingerprint, manifest.profile
+        package = self._selected_catalog_package(config, "classify")
+        section_profile = section.get("resourceProfile")
+        if section_profile != package.profile:
+            raise PipelineError("frozen classification resource metadata does not match the resource library")
+        return self.resource_root, package.manifest_relative_path, package.fingerprint, package.profile
 
     def _nl_credentials(self, config: dict[str, object]) -> NlApiCredentials:
         nl = config.get("nl")
@@ -296,24 +352,27 @@ class PipelineDispatchMixin:
         worker_instance_id = f"{module_id}-{uuid.uuid4().hex}"
         if module_id == "caption":
             resource_path, fingerprint = self._selected_resource(config, "caption")
-            classify_resource_path, _ = self._selected_resource(config, "classify")
+            caption_package = self._selected_catalog_package(config, "caption")
+            classify_root, classify_resource_path, classify_fingerprint, _ = self._selected_classify_resource(config, layout)
+            if classify_fingerprint != config["classify"]["resourceFingerprint"]:
+                raise PipelineError("frozen classification resource fingerprint changed")
             with self._spawn_transport("caption") as transport:
                 return CaptionRunner(database, scheduler, transport, job_id=job_id, worker_instance_id=worker_instance_id,
                     resource_manifest_relative_path=resource_path, resource_fingerprint=fingerprint,
+                    resource_profile=caption_package.profile,
                     classify_resource_manifest_relative_path=classify_resource_path,
+                    classify_install_root=classify_root,
                     result_consumer=CaptionOverlayWriter.open_for_job(database, job_id),
                     raw_e621_reader=raw_e621_reader,
                     install_root=self.resource_root).run().status
         if module_id == "classify":
-            resource_path, fingerprint = self._selected_resource(config, "classify")
+            classify_root, resource_path, fingerprint, _ = self._selected_classify_resource(config, layout)
             with self._spawn_transport("classify") as transport:
                 return ClassifyRunner(database, scheduler, transport, view, ClassifyOverlayWriter.open_for_job(database, job_id),
-                    job_id=job_id, worker_instance_id=worker_instance_id, install_root=self.resource_root,
+                    job_id=job_id, worker_instance_id=worker_instance_id, install_root=classify_root,
                     resource_manifest_relative_path=resource_path, resource_fingerprint=fingerprint,
                     raw_e621_reader=raw_e621_reader).run().status
         if module_id == "replace":
-            if job["profile"] != "e621":
-                raise PipelineError("Danbooru Replace must be completed by the scheduler profile skip")
             replace = config.get("replace")
             if not isinstance(replace, dict):
                 raise PipelineError("frozen replace configuration is invalid")

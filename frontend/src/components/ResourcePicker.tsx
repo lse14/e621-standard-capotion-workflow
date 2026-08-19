@@ -14,7 +14,7 @@ type ResourcePickerResource = ResourceSelectableResource & {
   distribution: { mode: "bundled" | "local-only"; sourceUrl?: string; licenseUrl?: string };
   adjustableCategories: string[];
   excludedCategories: string[];
-  defaultForProfiles: string[];
+  default?: boolean;
   officialModelId?: string;
 };
 
@@ -37,7 +37,6 @@ export type ResourcePickerProps = {
   id?: string;
   label: string;
   language: UiLanguage;
-  profile: string;
   selectedId: string;
   resources: ResourcePickerResource[];
   loading: boolean;
@@ -60,12 +59,12 @@ export type ResourcePickerProps = {
 };
 
 export function ResourcePicker({
-  id, label, language, profile, selectedId, resources, loading, error, invalidCount, selectionDisabled, refreshDisabled,
+  id, label, language, selectedId, resources, loading, error, invalidCount, selectionDisabled, refreshDisabled,
   note, guidance, guidanceCopy, copy, onChange, onRefresh,
 }: ResourcePickerProps) {
   const selected = resources.find((item) => item.resourceId === selectedId);
   const resourceName = (item: ResourcePickerResource) => item.displayName[language] || item.officialModelId || item.resourceId;
-  const recommended = resources.find((item) => item.defaultForProfiles.includes(profile));
+  const recommended = resources.find((item) => item.default === true);
   const effectiveGuidance = guidance ? { ...guidance, recommendation: recommended ? resourceName(recommended) : null } : undefined;
   const controlId = id ?? `resource-${selectedId || "picker"}`;
   const install = selected && !selected.available && selected.distribution.mode === "local-only"
@@ -85,7 +84,7 @@ export function ResourcePicker({
           {!loading && resources.length === 0 && <option value={selectedId}>{copy.unavailable}</option>}
           {!loading && selectedId && !selected && <option value={selectedId}>{selectedId}</option>}
           {!loading && resources.map((item) => <option key={item.resourceId} value={item.resourceId} disabled={!resourceSelectable(item)}>
-            {resourceName(item)}{item.defaultForProfiles.includes(profile) ? copy.defaultSuffix : ""}{!item.available ? ` - ${copy.notInstalled}` : ""}
+            {resourceName(item)}{item.default ? copy.defaultSuffix : ""}{!item.available ? ` - ${copy.notInstalled}` : ""}
           </option>)}
         </select>
         <button className="icon-button secondary" type="button" disabled={refreshDisabled || loading} onClick={onRefresh} title={refreshLabel} aria-label={refreshLabel}>

@@ -8,7 +8,6 @@ type TokenizerResource = {
   resourceVersion: string;
   available: boolean;
   compatibility: { status: string };
-  profile: string;
   displayName: Record<UiLanguage, string>;
   description: Record<UiLanguage, string>;
   distribution: { mode: "bundled" | "local-only"; sourceUrl?: string; licenseUrl?: string };
@@ -65,7 +64,6 @@ export function TokenBudgetStep({
       id="tokenizer-resource"
       label={t("tokenizerResource")}
       language={language}
-      profile="shared"
       selectedId={draft.tokenBudget.resourceId}
       resources={resources}
       loading={resourcesLoading}

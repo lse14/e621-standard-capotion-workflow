@@ -48,7 +48,12 @@ class ClassifyWorker:
             )
             if resource.wiki_data_source_id != hello["wikiDataSourceId"]:
                 raise ClassifyResourceError("classification resource Wiki data source does not match hello")
-            if resource.profile != hello["profile"]:
+            temporary_e621_fallback = (
+                hello["profile"] == "danbooru"
+                and resource.profile == "e621"
+                and resource.resource_id == "classify-e621-20260724-v1"
+            )
+            if resource.profile != hello["profile"] and not temporary_e621_fallback:
                 raise ClassifyResourceError("classification resource profile does not match hello")
             if resource.profile == "e621":
                 dictionary: E621Dictionary | DanbooruDictionary = E621Dictionary(resource.dictionary)
@@ -128,7 +133,12 @@ class ClassifyWorker:
                 str(item["txtProvenance"]),
             )
             projection = self.dictionary.classify(tags)
-            if self.hello["profile"] == "e621":
+            uses_e621_count_rules = (
+                self.resource.profile == "e621"
+                if self.resource is not None
+                else self.hello["profile"] == "e621"
+            )
+            if uses_e621_count_rules:
                 decision = decide_count(
                     item["originalCount"],  # type: ignore[arg-type]
                     projection.evidence_tags,

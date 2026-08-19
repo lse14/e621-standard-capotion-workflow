@@ -12,7 +12,7 @@ from .contracts import utc_now
 from .path_safety import canonicalize, windows_compare, windows_path_is_within
 
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 MAX_EVENT_RING = 10_000
 DEFAULT_PAGE_SIZE = 200
 MAX_PAGE_SIZE = 1_000
@@ -31,7 +31,6 @@ CREATE TABLE IF NOT EXISTS jobs (
     config_schema_version INTEGER NOT NULL,
     config_json TEXT NOT NULL,
     config_hash TEXT NOT NULL,
-    profile TEXT NOT NULL CHECK(profile IN ('e621', 'danbooru')),
     work_mode TEXT NOT NULL CHECK(work_mode IN ('in_place', 'full_copy')),
     overwrite_mode TEXT NOT NULL CHECK(overwrite_mode IN ('incremental', 'rebuild')),
     source_root TEXT NOT NULL,
@@ -357,6 +356,17 @@ def migrate(connection: sqlite3.Connection) -> int:
     current = int(connection.execute("PRAGMA user_version").fetchone()[0])
     if current > SCHEMA_VERSION:
         raise RuntimeError(f"unsupported database schema version: {current}")
+    if current in {1, 2, 3}:
+        raise RuntimeError(
+            f"legacy state database schema {current} is incompatible; reinitialize the state database"
+        )
+    if current == 0:
+        existing_tables = {
+            str(row[0])
+            for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        }
+        if existing_tables:
+            raise RuntimeError("unversioned state database is incompatible; reinitialize the state database")
     checksum = _schema_checksum()
     recorded = connection.execute(
         "SELECT checksum FROM schema_migrations WHERE version=?", (SCHEMA_VERSION,)

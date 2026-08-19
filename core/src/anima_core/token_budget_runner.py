@@ -7,7 +7,7 @@ import uuid
 from pathlib import Path
 from typing import Mapping, Protocol
 
-from .contracts import SampleIssue, WorkLease, job_config_supports_token_budget, profile_supports_job_config_schema, sha256_json
+from .contracts import SampleIssue, WorkLease, job_config_supports_token_budget, sha256_json
 from .db import StateDatabase
 from .overlay import WorkingAnnotationView
 from .scheduler import BoundedScheduler, SchedulerError
@@ -47,7 +47,7 @@ class TokenBudgetRunner:
             config = json.loads(str(job["config_json"]))
         except json.JSONDecodeError as exc:
             raise TokenBudgetRunnerError("frozen Token Budget configuration is invalid") from exc
-        if not isinstance(config, dict) or not job_config_supports_token_budget(config.get("schemaVersion")) or sha256_json(config) != job["config_hash"] or config.get("profile") != job["profile"] or not profile_supports_job_config_schema(str(job["profile"]), config.get("schemaVersion")):
+        if not isinstance(config, dict) or config.get("schemaVersion") != 9 or "profile" in config or not job_config_supports_token_budget(config.get("schemaVersion")) or sha256_json(config) != job["config_hash"]:
             raise TokenBudgetRunnerError("frozen Token Budget configuration is invalid")
         section = config.get("tokenBudget")
         caption_format = config.get("captionFormat")

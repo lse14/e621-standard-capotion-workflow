@@ -75,8 +75,9 @@ class ReplaceRunner:
         except json.JSONDecodeError as exc:
             raise self._fatal("replace_protocol_violation", "frozen JobConfig is invalid JSON") from exc
         if (
-            not isinstance(config, dict) or sha256_json(config) != job["config_hash"] or job["profile"] != "e621"
-            or config.get("profile") != "e621" or not isinstance(config.get("replace"), dict)
+            not isinstance(config, dict) or sha256_json(config) != job["config_hash"]
+            or config.get("schemaVersion") != 9 or "profile" in config
+            or not isinstance(config.get("replace"), dict)
         ):
             raise self._fatal("replace_protocol_violation", "frozen replace configuration is invalid")
         replace = config["replace"]
@@ -109,12 +110,12 @@ class ReplaceRunner:
         if replace["indexMode"] == "bundled":
             if not isinstance(self.resource_manifest_relative_path, str) or not isinstance(self.resource_fingerprint, str):
                 raise self._fatal("replace_resource_invalid", "bundled replace resource is missing")
-            request = {"schemaVersion": 1, "payloadType": "replace_hello_request", "jobId": self.job_id, "configHash": config_hash, "profile": "e621", "resourceManifestRelativePath": self.resource_manifest_relative_path, "resourceFingerprint": self.resource_fingerprint}
+            request = {"schemaVersion": 1, "payloadType": "replace_hello_request", "jobId": self.job_id, "configHash": config_hash, "resourceManifestRelativePath": self.resource_manifest_relative_path, "resourceFingerprint": self.resource_fingerprint}
             expected_fingerprint, expected_rules = self.resource_fingerprint, None
         else:
             if not all(isinstance(value, str) for value in (self.custom_index_path, self.custom_index_overlay_root, self.custom_index_sha256)) or type(self.custom_index_rule_count) is not int:
                 raise self._fatal("replace_resource_invalid", "custom replace resource is missing")
-            request = {"schemaVersion": 1, "payloadType": "replace_hello_request", "jobId": self.job_id, "configHash": config_hash, "profile": "e621", "customIndexOverlayRoot": self.custom_index_overlay_root, "customIndexPath": self.custom_index_path, "customIndexSha256": self.custom_index_sha256, "customIndexRuleCount": self.custom_index_rule_count}
+            request = {"schemaVersion": 1, "payloadType": "replace_hello_request", "jobId": self.job_id, "configHash": config_hash, "customIndexOverlayRoot": self.custom_index_overlay_root, "customIndexPath": self.custom_index_path, "customIndexSha256": self.custom_index_sha256, "customIndexRuleCount": self.custom_index_rule_count}
             expected_fingerprint, expected_rules = self.custom_index_sha256, self.custom_index_rule_count
         payload = self._exchange("hello", request, config_hash)
         rule_count = payload.get("ruleCount")

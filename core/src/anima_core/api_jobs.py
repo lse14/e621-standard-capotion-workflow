@@ -88,12 +88,12 @@ def build_jobs_router(context: ControlPlaneContext) -> APIRouter:
             predicate = "" if afterCreatedAt is None else " WHERE created_at<? OR (created_at=? AND job_id<?)"
             cursor: list[object] = [] if afterCreatedAt is None else [afterCreatedAt, afterCreatedAt, afterJobId]
             rows = list(database.connection.execute(
-                "SELECT job_id,status,current_module_id,profile,dataset_root,sample_count,pinned,created_at,finished_at"
+                "SELECT job_id,status,current_module_id,dataset_root,sample_count,pinned,created_at,finished_at"
                 f" FROM jobs{predicate} ORDER BY created_at DESC,job_id DESC LIMIT ?", [*cursor, limit],
             ))
             jobs = [{
                 "jobId": row["job_id"], "status": row["status"], "currentModuleId": row["current_module_id"],
-                "profile": row["profile"], "datasetRoot": row["dataset_root"], "sampleCount": row["sample_count"],
+                "datasetRoot": row["dataset_root"], "sampleCount": row["sample_count"],
                 "pinned": bool(row["pinned"]), "createdAt": row["created_at"], "finishedAt": row["finished_at"],
             } for row in rows]
             exhausted = len(jobs) < limit
@@ -161,7 +161,7 @@ def build_jobs_router(context: ControlPlaneContext) -> APIRouter:
             return {
                 "job": {
                     "jobId": job["job_id"], "status": job["status"], "currentModuleId": job["current_module_id"],
-                    "profile": job["profile"], "configSchemaVersion": job["config_schema_version"],
+                    "configSchemaVersion": job["config_schema_version"],
                     "lastEventId": job["last_event_id"], "apiBudgetExtra": job["api_budget_extra"],
                     "apiBudgetRevision": job["api_budget_revision"], "pinned": bool(job["pinned"]),
                     # F41: the frozen JobState fields (ROADMAP.md:1233-1246).

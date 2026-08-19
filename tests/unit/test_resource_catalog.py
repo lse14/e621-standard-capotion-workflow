@@ -769,9 +769,19 @@ class ResourceCatalogTests(unittest.TestCase):
         self.assertEqual("368c31b8af0e96cc61239097688a457a050dfcc1205d054d4e631bd20529c9ca", fingerprints[OCR_RESOURCE_ID])
         self.assertEqual(set(expected_existing) | {OCR_RESOURCE_ID}, set(fingerprints))
         self.assertEqual(2, snapshot.defaults_schema_version)
-        self.assertEqual({"e621"}, set(snapshot.api_dict()["profiles"]))
-        with self.assertRaisesRegex(ResourceCatalogError, "unavailable for profile: danbooru"):
-            snapshot.defaults_for("danbooru")
+        self.assertEqual({"danbooru", "e621"}, set(snapshot.api_dict()["profiles"]))
+        self.assertEqual(
+            {
+                "taggingModel": "caption-danbooru-cl-tagger-v2-00",
+                "classificationIndex": "classify-e621-20260724-v1",
+                "dropoutModel": "lse14-scorer-5k-v1",
+            },
+            snapshot.defaults_for("danbooru"),
+        )
+        fallback = snapshot.package(
+            "classification-index", "classify-e621-20260724-v1", verify_hashes=False, profile="danbooru",
+        )
+        self.assertEqual("e621", fallback.profile)
 
 
 if __name__ == "__main__":

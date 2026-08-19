@@ -203,7 +203,14 @@ class ResourcePackage:
         return package
 
     @classmethod
-    def load(cls, library_root: Path, manifest_path: Path, expected_kind: ResourceKind) -> "ResourcePackage":
+    def load(
+        cls,
+        library_root: Path,
+        manifest_path: Path,
+        expected_kind: ResourceKind,
+        *,
+        allow_external_package: bool = False,
+    ) -> "ResourcePackage":
         try:
             data = manifest_path.read_bytes()
         except OSError as exc:
@@ -300,11 +307,14 @@ class ResourcePackage:
                 "title": _text(record["title"], f"documentation[{index}].title"),
             })
         package_root = manifest_path.parent
-        expected_parent = library_root / directory
-        try:
-            ensure_within(expected_parent, package_root)
-        except PathSafetyError as exc:
-            raise ResourceCatalogError("resource package escaped its category") from exc
+        if not allow_external_package:
+            expected_parent = library_root / directory
+            try:
+                ensure_within(expected_parent, package_root)
+            except PathSafetyError as exc:
+                raise ResourceCatalogError("resource package escaped its category") from exc
+        elif expected_kind != "classification-index":
+            raise ResourceCatalogError("only classification packages may be loaded externally")
         relative_manifest = _relative(str(manifest_path.relative_to(library_root)), "manifest path")
         metadata = _metadata(
             expected_kind, value["metadata"], schema_version=schema_version, runtime_format=runtime_format,
@@ -362,11 +372,10 @@ class ResourcePackage:
             raise ResourceCatalogError(f"resource entrypoint is unavailable: {role}") from exc
 
     def verify_files(self, *, verify_hashes: bool) -> None:
-        if self.kind in {"ocr-model", "tokenizer"}:
-            try:
-                assert_no_reparse_tree(self.package_root)
-            except PathSafetyError as exc:
-                raise ResourceCatalogError(f"{self.kind} package contains a reparse point") from exc
+        try:
+            assert_no_reparse_tree(self.package_root)
+        except PathSafetyError as exc:
+            raise ResourceCatalogError(f"{self.kind} package contains a reparse point") from exc
         allowed = {"resource.json", *self.files, *(record["path"] for record in self.documentation)}
         actual = {
             str(path.relative_to(self.package_root)).replace("/", "\\")
@@ -434,7 +443,7 @@ class ResourcePackage:
     def api_dict(
         self,
         *,
-        default_for_profiles: tuple[str, ...] = (),
+        default: bool = False,
         compatibility: dict[str, str] | None = None,
     ) -> dict[str, object]:
         result: dict[str, object] = {
@@ -454,8 +463,7 @@ class ResourcePackage:
             "defaultThresholds": self.default_thresholds,
             "compatibility": compatibility or {"status": "not_applicable"},
             "available": True,
-            "default": bool(default_for_profiles),
-            "defaultForProfiles": list(default_for_profiles),
+            "default": default,
         }
         if self.kind == "tokenizer":
             if self.official_model_id is None or self.context_limit is None:

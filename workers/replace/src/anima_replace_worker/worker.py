@@ -20,10 +20,10 @@ class ReplaceWorker:
     def initialize(self, payload: object, *, install_root: Path) -> dict[str, object]:
         if self.resource is not None or not isinstance(payload, dict):
             raise ReplaceWorkerError("replace_protocol_violation", "replace hello payload is invalid")
-        common = {"schemaVersion", "payloadType", "jobId", "configHash", "profile"}
+        common = {"schemaVersion", "payloadType", "jobId", "configHash"}
         bundled = common | {"resourceManifestRelativePath", "resourceFingerprint"}
         custom = common | {"customIndexOverlayRoot", "customIndexPath", "customIndexSha256", "customIndexRuleCount"}
-        if (set(payload) != bundled and set(payload) != custom) or payload["schemaVersion"] != 1 or payload["payloadType"] != "replace_hello_request" or payload["profile"] != "e621":
+        if (set(payload) != bundled and set(payload) != custom) or payload["schemaVersion"] != 1 or payload["payloadType"] != "replace_hello_request":
             raise ReplaceWorkerError("replace_protocol_violation", "replace hello identity is invalid")
         try:
             if set(payload) == bundled:

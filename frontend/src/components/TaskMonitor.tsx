@@ -1,6 +1,5 @@
 export type TaskMonitorSnapshot = {
   status: string;
-  profile: string;
   currentModuleId: string | null;
   pinned: boolean;
   ocrRuntime: {
@@ -36,13 +35,12 @@ export type TaskMonitorProps = {
   loading: boolean;
   error: string | null;
   statusLabel: string;
-  profileLabel: string;
   currentModuleLabel: string;
   currentBatchLabel: string;
   rawE621ConvertedMessage: string | null;
   modules: TaskMonitorModule[];
   labels: {
-    taskOverview: string; taskProgress: string; annotationProfile: string; currentModule: string; currentBatch: string;
+    taskOverview: string; taskProgress: string; currentModule: string; currentBatch: string;
     taskActions: string; activeModule: string; pauseModule: (module: string) => string; resumeModule: (module: string) => string; terminateTask: string; recoverTask: string;
     pinTask: string; unpinTask: string; discardTask: string;
     additionalAttempts: string; addBudget: string; pendingApiDecisions: string; confirmUnknown: string;
@@ -71,7 +69,7 @@ function formatGiB(bytes: number): string {
 }
 
 export function TaskMonitor({
-  snapshot, loading, error, statusLabel, profileLabel, currentModuleLabel, currentBatchLabel, rawE621ConvertedMessage, modules, labels,
+  snapshot, loading, error, statusLabel, currentModuleLabel, currentBatchLabel, rawE621ConvertedMessage, modules, labels,
   canDiscard, budget, pendingApiDecisions, nlAwaitsDecision, pendingActions, onModuleControl, onTerminate, onRecover, onPin, onDiscard,
   onBudgetChange, onAddBudget, onConfirmUnknown, onRetry,
 }: TaskMonitorProps) {
@@ -88,7 +86,6 @@ export function TaskMonitor({
     {error && <div className="monitor-error"><p role="alert">{error}</p><button className="secondary" type="button" onClick={onRetry}>{labels.retryTask}</button></div>}
     {snapshot ? <>
       <dl className="facts">
-        <div><dt>{labels.annotationProfile}</dt><dd>{profileLabel}</dd></div>
         <div><dt>{labels.currentModule}</dt><dd>{currentModuleLabel}</dd></div>
         <div><dt>{labels.currentBatch}</dt><dd>{currentBatchLabel}</dd></div>
       </dl>

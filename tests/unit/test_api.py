@@ -164,8 +164,20 @@ class ControlPlaneApiTests(unittest.TestCase):
         scheduler = BoundedScheduler(database)
         for module in ("caption", "classify", "replace"):
             scheduler.start_module("job-api", module, enabled=False, profile="e621")
+        scheduler.start_module("job-api", "ocr", enabled=False, profile="e621")
         scheduler.start_module("job-api", "nl", enabled=True, profile="e621")
         database.close()
+
+    def test_job_list_and_snapshot_do_not_expose_task_profile(self) -> None:
+        list_jobs = _endpoint(self.app, "/api/jobs", "GET")
+        snapshot = _endpoint(self.app, "/api/jobs/{job_id}", "GET")
+        listed = list_jobs(afterCreatedAt=None, afterJobId=None, limit=200)
+        self.assertNotIn("profile", listed["jobs"][0])
+        current = snapshot(
+            "job-api", afterEventId=0, issueAfterSampleId=0,
+            issueAfterIssueId=None, limit=200,
+        )
+        self.assertNotIn("profile", current["job"])
 
     def tearDown(self) -> None:
         self.preparation.close()
@@ -632,35 +644,14 @@ class ControlPlaneApiTests(unittest.TestCase):
             "limit": 200,
         }
         current = snapshot("job-api", **arguments)
-        self.assertEqual(("e621", 3), (current["job"]["profile"], current["job"]["configSchemaVersion"]))
+        self.assertEqual(9, current["job"]["configSchemaVersion"])
+        self.assertNotIn("profile", current["job"])
         self.assertEqual(
-            ["caption", "classify", "replace", "nl", "count_review", "dropout", "export"],
+            [
+                "caption", "classify", "replace", "ocr", "nl", "count_review",
+                "dropout", "token_budget", "export",
+            ],
             current["moduleOrder"],
-        )
-
-        dataset = Path(self.temporary.name) / "dataset"
-        legacy = JobConfig(
-            profile="e621",
-            workMode="in_place",
-            overwriteMode="incremental",
-            sourceRoot=str(dataset),
-            countReview=None,
-            schemaVersion=2,
-        )
-        legacy.nl["promptVersion"] = "nl-default-prompt-v1"
-        database = StateDatabase.open(self.database_path)
-        try:
-            database.connection.execute(
-                "UPDATE jobs SET config_schema_version=?,config_json=?,config_hash=? WHERE job_id=?",
-                (2, json.dumps(legacy.to_dict()), legacy.config_hash, "job-api"),
-            )
-        finally:
-            database.close()
-        frozen_legacy = snapshot("job-api", **arguments)
-        self.assertEqual(("e621", 2), (frozen_legacy["job"]["profile"], frozen_legacy["job"]["configSchemaVersion"]))
-        self.assertEqual(
-            ["caption", "classify", "replace", "nl", "dropout", "export"],
-            frozen_legacy["moduleOrder"],
         )
 
     def test_policy_pause_and_resume_forward_to_the_pipeline(self) -> None:
@@ -1061,7 +1052,7 @@ class ControlPlaneApiTests(unittest.TestCase):
             database = StateDatabase.open(self.database_path)
             try:
                 if database.get_job(job_id)["status"] == "succeeded":
-                    self.assertEqual(7, len(database.module_summaries(job_id)))
+                    self.assertEqual(9, len(database.module_summaries(job_id)))
                     break
             finally:
                 database.close()
@@ -1259,7 +1250,7 @@ class ControlPlaneApiTests(unittest.TestCase):
         listing = _endpoint(self.app, "/api/jobs", "GET")
         first = listing(afterCreatedAt=None, afterJobId=None, limit=2)
         self.assertEqual(["job-newer", "job-api"], [job["jobId"] for job in first["jobs"]])
-        self.assertEqual(["e621", "e621"], [job["profile"] for job in first["jobs"]])
+        self.assertTrue(all("profile" not in job for job in first["jobs"]))
         self.assertEqual(("2026-07-24T00:00:00Z", "job-api"), (first["nextAfterCreatedAt"], first["nextAfterJobId"]))
         second = listing(afterCreatedAt=first["nextAfterCreatedAt"], afterJobId=first["nextAfterJobId"], limit=2)
         self.assertEqual(["job-older"], [job["jobId"] for job in second["jobs"]])
@@ -1319,6 +1310,7 @@ class ControlPlaneApiTests(unittest.TestCase):
             ("source_dataset", r"E:\\typed\\source"),
             ("output_dataset", r"E:\\typed\\output"),
             ("replacement_csv", r"E:\\typed\\rules.csv"),
+            ("classification_resource_json", r"E:\\typed\\resource.json"),
         ]
         for purpose, current_path in expected_calls:
             self.assertEqual(

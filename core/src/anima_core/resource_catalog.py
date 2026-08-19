@@ -12,7 +12,6 @@ from .resource_catalog_validation import (
     MAX_MANIFEST_BYTES,
     OCR_MODEL_DIRECTORY,
     TOKENIZER_DIRECTORY,
-    ProfileId,
     ResourceCatalogError,
     ResourceKind,
     _CACHE_LOCK,
@@ -21,16 +20,13 @@ from .resource_catalog_validation import (
 
 
 DEFAULT_KEYS = frozenset(layout[1] for layout in KIND_LAYOUT.values())
-PROFILE_DEFAULT_KEYS: dict[ProfileId, frozenset[str]] = {
-    "e621": DEFAULT_KEYS,
-    "danbooru": frozenset({"taggingModel", "classificationIndex", "dropoutModel"}),
-}
 DEFAULT_KIND = {layout[1]: kind for kind, layout in KIND_LAYOUT.items()}
 _COMPATIBILITY_CACHE: set[tuple[str, str]] = set()
 DANBOORU_TAGGER_SOURCE_URLS = {
     "caption-danbooru-cl-tagger-v2-00": "https://huggingface.co/cella110n/cl_tagger_v2/tree/main/v2_00",
     "caption-danbooru-wd-eva02-large-v3": "https://huggingface.co/SmilingWolf/wd-eva02-large-tagger-v3",
 }
+DANBOORU_CLASSIFICATION_FALLBACK_RESOURCE_ID = "classify-e621-20260724-v1"
 RESOURCE_PLACEHOLDERS: tuple[dict[str, object], ...] = (
     {
         "schemaVersion": 2,
@@ -108,12 +104,24 @@ def danbooru_resource_install_message(kind: ResourceKind, resource_id: str) -> s
             f"install it manually{source_text}. Automatic download and model fallback are disabled."
         )
     if kind == "classification-index":
+        if resource_id == DANBOORU_CLASSIFICATION_FALLBACK_RESOURCE_ID:
+            return (
+                "resource_install_required: temporary E621 classification fallback "
+                f"{resource_id} is unavailable in the top-level resource-library"
+            )
         return (
             "resource_install_required: selected Danbooru classification resource "
             f"{resource_id} is unavailable in the top-level resource-library; install or generate it before "
             "starting the task. E621 classification fallback is disabled."
         )
     return f"resource_install_required: selected Danbooru {kind} is unavailable: {resource_id}"
+
+
+def is_danbooru_e621_classification_fallback(resource_id: str, resource_profile: str) -> bool:
+    return (
+        resource_id == DANBOORU_CLASSIFICATION_FALLBACK_RESOURCE_ID
+        and resource_profile == "e621"
+    )
 
 
 @dataclass(frozen=True)
@@ -128,15 +136,12 @@ class InvalidResource:
 @dataclass(frozen=True)
 class ResourceCatalogSnapshot:
     defaults_schema_version: int
-    defaults: dict[str, dict[str, str]]
+    defaults: dict[str, str]
     packages: tuple[ResourcePackage, ...]
     invalid: tuple[InvalidResource, ...]
 
-    def defaults_for(self, profile: str) -> dict[str, str]:
-        try:
-            return self.defaults[profile]
-        except KeyError as exc:
-            raise ResourceCatalogError(f"resource defaults are unavailable for profile: {profile}") from exc
+    def defaults_for(self, profile: str | None = None) -> dict[str, str]:
+        return dict(self.defaults)
 
     def package(
         self,
@@ -150,23 +155,30 @@ class ResourceCatalogSnapshot:
             item for item in self.packages
             if item.kind == kind
             and item.resource_id == resource_id
-            and (profile is None or kind == "dropout-model" or item.profile == profile)
+            and (
+                profile is None
+                or kind == "dropout-model"
+                or item.profile == profile
+                or (
+                    kind == "classification-index"
+                    and profile == "danbooru"
+                    and is_danbooru_e621_classification_fallback(item.resource_id, item.profile)
+                )
+            )
         ]
         if len(matches) != 1:
             raise ResourceCatalogError(f"selected {kind} is unavailable: {resource_id}")
         matches[0].verify_files(verify_hashes=verify_hashes)
         return matches[0]
 
-    def missing_defaults(self, profile: str) -> tuple[dict[str, str], ...]:
+    def missing_defaults(self, profile: str | None = None) -> tuple[dict[str, str], ...]:
         defaults = self.defaults_for(profile)
         missing: list[dict[str, str]] = []
         for default_key, resource_id in sorted(defaults.items()):
             kind = DEFAULT_KIND[default_key]
             matches = [
                 item for item in self.packages
-                if item.kind == kind
-                and item.resource_id == resource_id
-                and (kind == "dropout-model" or item.profile == profile)
+                if item.kind == kind and item.resource_id == resource_id
             ]
             if len(matches) != 1:
                 missing.append({"kind": default_key, "resourceId": resource_id})
@@ -175,15 +187,13 @@ class ResourceCatalogSnapshot:
     def _compatibility(self, package: ResourcePackage) -> dict[str, str]:
         if package.kind != "tagging-model":
             return {"status": "not_applicable"}
-        defaults = self.defaults.get(package.profile)
-        classification_id = defaults.get("classificationIndex") if defaults else None
+        classification_id = self.defaults.get("classificationIndex")
         if classification_id is None:
             return {"status": "unavailable", "reason": "profile classification default is unavailable"}
         matches = [
             item for item in self.packages
             if item.kind == "classification-index"
             and item.resource_id == classification_id
-            and item.profile == package.profile
         ]
         if len(matches) != 1:
             return {
@@ -202,20 +212,9 @@ class ResourceCatalogSnapshot:
         return {"status": "compatible", "classificationResourceId": classification_id}
 
     def api_dict(self) -> dict[str, object]:
-        profile_states = {
-            profile: {
-                "available": not (missing := self.missing_defaults(profile)),
-                "missingDefaults": list(missing),
-            }
-            for profile in sorted(self.defaults)
-        }
         installed = {
             package.resource_id: package.api_dict(
-                default_for_profiles=tuple(
-                    profile
-                    for profile, defaults in sorted(self.defaults.items())
-                    if package.resource_id in defaults.values()
-                ),
+                default=package.resource_id in self.defaults.values(),
                 compatibility=self._compatibility(package),
             )
             for package in self.packages
@@ -227,21 +226,15 @@ class ResourceCatalogSnapshot:
                 "metadata": {},
                 "compatibility": {"status": "unavailable", "reason": "not_installed"},
                 "available": False,
-                "default": bool(default_for_profiles := [
-                    profile
-                    for profile, defaults in sorted(self.defaults.items())
-                    if definition["resourceId"] in defaults.values()
-                ]),
-                "defaultForProfiles": default_for_profiles,
+                "default": definition["resourceId"] in self.defaults.values(),
             }
             for definition in RESOURCE_PLACEHOLDERS
             if definition["resourceId"] not in installed
         }
         return {
-            "schemaVersion": 2,
+            "schemaVersion": 3,
             "defaultsSchemaVersion": self.defaults_schema_version,
             "defaults": self.defaults,
-            "profiles": profile_states,
             "resources": sorted(
                 (*installed.values(), *placeholders.values()),
                 key=lambda item: (str(item["kind"]), str(item["resourceId"])),
@@ -257,7 +250,7 @@ class ResourceCatalog:
         except PathSafetyError as exc:
             raise ResourceCatalogError(f"resource library root is unusable: {exc}") from exc
 
-    def _defaults(self) -> tuple[int, dict[str, dict[str, str]]]:
+    def _defaults(self) -> tuple[int, dict[str, str]]:
         path = self.root / "defaults.json"
         try:
             data = path.read_bytes()
@@ -268,31 +261,15 @@ class ResourceCatalog:
             raise ResourceCatalogError("defaults.json fields are invalid")
         defaults = value["defaults"]
         schema_version = value["schemaVersion"]
-        if schema_version == 1:
-            if not isinstance(defaults, dict) or set(defaults) != DEFAULT_KEYS:
-                raise ResourceCatalogError("defaults.json mapping is invalid")
-            result = {
-                key: _text(defaults[key], f"defaults.{key}", max_bytes=128)
-                for key in sorted(defaults)
-            }
-            if len(set(result.values())) != len(result):
-                raise ResourceCatalogError("default resource IDs must be unique")
-            return 1, {"e621": result}
-        if schema_version != 2 or not isinstance(defaults, dict) or not defaults or not set(defaults).issubset(PROFILE_DEFAULT_KEYS):
+        if schema_version != 3 or not isinstance(defaults, dict) or set(defaults) != DEFAULT_KEYS:
             raise ResourceCatalogError("defaults.json mapping is invalid")
-        normalized: dict[str, dict[str, str]] = {}
-        for profile in sorted(defaults):
-            required_keys = PROFILE_DEFAULT_KEYS[profile]
-            profile_defaults = defaults.get(profile)
-            if not isinstance(profile_defaults, dict) or set(profile_defaults) != required_keys:
-                raise ResourceCatalogError(f"defaults.{profile} mapping is invalid")
-            normalized[profile] = {
-                key: _text(profile_defaults[key], f"defaults.{profile}.{key}", max_bytes=128)
-                for key in sorted(profile_defaults)
-            }
-            if len(set(normalized[profile].values())) != len(normalized[profile]):
-                raise ResourceCatalogError(f"defaults.{profile} resource IDs must be unique")
-        return 2, normalized
+        normalized = {
+            key: _text(defaults[key], f"defaults.{key}", max_bytes=128)
+            for key in sorted(defaults)
+        }
+        if len(set(normalized.values())) != len(normalized):
+            raise ResourceCatalogError("default resource IDs must be unique")
+        return 3, normalized
 
     def scan(self, *, include_tokenizers: bool = True) -> ResourceCatalogSnapshot:
         defaults_schema_version, defaults = self._defaults()
@@ -361,12 +338,7 @@ class ResourceCatalog:
                     invalid.append(InvalidResource(package.manifest_relative_path, f"duplicate resourceId: {package.resource_id}"))
             loaded = [package for package in loaded if package.resource_id not in duplicates]
         snapshot = ResourceCatalogSnapshot(defaults_schema_version, defaults, tuple(loaded), tuple(invalid))
-        required_profiles = tuple(defaults) if defaults_schema_version == 1 else ("e621",)
-        missing_required = [
-            record["resourceId"]
-            for profile in required_profiles
-            for record in snapshot.missing_defaults(profile)
-        ]
+        missing_required = [record["resourceId"] for record in snapshot.missing_defaults()]
         if missing_required:
             raise ResourceCatalogError("default resources are unavailable: " + ", ".join(sorted(missing_required)))
         return snapshot
@@ -379,6 +351,13 @@ def verify_tagger_dictionary_compatibility(
     if tagging_model.kind != "tagging-model" or classification_index.kind != "classification-index":
         raise ResourceCatalogError("tagging compatibility requires a tagging model and classification index")
     if tagging_model.profile != classification_index.profile:
+        if (
+            tagging_model.profile == "danbooru"
+            and is_danbooru_e621_classification_fallback(
+                classification_index.resource_id, classification_index.profile,
+            )
+        ):
+            return
         raise ResourceCatalogError("tagging model and classification index profiles do not match")
     key = (tagging_model.fingerprint, classification_index.fingerprint)
     with _CACHE_LOCK:

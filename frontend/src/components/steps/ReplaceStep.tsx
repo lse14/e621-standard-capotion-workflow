@@ -10,7 +10,6 @@ type ReplaceIndexSummary = { mode: string; path?: string; sha256?: string; ruleC
 
 export type ReplaceStepProps = {
   draft: Pick<Draft, "replace">;
-  annotationProfile: string;
   taskLocked: boolean;
   language: UiLanguage;
   resources: ResourcePickerProps["resources"];
@@ -23,7 +22,7 @@ export type ReplaceStepProps = {
   t: Translate;
   guidanceCopy: FieldGuidanceCopy;
   copy: {
-    replaceSkipped: string; replaceMode: string; bundledIndex: string; customIndex: string; customIndexPath: string;
+    replaceMode: string; bundledIndex: string; customIndex: string; customIndexPath: string;
     customIndexHelp: string; replacementIndex: string; replacementIndexHelp: string; indexRules: string;
   };
   onReplaceChange: (patch: Partial<Draft["replace"]>) => void;
@@ -32,13 +31,9 @@ export type ReplaceStepProps = {
 };
 
 export function ReplaceStep({
-  draft, annotationProfile, taskLocked, language, resources, resourcesLoading, resourceError, invalidResourceCount,
+  draft, taskLocked, language, resources, resourcesLoading, resourceError, invalidResourceCount,
   resourcePickerCopy, pathPickerCopy, replaceIndex, t, guidanceCopy, copy, onReplaceChange, onIndexModeChange, onRefreshResources,
 }: ReplaceStepProps) {
-  if (annotationProfile === "danbooru") {
-    return <div className="option-stack"><p className="hint">{copy.replaceSkipped}</p></div>;
-  }
-
   return <div className="option-stack" data-config-surface="replace">
     <ToggleField id="replace-enabled" label={t("enableReplacement")} checked={draft.replace.enabled} disabled={taskLocked} onChange={(enabled) => onReplaceChange({ enabled })} copy={guidanceCopy} guidance={{ description: t("fieldHelp_enableReplacement"), defaultValue: draft.replace.enabled ? t("fieldEnabled") : t("fieldDisabled") }} />
     <FormField id="replace-mode" label={copy.replaceMode} copy={guidanceCopy} guidance={{ description: t("fieldHelp_replaceMode"), defaultValue: copy.bundledIndex }}>
@@ -46,7 +41,7 @@ export function ReplaceStep({
     </FormField>
     {draft.replace.indexMode === "bundled" && <ResourcePicker
       id="replace-resource"
-      label={copy.replacementIndex} language={language} profile={annotationProfile} selectedId={draft.replace.resourceId ?? ""} resources={resources}
+      label={copy.replacementIndex} language={language} selectedId={draft.replace.resourceId ?? ""} resources={resources}
       loading={resourcesLoading} error={resourceError} invalidCount={invalidResourceCount}
       guidance={{ description: t("fieldHelp_replaceMode") }} guidanceCopy={guidanceCopy}
       selectionDisabled={taskLocked || !draft.replace.enabled} refreshDisabled={taskLocked} note={copy.replacementIndexHelp} copy={resourcePickerCopy}

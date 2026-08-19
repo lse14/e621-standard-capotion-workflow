@@ -85,7 +85,7 @@ class PolicyRunnerTests(unittest.TestCase):
         preparation.confirm_workspace(job_id, confirmed=True, confirmed_rebuild=False)
         database = StateDatabase.open(root / "state.db")
         scheduler = BoundedScheduler(database)
-        for module in ("caption", "classify", "replace", "nl"):
+        for module in ("caption", "classify", "replace", "ocr", "nl"):
             scheduler.start_module(job_id, module, enabled=False, profile="e621")
         scheduler.start_module(job_id, "count_review", enabled=False, profile="e621")
         scheduler.start_module(job_id, "dropout", enabled=True, profile="e621")

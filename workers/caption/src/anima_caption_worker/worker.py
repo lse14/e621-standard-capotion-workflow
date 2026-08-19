@@ -114,11 +114,6 @@ class CaptionWorker:
         if self.hello is None or self.model is None or self.dataset_root is None or self.thresholds is None:
             raise CaptionWorkerInitializationError("caption_protocol_violation", "caption worker is not initialized")
         item = validate_work_item(value)
-        if item["source"] != self.hello["profile"]:
-            raise CaptionWorkerInitializationError(
-                "caption_protocol_violation",
-                "caption work item source does not match initialized profile",
-            )
         try:
             image = load_image_rgb(self.dataset_root, item)
             tensor = self.model.preprocess(image)

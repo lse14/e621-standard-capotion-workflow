@@ -63,7 +63,8 @@ STATE_DATABASE_API = frozenset({
 
 PIPELINE_SERVICE_API = frozenset({
     "_active_module_status", "_nl_credentials", "_ocr_binding_path", "_probe_ocr_gpu_runtime", "_recover_policy_prepared", "_recovery_target_status", "_resolve_ocr_runtime", "_run", "_run_active_module",
-    "_run_module_with_restarts", "_selected_resource", "_spawn_transport", "_thread_main",
+    "_run_module_with_restarts", "_selected_catalog_package", "_selected_classify_resource", "_selected_resource",
+    "_spawn_transport", "_thread_main",
     "_spawn_ocr_transport", "_select_ocr_runtime", "_token_budget_export_gate", "_verify_source_fingerprints", "close", "confirm_count_review", "is_running", "pause", "pause_module", "recover_job",
     "recover_pending_commits", "resume", "resume_module", "shutdown", "start", "startup_recovery",
 })
@@ -83,7 +84,7 @@ RESOURCE_VALIDATION_FUNCTIONS = frozenset({
 
 API_REQUEST_MODELS = frozenset({
     "_AmountBody", "_ConfirmBody", "_CountReviewBatchBody", "_CountReviewBatchItem",
-    "_CountReviewDecisionBody", "_NlDiagnosticCredentialsBody", "_NlManualRetryBody", "_NlManualWriteBody", "_NlModelDiscoveryBody",
+    "_CountReviewDecisionBody", "_NlDiagnosticCredentialsBody", "_NlManualRetryBatchBody", "_NlManualRetryBody", "_NlManualWriteBody", "_NlModelDiscoveryBody",
     "_NlPromptPresetBody", "_NlTestMessageBody", "_PinBody", "_PreflightBody", "_ProfileBody", "_SelectPathBody",
     "_SecretBody", "_ShutdownBody", "_TokenBudgetApplyBody", "_TokenBudgetRecountBody",
     "_TokenBudgetRewriteShortBody", "_WorkspaceBody",
@@ -146,6 +147,7 @@ API_NL_ROUTES = frozenset({
     ("POST", "/api/jobs/{job_id}/nl/api-budget"),
     ("POST", "/api/jobs/{job_id}/nl/confirm-api-outcomes"),
     ("POST", "/api/jobs/{job_id}/nl/manual-retry"),
+    ("POST", "/api/jobs/{job_id}/nl/manual-retry-batch"),
     ("POST", "/api/jobs/{job_id}/nl/manual-write"),
 })
 

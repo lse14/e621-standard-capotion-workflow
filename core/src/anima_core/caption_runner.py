@@ -150,12 +150,18 @@ def verify_tagger_dictionary_coverage(
     install_root: str | Path,
     caption_manifest_relative_path: str,
     classify_manifest_relative_path: str = CLASSIFY_RESOURCE_MANIFEST_RELATIVE_PATH,
+    *,
+    classify_install_root: str | Path | None = None,
 ) -> None:
     """Fail the batch when a shipped tagger label has no classification entry."""
     root = Path(install_root)
     tags_path = _resource_entrypoint(root, caption_manifest_relative_path, "caption", "tags", "tags.json")
     dictionary_path = _resource_entrypoint(
-        root, classify_manifest_relative_path, "classify", "dictionary", "e621_tag_dictionary.json"
+        Path(classify_install_root) if classify_install_root is not None else root,
+        classify_manifest_relative_path,
+        "classify",
+        "dictionary",
+        "e621_tag_dictionary.json",
     )
     tag_names = _resource_json(tags_path, "tag_names", "caption")
     entries = _resource_json(dictionary_path, "entries", "classify")
@@ -245,7 +251,9 @@ class CaptionRunner:
         resource_manifest_relative_path: str,
         resource_fingerprint: str,
         result_consumer: CaptionResultConsumer,
+        resource_profile: str = "e621",
         classify_resource_manifest_relative_path: str = CLASSIFY_RESOURCE_MANIFEST_RELATIVE_PATH,
+        classify_install_root: str | Path | None = None,
         progress_consumer: CaptionProgressConsumer | None = None,
         install_root: str | Path | None = None,
         raw_e621_reader: RawE621Reader | None = None,
@@ -261,7 +269,9 @@ class CaptionRunner:
         self.worker_instance_id = worker_instance_id
         self.resource_manifest_relative_path = resource_manifest_relative_path
         self.resource_fingerprint = resource_fingerprint
+        self.resource_profile = resource_profile
         self.classify_resource_manifest_relative_path = classify_resource_manifest_relative_path
+        self.classify_install_root = classify_install_root
         self.result_consumer = result_consumer
         self.progress_consumer = progress_consumer
         self.install_root = install_root
@@ -276,7 +286,7 @@ class CaptionRunner:
 
     def _build_hello(self) -> tuple[CaptionHelloRequestV1, _CaptionExecutionPolicy]:
         job = self.database.get_job(self.job_id)
-        profile = job["profile"]
+        profile = self.resource_profile
         if profile not in {"e621", "danbooru"}:
             raise CaptionRunnerFatalError("caption_profile_mismatch", "caption runner profile is unsupported")
         try:
@@ -289,16 +299,14 @@ class CaptionRunner:
                 "frozen JobConfig does not match its persisted configHash",
             )
         config_schema_version = config.get("schemaVersion")
-        supported_versions = {2, 3, 4, 8} if profile == "e621" else {4, 8}
         if (
-            config.get("profile") != profile
-            or type(config_schema_version) is not int
-            or config_schema_version not in supported_versions
+            config_schema_version != 9
+            or "profile" in config
             or config_schema_version != int(job["config_schema_version"])
         ):
             raise CaptionRunnerFatalError(
                 "caption_profile_mismatch",
-                "frozen JobConfig profile or schema version is unsupported",
+                "frozen JobConfig schema version is unsupported",
             )
         caption = config.get("caption")
         if not isinstance(caption, dict) or caption.get("enabled") is not True:
@@ -605,6 +613,7 @@ class CaptionRunner:
                     self.install_root,
                     self.resource_manifest_relative_path,
                     self.classify_resource_manifest_relative_path,
+                    classify_install_root=self.classify_install_root,
                 )
             publisher.publish("running")
             while True:

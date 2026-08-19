@@ -3,7 +3,7 @@ import {
   addNlBudget, cancelJob, confirmNlOutcomes, confirmWorkspace, deleteNlSecret, discardJob, listNlProfiles, manualNlRetry, manualNlRetryBatch, manualNlWrite,
   pauseModule, preflightJob, recoverJob, restoreOriginalAnnotations, resumeModule, saveNlProfile,
   setJobPin, repairJob, saveNlSecret, startPipeline, type NlProfile, type OcrExecutionRequest, type PreflightSummary,
-  type AnnotationProfile, type PipelineModuleId, type ResourceCatalogResponse, type ResourceKind,
+  type PipelineModuleId, type ResourceCatalogResponse, type ResourceKind,
 } from "./api";
 import { CountReviewPanel } from "./CountReviewPanel";
 import { IssuePanel } from "./components/IssuePanel";
@@ -104,7 +104,7 @@ export function App() {
     const guides: Record<PipelineModuleId, readonly string[]> = {
       caption: copy.captionGuide,
       classify: copy.classifyGuide,
-      replace: draft.profile === "danbooru" ? copy.replaceSkippedGuide : copy.replaceGuide,
+      replace: copy.replaceGuide,
       ocr: copy.ocrGuide,
       nl: copy.nlGuide,
       count_review: copy.countReviewGuide,
@@ -116,7 +116,7 @@ export function App() {
       { id: "setup" as StepId, title: copy.setup, guide: copy.setupGuide },
       ...moduleOrder.map((id) => ({ id: id as StepId, title: moduleLabel(language, id), guide: guides[id] })),
     ];
-  }, [copy, draft.profile, language, moduleOrder]);
+  }, [copy, language, moduleOrder]);
 
   const updateSection = <K extends DraftSectionKey>(name: K, patch: Partial<Draft[K]>) => {
     setPreflight(null);
@@ -164,41 +164,6 @@ export function App() {
         taggerFallbackOnMissingTxt: current.caption.taggerFallbackOnMissingTxt,
         resourceId,
       }));
-  };
-  const selectAnnotationProfile = (nextProfile: AnnotationProfile) => {
-    const defaults = resourceCatalog?.defaults[nextProfile];
-    if (!defaults) return;
-    const classification = resourceCatalog?.resources.find(
-      (item) => item.kind === "classification-index" && item.resourceId === defaults.classificationIndex,
-    );
-    setPreflight(null);
-    setDraft((current) => ({
-      ...current,
-      schemaVersion: 8,
-      profile: nextProfile,
-      caption: {
-        enabled: current.caption.inputTxtMode === "nl" || current.caption.enabled,
-        thresholdMode: "model_default",
-        overwriteTxt: false,
-        inputTxtMode: current.caption.inputTxtMode,
-        taggerFallbackOnMissingTxt: current.caption.taggerFallbackOnMissingTxt,
-        resourceId: defaults.taggingModel,
-      },
-      classify: {
-        ...current.classify,
-        resourceId: defaults.classificationIndex,
-        wikiDataSourceId: typeof classification?.metadata.wikiDataSourceId === "string"
-          ? classification.metadata.wikiDataSourceId
-          : current.classify.wikiDataSourceId,
-      },
-      replace: nextProfile === "danbooru"
-        ? { enabled: false, indexMode: "bundled" }
-        : { enabled: true, indexMode: "bundled", resourceId: defaults.replacementIndex },
-      dropout: {
-        ...current.dropout,
-        quality: { ...current.dropout.quality, resourceId: defaults.dropoutModel },
-      },
-    }));
   };
   const updateCategoryThreshold = (category: string, value: string) => {
     setPreflight(null);
@@ -389,9 +354,6 @@ export function App() {
   };
 
   const rebuild = draft.overwriteMode === "rebuild";
-  const annotationProfile = draft.profile as AnnotationProfile;
-  const profileLabel = (value: AnnotationProfile) => value === "danbooru" ? copy.profileDanbooru : copy.profileE621;
-  const profileDisplay = profileLabel(annotationProfile);
   const classifyEnabled = Boolean(draft.classify.enabled);
   const classificationResourceActive = classifyEnabled || Boolean(draft.caption.enabled);
   const enabledModules = draftModuleOrder
@@ -410,13 +372,10 @@ export function App() {
   const currentModuleNumber = currentStep.id === "setup" ? null : moduleOrder.indexOf(currentStep.id) + 1;
   const workflowRailSteps = steps.map((step, index) => {
     const summary = step.id === "setup" ? null : snapshot?.modules.find((module) => module.module_id === step.id);
-    const profileSkipped = step.id === "replace" && annotationProfile === "danbooru";
     const complete = step.id === "setup"
       ? Boolean(preflight)
-      : profileSkipped || Boolean(summary && ["completed", "completed_with_issues", "skipped", "skipped_not_available"].includes(summary.status));
-    const label = profileSkipped
-      ? statusLabel(language, "skipped")
-      : index === visibleStepIndex ? copy.current : complete ? copy.completed : index < visibleStepIndex ? copy.visited : copy.pending;
+      : Boolean(summary && ["completed", "completed_with_issues", "skipped", "skipped_not_available"].includes(summary.status));
+    const label = index === visibleStepIndex ? copy.current : complete ? copy.completed : index < visibleStepIndex ? copy.visited : copy.pending;
     return {
       id: step.id,
       title: step.title,
@@ -427,6 +386,7 @@ export function App() {
   });
   const stepReady = visibleStepIndex !== 0 || Boolean(preflight);
   const taskLocked = Boolean(workspaceReady || (snapshot && (isActiveJobStatus(snapshot.job.status) || snapshot.job.status === "reviewing")));
+  const configurationLocked = taskLocked || isActionPending("preflight");
   const orderedModules = snapshot?.moduleOrder.map((id) => snapshot.modules.find((module) => module.module_id === id) ?? {
     module_id: id, status: "pending", completed: 0, failed: 0, skipped: 0, total: 0, issue_count: 0,
   }) ?? [];
@@ -436,19 +396,18 @@ export function App() {
     return index >= 0 ? `${t("moduleNumber", { number: index + 1 })} ${label}` : label;
   };
   const resourcesOf = (kind: ResourceKind) => resourceCatalog?.resources.filter((item) =>
-    item.kind === kind && (kind === "dropout-model" || kind === "ocr-model" || kind === "tokenizer" || item.profile === annotationProfile),
+    item.kind === kind,
   ) ?? [];
   const resourceFor = (kind: ResourceKind, resourceId: unknown) => resourceCatalog?.resources.find((item) =>
-    item.kind === kind && item.resourceId === resourceId
-    && (kind === "dropout-model" || kind === "ocr-model" || kind === "tokenizer" || item.profile === annotationProfile),
+    item.kind === kind && item.resourceId === resourceId,
   );
   const ocrResource = resourceFor("ocr-model", draft.ocr.resourceId);
   const tokenizerResource = resourceFor("tokenizer", draft.tokenBudget.resourceId);
   const requiredResources = [
     resourceFor("tagging-model", draft.caption.resourceId),
-    resourceFor("classification-index", draft.classify.resourceId),
+    ...(draft.classify.indexMode === "bundled" ? [resourceFor("classification-index", draft.classify.resourceId)] : []),
     resourceFor("dropout-model", draft.dropout.quality.resourceId),
-    ...(annotationProfile === "e621" && draft.replace.indexMode === "bundled"
+    ...(draft.replace.indexMode === "bundled"
       ? [resourceFor("replacement-index", draft.replace.resourceId)]
       : []),
     ...(draft.tokenBudget.enabled ? [tokenizerResource] : []),
@@ -457,7 +416,8 @@ export function App() {
     item?.available && !["incompatible", "unavailable"].includes(item.compatibility.status)
   ));
   const resourceProblemNames = resourceProblems.map((item) => item?.displayName[language] || item?.officialModelId || item?.resourceId || copy.resourceUnavailable);
-  const profileResourcesReady = Boolean(resourceCatalog) && resourceProblems.length === 0;
+  const classificationPathReady = draft.classify.indexMode === "bundled" || Boolean(draft.classify.customResourcePath?.trim());
+  const profileResourcesReady = Boolean(resourceCatalog) && resourceProblems.length === 0 && classificationPathReady;
   const resourcePickerCopy = {
     loading: copy.resourceLoading,
     unavailable: copy.resourceUnavailable,
@@ -496,7 +456,6 @@ export function App() {
   const taskMonitorLabels = {
     taskOverview: copy.taskOverview,
     taskProgress: t("taskProgress"),
-    annotationProfile: copy.annotationProfile,
     currentModule: t("currentModule"),
     currentBatch: t("currentBatch"),
     taskActions: copy.taskActions,
@@ -567,18 +526,9 @@ export function App() {
     </dl>
   </details>;
 
-  const profileSelector = <section className="profile-selector top-profile-selector">
-    <span>{copy.annotationProfile}</span>
-    <div className="profile-switch" role="group" aria-label={copy.annotationProfile}>
-      <button type="button" className={annotationProfile === "e621" ? "selected" : ""} disabled={taskLocked} onClick={() => selectAnnotationProfile("e621")}>{copy.profileE621}</button>
-      <button type="button" className={annotationProfile === "danbooru" ? "selected" : ""} disabled={taskLocked} onClick={() => selectAnnotationProfile("danbooru")}>{copy.profileDanbooru}</button>
-    </div>
-    {!resourcesLoading && !profileResourcesReady && <small className="resource-warning" role="status">{copy.profileMissing(resourceProblemNames.join(" / "))}</small>}
-  </section>;
-
   const countReviewContent = <>
     <div className="option-stack count-review-config">
-      <ToggleField id="count-review-enabled" label={t("enableCountReview")} checked={draft.countReview.enabled} disabled={taskLocked} onChange={(enabled) => updateSection("countReview", { enabled })} copy={guidanceCopy} guidance={{ description: t("fieldHelp_countReviewEnabled"), defaultValue: draftDefaults.countReview.enabled ? t("fieldEnabled") : t("fieldDisabled") }} />
+      <ToggleField id="count-review-enabled" label={t("enableCountReview")} checked={draft.countReview.enabled} disabled={configurationLocked} onChange={(enabled) => updateSection("countReview", { enabled })} copy={guidanceCopy} guidance={{ description: t("fieldHelp_countReviewEnabled"), defaultValue: draftDefaults.countReview.enabled ? t("fieldEnabled") : t("fieldDisabled") }} />
       <p className="hint">{t("countReviewConfigHelp")}</p>
     </div>
     {snapshot?.moduleOrder.includes("count_review")
@@ -589,7 +539,7 @@ export function App() {
     <TokenBudgetStep
       draft={draft}
       defaults={draftDefaults}
-      taskLocked={taskLocked}
+      taskLocked={configurationLocked}
       language={language}
       resources={resourcesOf("tokenizer")}
       resourcesLoading={resourcesLoading}
@@ -612,7 +562,7 @@ export function App() {
   const stepContent = currentStep.id === "setup" ? <SetupStep
     draft={draft}
     defaults={draftDefaults}
-    taskLocked={taskLocked}
+    taskLocked={configurationLocked}
     resourcesLoading={resourcesLoading}
     profileResourcesReady={profileResourcesReady}
     workspaceReady={workspaceReady}
@@ -641,10 +591,9 @@ export function App() {
   /> : currentStep.id === "caption" ? <CaptionStep
     draft={draft}
     defaults={draftDefaults}
-    taskLocked={taskLocked}
+    taskLocked={configurationLocked}
     rebuild={rebuild}
     language={language}
-    annotationProfile={annotationProfile}
     resources={resourcesOf("tagging-model")}
     resourcesLoading={resourcesLoading}
     resourceError={resourceError}
@@ -665,26 +614,25 @@ export function App() {
     onTriggerInputChange={updateTriggerTerms}
   /> : currentStep.id === "classify" ? <ClassifyStep
     draft={draft}
-    taskLocked={taskLocked}
+    taskLocked={configurationLocked}
     rebuild={rebuild}
     classifyEnabled={classifyEnabled}
     classificationResourceActive={classificationResourceActive}
     language={language}
-    annotationProfile={annotationProfile}
     resources={resourcesOf("classification-index")}
     resourcesLoading={resourcesLoading}
     resourceError={resourceError}
     invalidResourceCount={invalidResourceCount}
     resourcePickerCopy={resourcePickerCopy}
+    pathPickerCopy={pathPickerCopy}
     t={t}
     guidanceCopy={guidanceCopy}
-    copy={{ classificationIndex: copy.classificationIndex, classificationIndexHelp: copy.classificationIndexHelp, anthroReplacementNote: copy.anthroReplacementNote }}
+    copy={{ classificationIndex: copy.classificationIndex, classificationIndexHelp: copy.classificationIndexHelp, bundledResource: copy.bundledResource, customResource: copy.customResource, classificationResourceJson: copy.classificationResourceJson, anthroReplacementNote: copy.anthroReplacementNote }}
     onClassifyChange={(patch) => updateSection("classify", patch)}
     onRefreshResources={() => void refreshResources()}
   /> : currentStep.id === "replace" ? <ReplaceStep
     draft={draft}
-    annotationProfile={annotationProfile}
-    taskLocked={taskLocked}
+    taskLocked={configurationLocked}
     language={language}
     resources={resourcesOf("replacement-index")}
     resourcesLoading={resourcesLoading}
@@ -696,7 +644,6 @@ export function App() {
     t={t}
     guidanceCopy={guidanceCopy}
     copy={{
-      replaceSkipped: copy.replaceSkipped,
       replaceMode: copy.replaceMode,
       bundledIndex: copy.bundledIndex,
       customIndex: copy.customIndex,
@@ -710,14 +657,14 @@ export function App() {
     onIndexModeChange={(indexMode) => {
       setPreflight(null);
       setDraft((current) => replaceDraftValue(current, "replace", indexMode === "bundled"
-        ? { enabled: current.replace.enabled, indexMode, resourceId: resourceCatalog?.defaults.e621.replacementIndex ?? "replace-e621-20260726-v2" }
+        ? { enabled: current.replace.enabled, indexMode, resourceId: resourceCatalog?.defaults.replacementIndex ?? "replace-e621-20260726-v2" }
         : { enabled: current.replace.enabled, indexMode, customIndexPath: current.replace.customIndexPath ?? "" }));
     }}
     onRefreshResources={() => void refreshResources()}
   /> : currentStep.id === "ocr" ? <OcrStep
     draft={draft}
     defaults={draftDefaults}
-    taskLocked={taskLocked || Boolean(preflight)}
+    taskLocked={configurationLocked || Boolean(preflight)}
     ocrExecution={ocrExecution}
     runtime={snapshot?.ocrRuntime ?? null}
     resource={ocrResource}
@@ -733,7 +680,7 @@ export function App() {
   /> : currentStep.id === "nl" ? <NlStep
     draft={draft}
     defaults={draftDefaults}
-    taskLocked={taskLocked}
+    taskLocked={configurationLocked}
     attemptBudget={attemptBudget}
     profile={profile}
     profiles={profiles}
@@ -774,8 +721,7 @@ export function App() {
   /> : currentStep.id === "count_review" ? countReviewContent : currentStep.id === "dropout" ? <PolicyStep
     draft={draft}
     defaults={draftDefaults}
-    taskLocked={taskLocked}
-    annotationProfile={annotationProfile}
+    taskLocked={configurationLocked}
     language={language}
     resources={resourcesOf("dropout-model")}
     resourcesLoading={resourcesLoading}
@@ -794,7 +740,7 @@ export function App() {
   /> : currentStep.id === "token_budget" ? tokenBudgetContent : <ExportStep
     draft={draft}
     defaults={draftDefaults}
-    taskLocked={taskLocked}
+    taskLocked={configurationLocked}
     workspaceReady={workspaceReady}
     startPending={isActionPending("start")}
     exportSummary={snapshot?.exportSummary ?? null}
@@ -806,15 +752,13 @@ export function App() {
   />;
 
   return <main className="app-shell">
-    <header className="topbar"><div><p className="eyebrow">ANIMA</p><h1>Anima Dataset Tool</h1><p>{t("pipelineSubtitle", { profile: profileDisplay })}</p></div><div className="topbar-controls"><label>{t("taskId")}<input value={jobId} onChange={(event) => selectJob(event.target.value.trim())} /></label><div className="recent-task-control"><label>{t("recentTasks")}<select disabled={jobsLoading} value={jobs.some((item) => item.jobId === jobId) ? jobId : ""} onChange={(event) => { if (event.target.value === "__more__") { void loadMoreJobs(); return; } if (event.target.value) selectJob(event.target.value); }}><option value="">{jobs.length ? "-" : t("noRecentTasks")}</option>{jobs.map((item) => <option key={item.jobId} value={item.jobId}>{item.createdAt} {profileLabel(item.profile)} {statusLabel(language, item.status)} {item.jobId.slice(0, 8)}</option>)}{jobsCursor && <option value="__more__">{t("loadMore")}</option>}</select></label><div className="recent-task-state" aria-live="polite" aria-atomic="true">{jobsLoading && <small role="status">{t("loadingTasks")}</small>}{jobsError && <><small role="alert">{jobsError}</small><button className="secondary" type="button" onClick={() => void refreshJobs()}>{t("retryTasks")}</button></>}</div></div><div className="language-switch" role="group" aria-label={t("language")}><button type="button" className={language === "zh-CN" ? "selected" : ""} onClick={() => setLanguage("zh-CN")}>中文</button><button type="button" className={language === "en" ? "selected" : ""} onClick={() => setLanguage("en")}>EN</button></div></div></header>
-    {profileSelector}
+    <header className="topbar"><div><p className="eyebrow">ANIMA</p><h1>Anima Dataset Tool</h1><p>{t("pipelineSubtitle")}</p></div><div className="topbar-controls"><label>{t("taskId")}<input value={jobId} onChange={(event) => selectJob(event.target.value.trim())} /></label><div className="recent-task-control"><label>{t("recentTasks")}<select disabled={jobsLoading} value={jobs.some((item) => item.jobId === jobId) ? jobId : ""} onChange={(event) => { if (event.target.value === "__more__") { void loadMoreJobs(); return; } if (event.target.value) selectJob(event.target.value); }}><option value="">{jobs.length ? "-" : t("noRecentTasks")}</option>{jobs.map((item) => <option key={item.jobId} value={item.jobId}>{item.createdAt} {statusLabel(language, item.status)} {item.jobId.slice(0, 8)}</option>)}{jobsCursor && <option value="__more__">{t("loadMore")}</option>}</select></label><div className="recent-task-state" aria-live="polite" aria-atomic="true">{jobsLoading && <small role="status">{t("loadingTasks")}</small>}{jobsError && <><small role="alert">{jobsError}</small><button className="secondary" type="button" onClick={() => void refreshJobs()}>{t("retryTasks")}</button></>}</div></div><div className="language-switch" role="group" aria-label={t("language")}><button type="button" className={language === "zh-CN" ? "selected" : ""} onClick={() => setLanguage("zh-CN")}>中文</button><button type="button" className={language === "en" ? "selected" : ""} onClick={() => setLanguage("en")}>EN</button></div></div></header>
     <div className="workflow-layout">
       <WorkflowRail flow={copy.flow} visibleStepIndex={visibleStepIndex} steps={workflowRailSteps} onSelect={(index) => { setActiveStep(index); setOpenGuide(true); }} />
-      <section className="step-panel"><div className="step-heading"><div><p className="eyebrow">{copy.flow} / {currentModuleNumber === null ? copy.setup : t("moduleNumber", { number: currentModuleNumber })}</p><h2>{currentStep.title}</h2></div><span className={`status ${currentStep.id === "replace" ? annotationProfile === "danbooru" ? "skipped" : "available" : ""}`}>{currentStep.id === "replace" ? annotationProfile === "danbooru" ? statusLabel(language, "skipped") : t("e621Only") : currentStep.id === "setup" ? t("newTask") : copy.current}</span></div>{actionError && <div className="action-feedback" aria-live="assertive"><p role="alert">{actionError}</p></div>}{guide}<div className="step-content">{stepContent}</div><div className="wizard-controls"><button className="secondary" type="button" disabled={visibleStepIndex === 0} onClick={() => { setActiveStep(visibleStepIndex - 1); setOpenGuide(true); }}>{copy.back}</button><button type="button" disabled={visibleStepIndex === steps.length - 1 || !stepReady} onClick={() => { setActiveStep(visibleStepIndex + 1); setOpenGuide(true); }}>{copy.next}</button></div></section>
+      <section className="step-panel"><div className="step-heading"><div><p className="eyebrow">{copy.flow} / {currentModuleNumber === null ? copy.setup : t("moduleNumber", { number: currentModuleNumber })}</p><h2>{currentStep.title}</h2></div><span className="status">{currentStep.id === "setup" ? t("newTask") : copy.current}</span></div>{actionError && <div className="action-feedback" aria-live="assertive"><p role="alert">{actionError}</p></div>}{guide}<div className="step-content">{stepContent}</div><div className="wizard-controls"><button className="secondary" type="button" disabled={visibleStepIndex === 0} onClick={() => { setActiveStep(visibleStepIndex - 1); setOpenGuide(true); }}>{copy.back}</button><button type="button" disabled={visibleStepIndex === steps.length - 1 || !stepReady} onClick={() => { setActiveStep(visibleStepIndex + 1); setOpenGuide(true); }}>{copy.next}</button></div></section>
       <TaskMonitor
         snapshot={snapshot ? {
           status: snapshot.job.status,
-          profile: snapshot.job.profile,
           currentModuleId: snapshot.job.currentModuleId ?? null,
           pinned: snapshot.job.pinned,
           ocrRuntime: snapshot.ocrRuntime,
@@ -822,7 +766,6 @@ export function App() {
         loading={snapshotLoading}
         error={snapshotError}
         statusLabel={statusLabel(language, snapshot?.job.status ?? "idle")}
-        profileLabel={snapshot ? profileLabel(snapshot.job.profile) : ""}
         currentModuleLabel={snapshot?.job.currentModuleId ? numberedModuleLabel(snapshot.job.currentModuleId) : "-"}
         currentBatchLabel={latestEvent ? `${latestEvent.completed} / ${latestEvent.total}` : "-"}
         rawE621ConvertedMessage={rawE621Converted > 0 ? t("rawE621Converted", { count: rawE621Converted }) : null}

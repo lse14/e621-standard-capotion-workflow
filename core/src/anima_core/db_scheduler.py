@@ -671,9 +671,12 @@ class SchedulerDatabaseMixin:
                 raise KeyError(f"job does not exist: {job_id}")
             if job["status"] != active_status or job["current_module_id"] != module_id:
                 raise ValueError("active module state changed before pause")
+            paused_at = utc_now()
             summary = self.connection.execute(
-                "UPDATE module_summary SET status='paused' WHERE job_id=? AND module_id=? AND status='running'",
-                (job_id, module_id),
+                """UPDATE module_summary
+                      SET status='paused',started_at=COALESCE(started_at,?)
+                    WHERE job_id=? AND module_id=? AND status='running'""",
+                (paused_at, job_id, module_id),
             )
             if summary.rowcount != 1:
                 raise ValueError("active module state changed before pause")
@@ -778,7 +781,7 @@ class SchedulerDatabaseMixin:
                 raise ValueError("prepaused module state changed before start")
 
     def resume_prepaused_module(self, job_id: str, module_id: str, *, target_status: str, total: int) -> None:
-        """Remove an arrived zero-work pause before its first worker starts."""
+        """Release an arrived zero-work pause before its first worker starts."""
         if target_status not in {"running", "exporting"} or total < 0:
             raise ValueError("prepaused module resume state is invalid")
         transition_job("paused", target_status)
@@ -804,7 +807,11 @@ class SchedulerDatabaseMixin:
             ):
                 raise ValueError("prepaused module state changed before resume")
             result = self.connection.execute(
-                "DELETE FROM module_summary WHERE job_id=? AND module_id=?", (job_id, module_id)
+                """UPDATE module_summary SET status='pending'
+                   WHERE job_id=? AND module_id=? AND status='paused'
+                     AND total=? AND completed=0 AND failed=0 AND skipped=0 AND issue_count=0
+                     AND worker_restart_count=0 AND started_at IS NULL AND finished_at IS NULL""",
+                (job_id, module_id, total),
             )
             if result.rowcount != 1:
                 raise ValueError("prepaused module state changed before resume")
@@ -825,10 +832,15 @@ class SchedulerDatabaseMixin:
                 raise KeyError(f"job does not exist: {job_id}")
             if job["status"] != active_status or job["current_module_id"] != module_id:
                 raise ValueError("prepaused module state changed before restore")
-            self.connection.execute(
-                "INSERT INTO module_summary(job_id,module_id,status,total) VALUES (?,?,?,?)",
-                (job_id, module_id, "paused", total),
+            summary = self.connection.execute(
+                """UPDATE module_summary SET status='paused'
+                   WHERE job_id=? AND module_id=? AND status='pending'
+                     AND total=? AND completed=0 AND failed=0 AND skipped=0 AND issue_count=0
+                     AND worker_restart_count=0 AND started_at IS NULL AND finished_at IS NULL""",
+                (job_id, module_id, total),
             )
+            if summary.rowcount != 1:
+                raise ValueError("prepaused module state changed before restore")
             self.connection.execute(
                 "UPDATE jobs SET status='paused',resume_status=? WHERE job_id=?", (active_status, job_id)
             )

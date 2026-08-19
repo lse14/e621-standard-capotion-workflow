@@ -14,6 +14,32 @@ function pathField(page: Parameters<typeof openApp>[0], inputId: string) {
 }
 
 test.describe("native path picker", () => {
+  test("accepts the classification resource.json purpose and preserves cancellation", async ({ page, api }) => {
+    api.selectedPaths.classification_resource_json = "E:\\picked\\resource.json";
+    await openApp(page, { language: "en" });
+
+    const selected = await page.evaluate(async () => {
+      const response = await fetch("/api/application/select-path", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ purpose: "classification_resource_json", currentPath: "E:\\typed\\resource.json" }),
+      });
+      return response.json();
+    });
+    expect(selected).toEqual({ cancelled: false, path: "E:\\picked\\resource.json" });
+
+    api.selectedPaths.classification_resource_json = null;
+    const cancelled = await page.evaluate(async () => {
+      const response = await fetch("/api/application/select-path", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ purpose: "classification_resource_json", currentPath: "E:\\typed\\resource.json" }),
+      });
+      return response.json();
+    });
+    expect(cancelled).toEqual({ cancelled: true, path: null });
+  });
+
   test("selects each configured path purpose and keeps a custom value when cancelled", async ({ page, api }) => {
     api.selectedPaths.source_dataset = "E:\\picked\\source";
     api.selectedPaths.output_dataset = "E:\\picked\\output";

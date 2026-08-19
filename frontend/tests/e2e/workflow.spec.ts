@@ -9,8 +9,7 @@ import {
 
 function expectedE621Draft(sourceRoot: string, systemPrompt: string): Record<string, unknown> {
   return {
-    schemaVersion: 8,
-    profile: "e621",
+    schemaVersion: 9,
     workMode: "in_place",
     overwriteMode: "incremental",
     sourceRoot,
@@ -34,6 +33,7 @@ function expectedE621Draft(sourceRoot: string, systemPrompt: string): Record<str
     },
     classify: {
       enabled: true,
+      indexMode: "bundled",
       overwriteJson: false,
       overwriteCount: false,
       wikiDataSourceId: "e621-wiki-count-20260724-v1",
@@ -165,7 +165,7 @@ test.describe("workflow characterization", () => {
     await expect(page.getByRole("tooltip").filter({ hasText: "重新创建任务运行" })).toBeVisible();
   });
 
-  test("keeps OCR and NL independent while sending the exact v8 OCR request object", async ({ page, api }) => {
+  test("keeps OCR and NL independent while sending the exact v9 OCR request object", async ({ page, api }) => {
     await openApp(page, { language: "en" });
     await page.locator(".workflow-rail").getByRole("button", { name: /OCR/ }).click();
     const enableOcr = page.getByRole("checkbox", { name: "Enable OCR" });
@@ -192,7 +192,7 @@ test.describe("workflow characterization", () => {
     await expect.poll(() => mutationsFor(api, "POST", "/api/jobs/preflight").length).toBe(1);
     const config = (mutationsFor(api, "POST", "/api/jobs/preflight")[0].body as { config: Record<string, unknown> }).config;
     expect(mutationsFor(api, "POST", "/api/jobs/preflight")[0].body).toMatchObject({
-      config: { schemaVersion: 8, ocr: { enabled: true, device: "auto", llmMinConfidence: 1, forceReprocess: false, resourceId: "ocr-ppocrv5-server-paddle-v1" } },
+      config: { schemaVersion: 9, ocr: { enabled: true, device: "auto", llmMinConfidence: 1, forceReprocess: false, resourceId: "ocr-ppocrv5-server-paddle-v1" } },
       ocrExecution: {
         textDetLimitSideLen: { mode: "auto", value: null },
         textBatchSize: { mode: "auto", value: null },
@@ -216,16 +216,34 @@ test.describe("workflow characterization", () => {
     await expect(page.getByRole("checkbox", { name: "Enable OCR" })).toBeDisabled();
   });
 
-  test("creates Danbooru tasks as v8 while retaining the same independent OCR defaults", async ({ page, api }) => {
+  test("creates v9 tasks with independent E621 defaults", async ({ page, api }) => {
     await openApp(page, { language: "en" });
-    await page.getByRole("button", { name: "Danbooru", exact: true }).click();
-    await page.getByRole("textbox", { name: "Source dataset", exact: true }).fill("E:\\datasets\\danbooru-v5");
+    await page.getByRole("textbox", { name: "Source dataset", exact: true }).fill("E:\\datasets\\e621-v9");
     await page.getByRole("button", { name: "Preflight", exact: true }).click();
     await expect.poll(() => mutationsFor(api, "POST", "/api/jobs/preflight").length).toBe(1);
     const config = (mutationsFor(api, "POST", "/api/jobs/preflight")[0].body as { config: Record<string, unknown> }).config;
-    expect(config.schemaVersion).toBe(8);
-    expect(config.profile).toBe("danbooru");
+    expect(config.schemaVersion).toBe(9);
+    expect(config.profile).toBeUndefined();
+    expect(config.classify).toMatchObject({ indexMode: "bundled", resourceId: "classify-e621-20260724-v1" });
     expect(config.ocr).toEqual({ enabled: false, device: "auto", llmMinConfidence: 0.5, forceReprocess: false, resourceId: "ocr-ppocrv5-server-paddle-v1" });
+  });
+
+  test("selects a custom classification resource.json independently", async ({ page, api }) => {
+    await openApp(page, { language: "en" });
+    await page.locator(".workflow-rail").getByRole("button", { name: /Classify/ }).click();
+    await page.getByRole("button", { name: "Custom resource", exact: true }).click();
+    await page.getByRole("button", { name: "Select path", exact: true }).click();
+    await expect(page.getByLabel("Classification resource.json", { exact: true })).toHaveValue("E:\\picked\\resource.json");
+
+    await page.locator(".workflow-rail").getByRole("button", { name: /Dataset and preflight/ }).click();
+    await page.getByRole("textbox", { name: "Source dataset", exact: true }).fill("E:\\datasets\\custom-classify");
+    await page.getByRole("button", { name: "Preflight", exact: true }).click();
+    await expect.poll(() => mutationsFor(api, "POST", "/api/jobs/preflight").length).toBe(1);
+    const config = (mutationsFor(api, "POST", "/api/jobs/preflight")[0].body as { config: Record<string, unknown> }).config;
+    expect(config).toMatchObject({
+      classify: { indexMode: "custom", customResourcePath: "E:\\picked\\resource.json" },
+    });
+    expect((config.classify as Record<string, unknown>).resourceId).toBeUndefined();
   });
 
   test("a pending preflight disables only its duplicate trigger", async ({ page, api }) => {
@@ -236,6 +254,26 @@ test.describe("workflow characterization", () => {
     const preflight = page.getByRole("button", { name: "Preflight", exact: true });
     await preflight.click();
     await expect(preflight).toBeDisabled();
+    releasePreflight();
+  });
+
+  test("a pending preflight freezes Caption, Classify, and Replace configuration", async ({ page, api }) => {
+    const releasePreflight = holdRoute(api, "POST /api/jobs/preflight");
+    await openApp(page, { language: "en" });
+    await page.getByRole("textbox", { name: "Source dataset", exact: true }).fill("E:\\datasets\\pending-preflight-controls");
+    await page.getByRole("button", { name: "Preflight", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Preflight", exact: true })).toBeDisabled();
+
+    await page.locator(".workflow-rail").getByRole("button", { name: /Caption/ }).click();
+    await expect(page.locator("#caption-tagging-model")).toBeDisabled();
+
+    await page.locator(".workflow-rail").getByRole("button", { name: /Classify/ }).click();
+    await expect(page.getByRole("button", { name: "Custom resource", exact: true })).toBeDisabled();
+    await expect(page.locator("#classify-resource")).toBeDisabled();
+
+    await page.locator(".workflow-rail").getByRole("button", { name: /Replace/ }).click();
+    await expect(page.getByRole("checkbox", { name: "Enable E621 replacement" })).toBeDisabled();
+    await expect(page.locator("#replace-mode")).toBeDisabled();
     releasePreflight();
   });
 

@@ -527,13 +527,41 @@ def _payloads() -> list[tuple[str, str, dict]]:
 
 
 class PayloadSchemaTests(unittest.TestCase):
+    def test_job_config_v9_removes_task_profile_and_separates_classify_input_modes(self) -> None:
+        schema_path = SCHEMAS / "job-config-v9.schema.json"
+        self.assertTrue(schema_path.is_file(), "JobConfig v9 schema must exist before v9 is accepted")
+        document = _schema("job-config-v9")
+        payload = JobConfig(
+            profile="e621", workMode="in_place", overwriteMode="incremental",
+            sourceRoot="C:\\data", schemaVersion=8,
+        ).to_dict()
+        payload.pop("profile")
+        payload["schemaVersion"] = 9
+        payload["classify"] = {
+            "enabled": True,
+            "indexMode": "bundled",
+            "resourceId": "classify-e621-20260724-v1",
+            "overwriteJson": False,
+            "overwriteCount": False,
+        }
+        self.assertEqual([], validate(_wire(payload), document, document))
+
+        with_profile = json.loads(json.dumps(payload))
+        with_profile["profile"] = "e621"
+        self.assertNotEqual([], validate(with_profile, document, document))
+
+        mixed = json.loads(json.dumps(payload))
+        mixed["classify"]["indexMode"] = "custom"
+        mixed["classify"]["customResourcePath"] = "C:\\resources\\resource.json"
+        self.assertNotEqual([], validate(mixed, document, document))
+
     def test_every_worker_owns_a_schema_and_each_file_is_wellformed(self) -> None:
         names = {path.name[: -len(".schema.json")] for path in SCHEMAS.glob("*.schema.json")}
         self.assertEqual(
             {
                 "caption-worker-v1", "classify-worker-v1", "replace-worker-v1", "ocr-worker-v1", "token-budget-worker-v1", "nl-worker-v1",
                 "policy-worker-v1", "export-worker-v1", "job-config-v2", "job-config-v3", "job-config-v4",
-                "job-config-v5", "job-config-v6", "job-config-v7", "job-config-v8",
+                "job-config-v5", "job-config-v6", "job-config-v7", "job-config-v8", "job-config-v9",
                 "sample-manifest-v1",
                 "worker-envelope-v1",
             },
@@ -774,7 +802,8 @@ class PayloadSchemaTests(unittest.TestCase):
         )
         self.assertEqual([], validate(payload, v5_document, v5_document))
         validate_job_config(v5)
-        self.assertEqual(payload, config_from_dict(payload).to_dict())
+        with self.assertRaisesRegex(ValueError, "legacy JobConfig is incompatible"):
+            config_from_dict(payload)
 
         v5_with_v2_prompt = {**payload, "nl": {**payload["nl"], "promptVersion": "nl-default-prompt-v2"}}
         self.assertNotEqual([], validate(_wire(v5_with_v2_prompt), v5_document, v5_document))
@@ -1097,7 +1126,7 @@ class PayloadSchemaTests(unittest.TestCase):
         self.assertTrue(hasattr(contracts, "job_config_supports_ocr_device"))
         self.assertTrue(contracts.job_config_supports_caption_input_txt_mode(8))
         self.assertTrue(contracts.job_config_supports_ocr_device(8))
-        self.assertEqual(frozenset({3, 4, 5, 6, 7, 8}), COUNT_REVIEW_SCHEMA_VERSIONS)
+        self.assertEqual(frozenset({3, 4, 5, 6, 7, 8, 9}), COUNT_REVIEW_SCHEMA_VERSIONS)
         self.assertEqual((True, True, True), (
             job_config_supports_ocr(8),
             job_config_supports_nl_v4(8),
@@ -1109,7 +1138,8 @@ class PayloadSchemaTests(unittest.TestCase):
         self.assertEqual(pipeline_module_ids(7), pipeline_module_ids(8))
         self.assertEqual([], validate(payload, document, document))
         validate_job_config(v8)
-        self.assertEqual(payload, config_from_dict(payload).to_dict())
+        with self.assertRaisesRegex(ValueError, "legacy JobConfig is incompatible"):
+            config_from_dict(payload)
 
         for label, mutate, defaulted_key in (
             ("missing-input-mode", lambda candidate: candidate["caption"].pop("inputTxtMode"), "inputTxtMode"),
@@ -1122,14 +1152,8 @@ class PayloadSchemaTests(unittest.TestCase):
                 candidate = _wire(payload)
                 mutate(candidate)
                 self.assertNotEqual([], validate(candidate, document, document))
-                if defaulted_key is not None:
-                    self.assertEqual(
-                        payload["caption"][defaulted_key],
-                        config_from_dict(candidate).to_dict()["caption"][defaulted_key],
-                    )
-                else:
-                    with self.assertRaises(ValueError):
-                        config_from_dict(candidate)
+                with self.assertRaises(ValueError):
+                    config_from_dict(candidate)
 
         for schema_version in range(2, 8):
             with self.subTest(legacy_schema_version=schema_version):
@@ -1153,7 +1177,7 @@ class PayloadSchemaTests(unittest.TestCase):
                     config_from_dict(candidate)
 
     def test_job_config_capabilities_are_bool_safe_and_versioned(self) -> None:
-        self.assertEqual(frozenset({3, 4, 5, 6, 7, 8}), COUNT_REVIEW_SCHEMA_VERSIONS)
+        self.assertEqual(frozenset({3, 4, 5, 6, 7, 8, 9}), COUNT_REVIEW_SCHEMA_VERSIONS)
 
         expected = {
             2: (False, False, False),
@@ -1163,6 +1187,7 @@ class PayloadSchemaTests(unittest.TestCase):
             6: (True, True, True),
             7: (True, True, True),
             8: (True, True, True),
+            9: (True, True, True),
         }
         for version, values in expected.items():
             with self.subTest(version=version):
@@ -1172,7 +1197,7 @@ class PayloadSchemaTests(unittest.TestCase):
                     job_config_supports_token_budget(version),
                 ))
 
-        for invalid in (None, True, False, 6.0, "7", 9):
+        for invalid in (None, True, False, 6.0, "7", 10):
             with self.subTest(invalid=invalid):
                 self.assertEqual((False, False, False), (
                     job_config_supports_ocr(invalid),

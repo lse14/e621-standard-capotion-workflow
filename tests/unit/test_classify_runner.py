@@ -33,6 +33,8 @@ from anima_core.worker_protocol import ProtocolEnvelopeV1
 RESOURCE_ROOT = ROOT / "resource-library"
 RESOURCE_MANIFEST = r"classification-indexes\e621-classify-20260724-v1\resource.json"
 FINGERPRINT = "530323a5d1ca5c3f903c0d57b04d6f1014cdcc0ca01b8de5dc0a41e27e1d2baf"
+RESOURCE_ENTRY_COUNT = 120_978
+WIKI_DATA_SOURCE_ID = "e621-wiki-count-20260724-v1"
 
 
 def _hashes(root: Path) -> dict[str, str]:
@@ -90,7 +92,8 @@ class ClassifyRecoveryFixture:
         self,
         root: Path,
         *,
-        schema_version: int = 3,
+        schema_version: int = 9,
+        input_txt_mode: str | None = None,
         baseline_txt: bytes | None = b"solo, blue eyes",
         baseline_json: bytes | None = None,
         overlay_txt: bytes | None = None,
@@ -114,8 +117,15 @@ class ClassifyRecoveryFixture:
             schemaVersion=schema_version,
         )
         self.config.caption["enabled"] = False
-        if schema_version == 8:
-            self.config.caption["inputTxtMode"] = "nl"
+        if input_txt_mode is not None:
+            self.config.caption["inputTxtMode"] = input_txt_mode
+        self.config.classify.update({
+            "wikiDataSourceId": WIKI_DATA_SOURCE_ID,
+            "dictionaryEntryCount": RESOURCE_ENTRY_COUNT,
+            "resourceProfile": "e621",
+            "resourceManifestRelativePath": RESOURCE_MANIFEST,
+            "resourceFingerprint": FINGERPRINT,
+        })
         self.database.insert_job({
             "job_id": "job-classify-recovery", "config_schema_version": self.config.schemaVersion,
             "config_json": json.dumps(self.config.to_dict()),
@@ -280,11 +290,12 @@ class ClassifyRunnerTests(unittest.TestCase):
             finally:
                 fixture.close()
 
-    def test_v8_nl_uses_baseline_txt_without_replacing_tagger_input(self) -> None:
+    def test_v9_nl_uses_baseline_txt_without_replacing_tagger_input(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             fixture = ClassifyRecoveryFixture(
                 Path(temporary),
-                schema_version=8,
+                schema_version=9,
+                input_txt_mode="nl",
                 baseline_txt=b"baseline natural-language caption",
                 baseline_json=b'{"nl":"old NL"}',
                 overlay_txt=b"generated, tag",
@@ -300,12 +311,13 @@ class ClassifyRunnerTests(unittest.TestCase):
             finally:
                 fixture.close()
 
-    def test_v8_nl_missing_or_blank_baseline_txt_writes_an_empty_nl(self) -> None:
+    def test_v9_nl_missing_or_blank_baseline_txt_writes_an_empty_nl(self) -> None:
         for baseline_txt in (None, b" \t\r\n"):
             with self.subTest(baseline_txt=baseline_txt), tempfile.TemporaryDirectory() as temporary:
                 fixture = ClassifyRecoveryFixture(
                     Path(temporary),
-                    schema_version=8,
+                    schema_version=9,
+                    input_txt_mode="nl",
                     baseline_txt=baseline_txt,
                     baseline_json=b'{"nl":"old NL"}',
                     overlay_txt=b"generated, tag",
@@ -321,7 +333,7 @@ class ClassifyRunnerTests(unittest.TestCase):
                 finally:
                     fixture.close()
 
-    def test_v8_nl_rejects_invalid_baseline_txt_before_worker_process(self) -> None:
+    def test_v9_nl_rejects_invalid_baseline_txt_before_worker_process(self) -> None:
         for label, baseline_txt in (
             ("invalid-utf8", b"\xff"),
             ("nul", b"caption\x00text"),
@@ -330,7 +342,8 @@ class ClassifyRunnerTests(unittest.TestCase):
             with self.subTest(label=label), tempfile.TemporaryDirectory() as temporary:
                 fixture = ClassifyRecoveryFixture(
                     Path(temporary),
-                    schema_version=8,
+                    schema_version=9,
+                    input_txt_mode="nl",
                     baseline_txt=baseline_txt,
                     overlay_txt=b"generated, tag",
                 )
@@ -445,6 +458,13 @@ class ClassifyRunnerTests(unittest.TestCase):
             try:
                 config = JobConfig(profile="e621", workMode="in_place", overwriteMode="incremental", sourceRoot=str(dataset))
                 config.caption["enabled"] = False
+                config.classify.update({
+                    "wikiDataSourceId": WIKI_DATA_SOURCE_ID,
+                    "dictionaryEntryCount": RESOURCE_ENTRY_COUNT,
+                    "resourceProfile": "e621",
+                    "resourceManifestRelativePath": RESOURCE_MANIFEST,
+                    "resourceFingerprint": FINGERPRINT,
+                })
                 database.insert_job({
                     "job_id": "job-classify", "config_schema_version": config.schemaVersion,
                     "config_json": json.dumps(config.to_dict()),

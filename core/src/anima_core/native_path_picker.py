@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+import ntpath
 import os
 from pathlib import Path
 import subprocess
@@ -9,7 +10,7 @@ from threading import Lock
 from typing import Callable, Literal
 
 
-PathPickerPurpose = Literal["source_dataset", "output_dataset", "replacement_csv"]
+PathPickerPurpose = Literal["source_dataset", "output_dataset", "replacement_csv", "classification_resource_json"]
 TkLoader = Callable[[], tuple[object, object]]
 DialogRunner = Callable[[PathPickerPurpose, str | None], str | None]
 
@@ -145,7 +146,19 @@ public static class AnimaExplorerPathDialog
         {
             FileOpenOptions options;
             dialog.GetOptions(out options);
-            if (String.Equals(purpose, "replacement_csv", StringComparison.Ordinal))
+            if (String.Equals(purpose, "classification_resource_json", StringComparison.Ordinal))
+            {
+                dialog.SetTitle("Select classification resource.json");
+                dialog.SetFileTypes(1, new[]
+                {
+                    new COMDLG_FILTERSPEC { pszName = "resource.json", pszSpec = "resource.json" },
+                });
+                dialog.SetFileTypeIndex(1);
+                options |= FileOpenOptions.FOS_FORCEFILESYSTEM
+                    | FileOpenOptions.FOS_PATHMUSTEXIST
+                    | FileOpenOptions.FOS_FILEMUSTEXIST;
+            }
+            else if (String.Equals(purpose, "replacement_csv", StringComparison.Ordinal))
             {
                 dialog.SetTitle("Select replacement CSV");
                 dialog.SetFileTypes(1, new[]
@@ -278,7 +291,7 @@ class NativePathPicker:
         self._dialog_lock = Lock()
 
     def select(self, purpose: PathPickerPurpose, current_path: str | None) -> str | None:
-        if purpose not in ("source_dataset", "output_dataset", "replacement_csv"):
+        if purpose not in ("source_dataset", "output_dataset", "replacement_csv", "classification_resource_json"):
             raise ValueError("invalid path picker purpose")
         if not self._dialog_lock.acquire(blocking=False):
             raise NativePathPickerBusyError("path picker is busy")
@@ -286,12 +299,20 @@ class NativePathPicker:
         root: object | None = None
         try:
             if self._tk_loader is None:
-                return self._dialog_runner(purpose, current_path)
+                selected = self._dialog_runner(purpose, current_path)
+                return self._validate_selected_path(purpose, selected)
             tkinter, filedialog = self._tk_loader()
             root = tkinter.Tk()  # type: ignore[attr-defined]
             root.withdraw()  # type: ignore[attr-defined]
             initialdir = self._initialdir(purpose, current_path)
-            if purpose == "replacement_csv":
+            if purpose == "classification_resource_json":
+                selected = filedialog.askopenfilename(  # type: ignore[attr-defined]
+                    parent=root,
+                    initialdir=initialdir,
+                    title="Select classification resource.json",
+                    filetypes=(("resource.json", "resource.json"),),
+                )
+            elif purpose == "replacement_csv":
                 selected = filedialog.askopenfilename(  # type: ignore[attr-defined]
                     parent=root,
                     initialdir=initialdir,
@@ -305,7 +326,7 @@ class NativePathPicker:
                     title="Select dataset folder",
                     mustexist=purpose == "source_dataset",
                 )
-            return str(selected) if selected else None
+            return self._validate_selected_path(purpose, str(selected) if selected else None)
         except Exception as exc:
             raise NativePathPickerUnavailableError("native path picker unavailable") from exc
         finally:
@@ -325,3 +346,10 @@ class NativePathPicker:
             parent = os.path.dirname(candidate)
             return parent or None
         return candidate
+
+    @staticmethod
+    def _validate_selected_path(purpose: PathPickerPurpose, selected: str | None) -> str | None:
+        if purpose == "classification_resource_json" and selected is not None:
+            if ntpath.basename(selected.rstrip("\\/")).casefold() != "resource.json":
+                raise NativePathPickerUnavailableError("selected classification resource must be named resource.json")
+        return selected

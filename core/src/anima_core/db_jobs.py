@@ -30,7 +30,7 @@ class JobDatabaseMixin:
 
     def insert_job(self, job: Mapping[str, Any]) -> None:
         columns = [
-            "job_id", "config_schema_version", "config_json", "config_hash", "profile", "work_mode",
+            "job_id", "config_schema_version", "config_json", "config_hash", "work_mode",
             "overwrite_mode", "source_root", "output_root", "dataset_root", "dataset_root_key",
             "manifest_schema_version", "recursive", "sample_count", "manifest_generated_at", "status",
             "current_module_id", "last_event_id", "pinned", "api_budget_extra", "api_budget_revision",
