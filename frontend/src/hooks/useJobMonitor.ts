@@ -49,6 +49,7 @@ export function useJobMonitor({
 }: UseJobMonitorOptions): JobMonitorState {
   const [jobId, setJobId] = useState(loadStoredJobId);
   const [jobs, setJobs] = useState<JobListEntry[]>([]);
+  const [jobsLoaded, setJobsLoaded] = useState(false);
   const [jobsCursor, setJobsCursor] = useState<JobListCursor>(null);
   const [jobsLoading, setJobsLoading] = useState(false);
   const [jobsError, setJobsError] = useState<string | null>(null);
@@ -58,6 +59,7 @@ export function useJobMonitor({
   const [issueCursor, setIssueCursor] = useState<IssueCursor>(initialIssueCursor);
   const mountedRef = useRef(true);
   const selectedJobIdRef = useRef(jobId);
+  const validateInitialSelectionRef = useRef(true);
   const eventCursorRef = useRef(0);
   const snapshotInFlightRequestIdRef = useRef<number | null>(null);
   const snapshotAbortControllerRef = useRef<AbortController | null>(null);
@@ -78,6 +80,7 @@ export function useJobMonitor({
       const page = await listJobs(cursor?.createdAt ?? null, cursor?.jobId ?? null);
       if (!mountedRef.current || requestId !== jobsRequestIdRef.current) return;
       setJobs((current) => append ? [...current, ...page.jobs] : page.jobs);
+      if (!append) setJobsLoaded(true);
       setJobsCursor(page.nextAfterCreatedAt && page.nextAfterJobId
         ? { createdAt: page.nextAfterCreatedAt, jobId: page.nextAfterJobId }
         : null);
@@ -132,6 +135,7 @@ export function useJobMonitor({
 
   const selectJob = useCallback((nextJobId: string) => {
     invalidateSnapshotRequest();
+    validateInitialSelectionRef.current = false;
     selectedJobIdRef.current = nextJobId;
     eventCursorRef.current = 0;
     setIssueCursor(initialIssueCursor);
@@ -140,6 +144,12 @@ export function useJobMonitor({
     setSnapshotLoading(false);
     setSnapshotError(null);
   }, [invalidateSnapshotRequest]);
+
+  useEffect(() => {
+    if (!jobsLoaded || !validateInitialSelectionRef.current || !jobId) return;
+    validateInitialSelectionRef.current = false;
+    if (!jobs.some((item) => item.jobId === jobId)) selectJob("");
+  }, [jobId, jobs, jobsLoaded, selectJob]);
 
   const firstIssuePage = useCallback(() => {
     invalidateSnapshotRequest();
@@ -161,16 +171,17 @@ export function useJobMonitor({
   }, [refreshJobs]);
 
   useEffect(() => {
-    if (!jobId) return;
+    if (!jobsLoaded || !jobId) return;
     const tick = () => { void refreshSnapshot(); };
     tick();
     const timer = window.setInterval(tick, isActiveJobStatus(snapshot?.job.status ?? "") ? 1000 : 5000);
     return () => window.clearInterval(timer);
-  }, [issueCursor.issueId, issueCursor.sampleId, jobId, refreshSnapshot, snapshot?.job.status]);
+  }, [issueCursor.issueId, issueCursor.sampleId, jobId, jobsLoaded, refreshSnapshot, snapshot?.job.status]);
 
   useEffect(() => {
     try {
-      window.localStorage.setItem(jobStorageKey, jobId);
+      if (jobId) window.localStorage.setItem(jobStorageKey, jobId);
+      else window.localStorage.removeItem(jobStorageKey);
     } catch {
       // Presentation preference is optional.
     }

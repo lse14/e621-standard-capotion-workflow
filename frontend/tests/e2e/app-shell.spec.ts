@@ -120,6 +120,7 @@ test.describe("application shell characterization", () => {
 
   test("shows a selected-task error inside Task Monitor and retries the snapshot", async ({ page, api }) => {
     const jobId = "job-snapshot-error";
+    setJobSnapshot(api, makeSnapshot({ jobId, status: "ready" }));
     failRoute(api, `GET /api/jobs/${jobId}`, "selected task unavailable");
     await openApp(page, { jobId, language: "en" });
 

@@ -1,6 +1,7 @@
 import {
   DEFAULT_JOB_ID,
   expect,
+  failRoute,
   holdRoute,
   makeSnapshot,
   mutationsFor,
@@ -10,8 +11,13 @@ import {
 } from "./mockApi";
 
 async function openTrackedJob(page: Parameters<typeof openApp>[0], status: string) {
-  await openApp(page, { jobId: DEFAULT_JOB_ID, language: "en" });
+  await openApp(page, { language: "en" });
+  await page.getByLabel("Recent tasks").selectOption(DEFAULT_JOB_ID);
   await expect(page.locator(".task-monitor > .monitor-heading > .status")).toHaveText(status);
+}
+
+async function selectTask(page: Parameters<typeof openApp>[0], jobId: string): Promise<void> {
+  await page.getByLabel("Recent tasks").selectOption(jobId);
 }
 
 type SnapshotFetchProbe = { active: number; maxActive: number; started: number };
@@ -63,18 +69,31 @@ const lifecycleStateMatrix = [
 ] as const;
 
 test.describe("task status and issue characterization", () => {
+  test("keeps the task monitor idle when no recent task exists", async ({ page, api }) => {
+    const staleJobId = "stale-task-from-previous-session";
+    failRoute(api, `GET /api/jobs/${staleJobId}`, "job does not exist", 404);
+    await installSnapshotFetchProbe(page, staleJobId);
+    await openApp(page, { jobId: staleJobId, language: "en" });
+
+    await expect(page.getByLabel("Task ID")).toHaveCount(0);
+    await expect(page.getByLabel("Recent tasks")).toHaveValue("");
+    await expect(page.locator(".empty-state")).toBeVisible();
+    await expect(page.locator(".monitor-error")).toHaveCount(0);
+    expect((await snapshotFetchProbe(page)).started).toBe(0);
+  });
+
   test("loads task switches without overlapping a repeated snapshot target", async ({ page, api }) => {
     const nextJobId = "job-selected-while-previous-pending";
     setJobSnapshot(api, makeSnapshot({ jobId: DEFAULT_JOB_ID, status: "running", currentModuleId: "nl" }));
-    api.snapshots.set(nextJobId, makeSnapshot({ jobId: nextJobId, status: "failed", currentModuleId: "ocr" }));
+    setJobSnapshot(api, makeSnapshot({ jobId: nextJobId, status: "failed", currentModuleId: "ocr" }));
     await installSnapshotFetchProbe(page, DEFAULT_JOB_ID);
     const releasePrevious = holdRoute(api, `GET /api/jobs/${DEFAULT_JOB_ID}`);
     try {
       await openApp(page, { jobId: DEFAULT_JOB_ID, language: "en" });
       await expect.poll(async () => (await snapshotFetchProbe(page)).started).toBe(1);
-      await page.getByLabel("Task ID").fill(nextJobId);
+      await selectTask(page, nextJobId);
       await expect(page.locator(".task-monitor > .monitor-heading > .status")).toHaveText("failed", { timeout: 2000 });
-      await page.getByLabel("Task ID").fill(DEFAULT_JOB_ID);
+      await selectTask(page, DEFAULT_JOB_ID);
       await expect.poll(async () => (await snapshotFetchProbe(page)).started).toBe(2);
       expect((await snapshotFetchProbe(page)).maxActive).toBe(1);
     } finally {
@@ -220,7 +239,7 @@ test.describe("task status and issue characterization", () => {
     await expect(page.locator(".task-monitor .task-actions").getByRole("button", { name: "删除任务并释放训练集占用" })).toBeEnabled();
 
     await page.getByRole("button", { name: "返回父任务" }).click();
-    await expect(page.getByLabel("任务 ID")).toHaveValue(DEFAULT_JOB_ID);
+    await expect(page.getByLabel("最近任务")).toHaveValue(DEFAULT_JOB_ID);
     await expect(page.getByRole("heading", { name: "修复子任务", exact: true })).toBeVisible();
     await page.getByRole("button", { name: "打开修复任务" }).click();
 
@@ -232,7 +251,7 @@ test.describe("task status and issue characterization", () => {
     await expect.poll(() =>
       mutationsFor(api, "POST", `/api/jobs/${childJobId}/discard`).length,
     ).toBe(1);
-    await expect(page.getByLabel("任务 ID")).toHaveValue(DEFAULT_JOB_ID);
+    await expect(page.getByLabel("最近任务")).toHaveValue(DEFAULT_JOB_ID);
     await expect(page.getByRole("heading", { name: "修复子任务", exact: true })).toHaveCount(0);
   });
 
@@ -257,7 +276,7 @@ test.describe("task status and issue characterization", () => {
     expect(mutationsFor(api, "POST", `/api/jobs/${DEFAULT_JOB_ID}/nl/manual-retry-batch`)[0]?.body).toEqual({
       issueIds: ["nl-failed-1", "nl-failed-2"], confirmed: true,
     });
-    await expect(page.getByLabel("Task ID")).toHaveValue(`${DEFAULT_JOB_ID}-manual-retry-batch`);
+    await expect(page.getByRole("heading", { name: "Task progress", exact: true })).toBeVisible();
   });
 
   test("disables individual NL actions while a selected batch retry is pending", async ({ page, api }) => {
@@ -340,7 +359,7 @@ test.describe("task status and issue characterization", () => {
       await page.getByRole("button", { name: "Pause task" }).click();
       await expect.poll(() => mutationsFor(api, "POST", `/api/jobs/${taskA}/pause`).length).toBe(1);
 
-      await page.getByLabel("Task ID").fill(taskB);
+      await selectTask(page, taskB);
       await expect(page.locator(".task-monitor > .monitor-heading > .status")).toHaveText("succeeded");
       const selectedTaskRequests = (await snapshotFetchProbe(page)).started;
       expect(selectedTaskRequests).toBeGreaterThan(0);
@@ -363,7 +382,7 @@ test.describe("task status and issue characterization", () => {
     await openApp(page, { jobId: taskA, language: "en" });
     await expect(page.locator(".task-monitor > .monitor-heading > .status")).toHaveText("running");
 
-    await page.getByLabel("Task ID").fill(taskB);
+    await selectTask(page, taskB);
     await expect(page.locator(".task-monitor > .monitor-heading > .status")).toHaveText("cancelled, recoverable");
     page.once("dialog", (dialog) => dialog.accept());
     await page.getByRole("button", { name: "Recover task" }).click();
@@ -385,7 +404,7 @@ test.describe("task status and issue characterization", () => {
     await openApp(page, { jobId: jobs[0].jobId, language: "en" });
     const status = page.locator(".task-monitor > .monitor-heading > .status");
     for (const entry of jobs) {
-      await page.getByLabel("Task ID").fill(entry.jobId);
+      await selectTask(page, entry.jobId);
       await expect(status).toHaveText(entry.statusLabel);
       for (const buttonName of lifecycleButtonNames) {
         const button = page.getByRole("button", { name: buttonName });

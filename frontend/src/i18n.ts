@@ -4,7 +4,7 @@ const languageStorageKey = "anima.ui.language.v1";
 
 const messages: Record<UiLanguage, Record<string, string>> = {
   en: {
-    taskId: "Task ID", language: "Language", pipelineSubtitle: "Independent resource annotation pipeline", automatic: "Auto", newTask: "New task", e621Only: "E621 only",
+    language: "Language", pipelineSubtitle: "Independent resource annotation pipeline", automatic: "Auto", newTask: "New task", e621Only: "E621 only",
     sourceDataset: "Source dataset", outputDataset: "Output dataset", absoluteWindowsPath: "Absolute Windows path", selectPath: "Select path", selectingPath: "Selecting...", pathPickerBusy: "Another path selector is open.", pathPickerUnavailable: "Windows path selection is unavailable; enter the path manually.", pathPickerFailed: "Could not select a path.",
     emptyOrAbsentDirectory: "Empty or absent directory", workMode: "Work mode", inPlace: "In place", fullCopy: "Full copy",
     overwriteMode: "Overwrite mode", incremental: "Incremental", rebuild: "Rebuild", searchSubfolders: "Search subfolders",
@@ -88,7 +88,7 @@ const messages: Record<UiLanguage, Record<string, string>> = {
     status_prepared: "prepared", status_backup_verified: "backup verified", status_committed: "committed", status_rolled_back: "rolled back", status_rollback_required: "rollback required",
   },
   "zh-CN": {
-    taskId: "任务 ID", language: "语言", pipelineSubtitle: "独立资源标注流水线", automatic: "自动", newTask: "新建任务", e621Only: "仅 E621",
+    language: "语言", pipelineSubtitle: "独立资源标注流水线", automatic: "自动", newTask: "新建任务", e621Only: "仅 E621",
     sourceDataset: "源数据集", outputDataset: "输出数据集", absoluteWindowsPath: "Windows 绝对路径", selectPath: "选择路径", selectingPath: "正在选择...", pathPickerBusy: "另一个路径选择窗口已打开。", pathPickerUnavailable: "Windows 路径选择不可用；请手动输入路径。", pathPickerFailed: "无法选择路径。",
     emptyOrAbsentDirectory: "为空或不存在的目录", workMode: "工作模式", inPlace: "原地标注", fullCopy: "完整副本",
     overwriteMode: "覆写模式", incremental: "增量更新", rebuild: "完全重建", searchSubfolders: "搜索子文件夹",

@@ -408,7 +408,11 @@ export function setJobSnapshot(scenario: ApiScenario, snapshot: JobSnapshot): vo
     createdAt: snapshot.job.createdAt,
     finishedAt: snapshot.job.finishedAt,
   };
-  scenario.jobs = { jobs: [entry], nextAfterCreatedAt: null, nextAfterJobId: null };
+  scenario.jobs = {
+    jobs: [entry, ...scenario.jobs.jobs.filter((item) => item.jobId !== entry.jobId)],
+    nextAfterCreatedAt: null,
+    nextAfterJobId: null,
+  };
 }
 
 export function failRoute(scenario: ApiScenario, routeKey: string, detail: string, status = 503): void {
