@@ -663,17 +663,14 @@ class NlRunner:
                             retriable=outcome.retriable,
                             allowed_statuses=("request_started",),
                         )
-                        processed, failed = self.database.record_nl_outcome(self.job_id, succeeded=nonblocking_terminal)
+                        processed, failed = self.database.record_nl_outcome(self.job_id, succeeded=False)
                         if outcome.code == "nl_auth_failed":
                             pause_code = "nl_auth_paused"
-                        elif not nonblocking_terminal and failed >= 10 and self.database.module_diagnostic_count(self.job_id, "nl", "nl_consecutive_failures") >= 9:
+                        elif failed >= 10 and self.database.module_diagnostic_count(self.job_id, "nl", "nl_consecutive_failures") >= 9:
                             pause_code = "nl_circuit_breaker_paused"
-                        elif not nonblocking_terminal and processed >= 20 and failed * 2 >= processed:
+                        elif processed >= 20 and failed * 2 >= processed:
                             pause_code = "nl_circuit_breaker_paused"
-                        if nonblocking_terminal:
-                            self.database.set_module_diagnostic_count(self.job_id, "nl", "nl_consecutive_failures", severity="warning", count=0)
-                        else:
-                            self.database.increment_module_diagnostic(self.job_id, "nl", "nl_consecutive_failures", severity="warning", amount=1)
+                        self.database.increment_module_diagnostic(self.job_id, "nl", "nl_consecutive_failures", severity="warning", amount=1)
                     else:
                         self.database.stage_nl_response(
                             self.job_id,
