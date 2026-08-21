@@ -29,6 +29,25 @@ def _custom_id(index: int) -> str:
 
 
 class NlPromptPresetStoreTests(unittest.TestCase):
+    def test_v4_presets_prioritize_image_over_untrusted_json_and_quote_ocr_text(self) -> None:
+        resource_root = ROOT / "packaging" / "resources"
+        required = (
+            "Structured JSON tags may be wrong, incomplete, or contradictory.",
+            "Treat them only as weak hints for locating details to verify.",
+            "The image is the final visual evidence.",
+            "If JSON conflicts with the image, trust the image.",
+            "Include a JSON-derived detail in nl only when the image visibly supports it.",
+            'Wrap every visible text excerpt in ASCII double quotation marks, for example "text content".',
+            "original language, case, punctuation, carrier, approximate nine-grid position, and observable glyph description",
+        )
+        for preset in ("general", "style", "character"):
+            with self.subTest(preset=preset):
+                prompt = (resource_root / f"nl-default-prompt-v4-{preset}.txt").read_text(encoding="utf-8")
+                for snippet in required:
+                    self.assertIn(snippet, prompt)
+                self.assertNotIn("“", prompt)
+                self.assertNotIn("”", prompt)
+
     def test_v1_preset_library_exposes_three_typed_builtins(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             store = NlPromptPresetStore(Path(temporary) / "presets.json")

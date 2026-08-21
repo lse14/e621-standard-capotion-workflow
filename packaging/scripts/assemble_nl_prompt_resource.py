@@ -29,10 +29,26 @@ REQUIRED_SNIPPETS = {
 }
 V4_FRAGMENT_NAMES = ("base", "general", "style", "character", "short", "medium", "long")
 V4_FRAGMENT_SNIPPETS = {
-    "base": ("exactly these keys: nl, count, layout, sameCharacterRepeated", "untrusted data", "complete visible text"),
-    "general": ("subjects", "fixed appearance", "visible text"),
-    "style": ("only observable picture content and composition", "Do not describe artist, style, medium, rendering, quality, lighting", "visible color belonging to an object"),
-    "character": ("structured primaryCharacterName", "Do not describe the main character's fixed appearance", "Other character names"),
+    "base": ("exactly these keys: nl, count, layout, sameCharacterRepeated", "untrusted data", "complete visible text", "ASCII double quotation marks"),
+    "general": (
+        "subjects", "fixed appearance", "visible text",
+        "Structured JSON tags may be wrong, incomplete, or contradictory.",
+        "The image is the final visual evidence.",
+        "Wrap every visible text excerpt in ASCII double quotation marks",
+    ),
+    "style": (
+        "only observable picture content and composition", "Do not describe artist, style, medium, rendering, quality, lighting",
+        "visible color belonging to an object",
+        "Structured JSON tags may be wrong, incomplete, or contradictory.",
+        "The image is the final visual evidence.",
+        "Wrap every visible text excerpt in ASCII double quotation marks",
+    ),
+    "character": (
+        "structured primaryCharacterName", "Do not describe the main character's fixed appearance", "Other character names",
+        "Structured JSON tags may be wrong, incomplete, or contradictory.",
+        "The image is the final visual evidence.",
+        "Wrap every visible text excerpt in ASCII double quotation marks",
+    ),
     "short": ("exactly 2-3 sentences",),
     "medium": ("exactly 4-5 sentences",),
     "long": ("exactly 6-8 sentences",),
