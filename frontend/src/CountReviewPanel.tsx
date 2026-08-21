@@ -16,7 +16,8 @@ import {
 } from "./api";
 import { translate, type UiLanguage } from "./i18n";
 
-const PAGE_SIZE = 50;
+const PAGE_SIZE_OPTIONS = [20, 50, 100] as const;
+const DEFAULT_PAGE_SIZE = 50;
 const countValues: readonly CountValue[] = ["solo", "duo", "trio", "group"];
 const reasonCodes = [
   "count_source_conflict",
@@ -72,6 +73,7 @@ function replaceDecisions(
 export function CountReviewPanel({ jobId, jobStatus, currentModuleId, language, onConfirmed }: CountReviewPanelProps) {
   const t = (key: string, values?: Record<string, string | number>) => translate(language, key, values);
   const [filters, setFilters] = useState<CountReviewFilters>({});
+  const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
   const [pageCursors, setPageCursors] = useState([0]);
   const [pageIndex, setPageIndex] = useState(0);
   const [page, setPage] = useState<CountReviewPage | null>(null);
@@ -93,7 +95,7 @@ export function CountReviewPanel({ jobId, jobStatus, currentModuleId, language, 
     setLoading(true);
     setLoadError(null);
     setSelected(new Set());
-    void listCountReview(jobId, filters, afterSampleId, PAGE_SIZE)
+    void listCountReview(jobId, filters, afterSampleId, pageSize)
       .then((result) => {
         if (cancelled) return;
         setPage(result);
@@ -116,6 +118,7 @@ export function CountReviewPanel({ jobId, jobStatus, currentModuleId, language, 
     filters.classifyCount,
     filters.vlmCount,
     filters.mismatchOnly,
+    pageSize,
     reloadRevision,
     language,
   ]);
@@ -266,6 +269,14 @@ export function CountReviewPanel({ jobId, jobStatus, currentModuleId, language, 
         </select>
       </label>
       <label className="checkbox review-mismatch"><input type="checkbox" checked={filters.mismatchOnly ?? false} onChange={(event) => patchFilters({ mismatchOnly: event.target.checked || undefined })} />{t("countReviewMismatchOnly")}</label>
+      <label>{t("countReviewPageSize")}
+        <select value={pageSize} onChange={(event) => {
+          setPageSize(Number(event.target.value));
+          resetPaging();
+        }}>
+          {PAGE_SIZE_OPTIONS.map((size) => <option key={size} value={size}>{size}</option>)}
+        </select>
+      </label>
     </div>
 
     {notice && <p className="review-notice" role="status">{notice}</p>}

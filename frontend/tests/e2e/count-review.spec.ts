@@ -18,6 +18,27 @@ async function openCountReview(page: Parameters<typeof openApp>[0]) {
 }
 
 test.describe("count review characterization", () => {
+  test("selects a review page size without overlapping preview rows", async ({ page, api }) => {
+    setJobSnapshot(api, makeSnapshot({ status: "reviewing", currentModuleId: "count_review" }));
+    await openCountReview(page);
+
+    const panel = page.locator(".count-review-panel");
+    const pageSize = panel.getByLabel("Items per page");
+    await expect(pageSize).toHaveValue("50");
+    await expect(pageSize.locator("option")).toHaveText(["20", "50", "100"]);
+    await expect.poll(() => api.countReviewRequests.includes(50)).toBe(true);
+    await pageSize.selectOption("100");
+    await expect(pageSize).toHaveValue("100");
+    await expect.poll(() => api.countReviewRequests.includes(100)).toBe(true);
+
+    const previewRows = await panel.locator(".review-item").evaluateAll((items) => items.map((item) => {
+      const box = item.getBoundingClientRect();
+      return { top: box.top, bottom: box.bottom };
+    }));
+    expect(previewRows).toHaveLength(2);
+    expect(previewRows[1].top).toBeGreaterThanOrEqual(previewRows[0].bottom);
+  });
+
   test("shows a Count Review load error with a scoped retry", async ({ page, api }) => {
     setJobSnapshot(api, makeSnapshot({ status: "reviewing", currentModuleId: "count_review" }));
     failRoute(api, `GET /api/jobs/${DEFAULT_JOB_ID}/count-review`, "count review unavailable");

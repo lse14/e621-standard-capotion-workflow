@@ -61,6 +61,7 @@ export type ApiScenario = {
   snapshots: Map<string, JobSnapshot>;
   preflight: PreflightSummary;
   countReview: CountReviewPage;
+  countReviewRequests: number[];
   tokenBudgetReviews: TokenBudgetReviewPage;
   selectedPaths: Record<PathPickerPurpose, string | null>;
   failures: Map<string, RouteFailure>;
@@ -376,6 +377,7 @@ export function createApiScenario(): ApiScenario {
     snapshots: new Map([[DEFAULT_JOB_ID, makeSnapshot()]]),
     preflight: makePreflight(),
     countReview: makeCountReview(),
+    countReviewRequests: [],
     tokenBudgetReviews: makeTokenBudgetReviews(),
     selectedPaths: {
       source_dataset: "E:\\picked\\source",
@@ -700,7 +702,11 @@ async function handleApiRequest(scenario: ApiScenario, route: Route, pathname: s
   }
 
   const countReviewMatch = pathname.match(/^\/api\/jobs\/([^/]+)\/count-review$/);
-  if (countReviewMatch && method === "GET") return fulfillJson(route, scenario.countReview);
+  if (countReviewMatch && method === "GET") {
+    const limit = Number(new URL(route.request().url()).searchParams.get("limit") ?? "50");
+    scenario.countReviewRequests.push(limit);
+    return fulfillJson(route, scenario.countReview);
+  }
   if (countReviewMatch && method === "POST") {
     const snapshot = snapshotFor(scenario, decodeURIComponent(countReviewMatch[1]));
     updateJobState(snapshot, "running", "dropout");
