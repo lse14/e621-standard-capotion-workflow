@@ -95,6 +95,13 @@ test.describe("task status and issue characterization", () => {
     await installSnapshotFetchProbe(page, DEFAULT_JOB_ID);
     await openApp(page, { jobId: DEFAULT_JOB_ID, language: "en" });
     await expect(page.getByText("Review this sample")).toBeVisible();
+    const issuePanel = page.locator(".issues-panel");
+    await expect(issuePanel.locator(".issue-pagination")).toBeVisible();
+    expect(await issuePanel.evaluate((root) => {
+      const pagination = root.querySelector(".issue-pagination");
+      const list = root.querySelector(".issue-list");
+      return Boolean(pagination && list && (pagination.compareDocumentPosition(list) & Node.DOCUMENT_POSITION_FOLLOWING));
+    })).toBe(true);
 
     const releasePrevious = holdRoute(api, `GET /api/jobs/${DEFAULT_JOB_ID}`);
     try {

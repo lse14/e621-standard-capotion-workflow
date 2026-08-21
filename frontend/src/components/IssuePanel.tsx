@@ -81,6 +81,10 @@ export function IssuePanel({
       <span>{labels.selectedNlCount(selectedNlIssues.length)}</span>
       <button className="secondary" type="button" disabled={selectedNlIssues.length === 0 || manualNlRetrying || manualNlBatchRetrying || manualNlWriting} aria-busy={manualNlBatchRetrying} onClick={() => onManualNlBatchRetry(selectedNlIssues)}>{labels.nlBatchRetry}</button>
     </div>}
+    <div className="step-actions issue-pagination">
+      <button className="secondary" type="button" disabled={atFirstPage} onClick={onFirstPage}>{labels.firstPage}</button>
+      <button className="secondary" type="button" disabled={atLastPage} onClick={onNextPage}>{labels.nextPage}</button>
+    </div>
     <ul className="issue-list">{issues.map((item) => {
       const isNlManual = canManualNl && item.moduleId === "nl" && !item.retriable;
       const draft = nlDrafts[item.issueId] ?? "";
@@ -98,8 +102,6 @@ export function IssuePanel({
       </li>;
     })}</ul>
     <div className="step-actions">
-      <button className="secondary" type="button" disabled={atFirstPage} onClick={onFirstPage}>{labels.firstPage}</button>
-      <button className="secondary" type="button" disabled={atLastPage} onClick={onNextPage}>{labels.nextPage}</button>
       <button className="warning-action" type="button" disabled={!canRestore || restoring} aria-busy={restoring} onClick={onRestore}>{labels.restoreOriginal}</button>
       <button className="secondary" type="button" disabled={!canReprocess || repairing} aria-busy={repairing} onClick={onReprocess}>{labels.reprocess}</button>
     </div>
