@@ -171,7 +171,7 @@ export function newDraft(): Draft {
     captionFormat: { replaceUnderscoresWithSpaces: true, preserveEscapes: true, triggersEnabled: false, triggerTerms: [] },
     imageDecode: { extensions: [".jpg", ".jpeg", ".png", ".webp", ".bmp"], rejectMultiFrame: true, applyExifTranspose: true, alphaBackground: "#FFFFFF", invalidImageAction: "block" },
     caption: { enabled: true, thresholdMode: "model_default", overwriteTxt: false, inputTxtMode: "tag", taggerFallbackOnMissingTxt: true, resourceId: "caption-e621-eva02-large-full-v1" },
-    classify: { enabled: true, indexMode: "bundled", overwriteJson: false, overwriteCount: false, wikiDataSourceId: "e621-wiki-count-20260724-v1", resourceId: "classify-e621-20260724-v1" },
+    classify: { enabled: true, indexMode: "bundled", overwriteJson: false, overwriteCount: false, resourceId: "classify-e621-20260724-v1" },
     replace: { enabled: true, indexMode: "bundled", resourceId: "replace-e621-20260726-v2" },
     ocr: { enabled: false, device: "auto", llmMinConfidence: 0.5, forceReprocess: false, resourceId: "ocr-ppocrv5-server-paddle-v1" },
     nl: { enabled: true, reuseOriginalNl: true, apiEnabled: true, useImage: true, useFullJson: false, systemPrompt: "", promptVersion: "nl-default-prompt-v4", captionPreset: "general", lengthDistribution: { short: 33, medium: 34, long: 33 }, lengthSeed: "anima-nl-length-v1", apiProfileId: "default", apiPolicy: { concurrency: 3, maxRequestsPerMinute: 60, backupEnabled: false } },

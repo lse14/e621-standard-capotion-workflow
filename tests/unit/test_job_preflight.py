@@ -247,6 +247,54 @@ class JobPreflightTests(unittest.TestCase):
         with self.assertRaisesRegex(JobPreflightError, "assigned by preflight"):
             JobPreparationService._reject_client_frozen_resources(frozen)
 
+    def test_v9_preflight_derives_classify_wiki_data_source_id_in_frozen_config(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "dataset"
+            source.mkdir()
+            Image.new("RGB", (3, 3), "white").save(source / "image.png")
+            catalog, _ = _write_test_resource_library(root, include_ocr=False)
+            (catalog.root / "defaults.json").write_text(json.dumps({
+                "schemaVersion": 3,
+                "defaults": {
+                    "replacementIndex": "replace-default",
+                    "classificationIndex": "classify-default",
+                    "taggingModel": "tagger-default",
+                    "dropoutModel": "dropout-default",
+                },
+            }), encoding="utf-8")
+            config = JobConfig(
+                profile="e621", workMode="in_place", overwriteMode="incremental",
+                sourceRoot=str(source), schemaVersion=8,
+            ).to_dict()
+            config.pop("profile")
+            config["schemaVersion"] = 9
+            config["nl"]["systemPrompt"] = "Describe the visible image."
+            config["caption"]["resourceId"] = "tagger-default"
+            config["classify"] = {
+                "enabled": True,
+                "indexMode": "bundled",
+                "overwriteJson": False,
+                "overwriteCount": False,
+                "resourceId": "classify-default",
+            }
+            config["replace"]["resourceId"] = "replace-default"
+            config["dropout"]["quality"]["resourceId"] = "dropout-default"
+            config["tokenBudget"]["enabled"] = False
+            self.assertNotIn("wikiDataSourceId", config["classify"])
+
+            service = JobPreparationService(root / "state.db", resource_catalog=catalog)
+            try:
+                summary = service.preflight(config)
+                database = StateDatabase.open(root / "state.db")
+                try:
+                    frozen = json.loads(str(database.get_job(summary.jobId)["config_json"]))
+                    self.assertEqual("wiki-test-v1", frozen["classify"]["wikiDataSourceId"])
+                finally:
+                    database.close()
+            finally:
+                service.close()
+
     @staticmethod
     def _binding_api():
         spec = importlib.util.find_spec("anima_core.ocr_runtime_binding")

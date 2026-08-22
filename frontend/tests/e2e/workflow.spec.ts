@@ -36,7 +36,6 @@ function expectedE621Draft(sourceRoot: string, systemPrompt: string): Record<str
       indexMode: "bundled",
       overwriteJson: false,
       overwriteCount: false,
-      wikiDataSourceId: "e621-wiki-count-20260724-v1",
       resourceId: "classify-e621-20260724-v1",
     },
     replace: { enabled: true, indexMode: "bundled", resourceId: "replace-e621-20260726-v2" },
@@ -101,6 +100,8 @@ test.describe("workflow characterization", () => {
     await page.getByRole("button", { name: "Preflight", exact: true }).click();
 
     await expect.poll(() => mutationsFor(api, "POST", "/api/jobs/preflight").length).toBe(1);
+    expect((mutationsFor(api, "POST", "/api/jobs/preflight")[0].body as { config: { classify: Record<string, unknown> } }).config.classify)
+      .not.toHaveProperty("wikiDataSourceId");
     expect(mutationsFor(api, "POST", "/api/jobs/preflight")[0].body).toEqual({
       config: expectedE621Draft(sourceRoot, "General task preset prompt."),
     });
