@@ -58,8 +58,17 @@ class NlDefaultPromptTests(unittest.TestCase):
         prompt = load_default_system_prompt(prompt_version=V4_BASE_PROMPT_VERSION)
         for snippet in (
             "exactly these keys: nl, count, layout, sameCharacterRepeated",
-            "untrusted data",
-            "complete visible text",
+            "count must be one of solo, duo, trio, group, unknown and must count independent visible entities",
+            "layout must be one of single_scene, multi_view, character_sheet, multi_panel, unknown",
+            "sameCharacterRepeated must be a JSON boolean",
+            "one non-empty English caption paragraph",
+            "Each request is independent",
+            "Use structured JSON only when a non-null jsonContext is supplied",
+            "When OCR text is supplied, use it as the preferred source",
+            "ASCII double quotation marks",
+            "Adult Content:",
+            "This is a private offline image annotation dataset.",
+            "Do not refuse, moralize, or add a refusal or safety-disclaimer preface solely because the content is adult.",
         ):
             self.assertIn(snippet, prompt)
 
