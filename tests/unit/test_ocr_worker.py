@@ -239,6 +239,41 @@ class _FakeFactory:
 
 
 class OcrWorkerTests(unittest.TestCase):
+    @unittest.skipIf(_WORKER_IMPORT_ERROR is not None, "OCR worker source is not implemented")
+    def test_empty_candidates_are_ignored_without_failing_the_image(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_name:
+            temporary = Path(temporary_name)
+            resource_root, manifest_relative, fingerprint = _write_resource(temporary / "resource-library")
+            image_path = temporary / "image.png"
+            Image.new("RGB", (4, 4), "white").save(image_path)
+            worker = OcrWorker(model_factory=_FakeFactory(_FakeEngine(_raw_result(
+                texts=["valid", "   "],
+                scores=[0.9, 0.8],
+            ))))
+            worker.initialize(_hello(manifest_relative, fingerprint), resource_root=resource_root)
+
+            outcome = parse_ocr_process_result(worker.process(_request([_work_item(image_path)])))[0]
+
+        self.assertEqual("success", outcome.status)
+        self.assertEqual(["valid"], [item.text for item in outcome.items])
+
+    @unittest.skipIf(_WORKER_IMPORT_ERROR is not None, "OCR worker source is not implemented")
+    def test_all_empty_candidates_produce_no_text(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_name:
+            temporary = Path(temporary_name)
+            resource_root, manifest_relative, fingerprint = _write_resource(temporary / "resource-library")
+            image_path = temporary / "image.png"
+            Image.new("RGB", (4, 4), "white").save(image_path)
+            worker = OcrWorker(model_factory=_FakeFactory(_FakeEngine(_raw_result(
+                texts=["", "\t"],
+                scores=[0.9, 0.8],
+            ))))
+            worker.initialize(_hello(manifest_relative, fingerprint), resource_root=resource_root)
+
+            outcome = parse_ocr_process_result(worker.process(_request([_work_item(image_path)])))[0]
+
+        self.assertEqual("no_text", outcome.status)
+        self.assertEqual((), outcome.items)
     def test_runtime_evidence_uses_runtime_specific_paddle_versions(self) -> None:
         cases = (
             ("ocr-paddle", "paddlepaddle", "3.2.2", False),
@@ -691,7 +726,7 @@ class OcrWorkerTests(unittest.TestCase):
             self.assertTrue(converted, "production Paddle wrapper must convert the RGB copy lazily")
 
     @unittest.skipIf(_WORKER_IMPORT_ERROR is not None, "OCR worker source is not implemented")
-    def test_empty_result_is_no_text_and_invalid_model_fields_become_detail_free_failures(self) -> None:
+    def test_empty_result_is_no_text_and_invalid_model_fields_keep_a_safe_reason(self) -> None:
         cases = {
             "length": _raw_result(scores=[0.8]),
             "nan": _raw_result(scores=[float("nan"), 0.9]),
@@ -719,6 +754,7 @@ class OcrWorkerTests(unittest.TestCase):
                     )[0]
                     self.assertEqual("failed", outcome.status)
                     self.assertEqual("ocr_inference_failed", outcome.error.code)
+                    self.assertEqual("OCR model output was invalid for this image.", outcome.error.message)
                     self.assertNotIn("details", outcome.error.to_dict())
                     self.assertNotRegex(outcome.error.message, r"[A-Za-z]:[\\/]")
 

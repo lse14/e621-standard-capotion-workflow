@@ -12,6 +12,7 @@ from typing import Literal
 
 
 GIB = 1024 ** 3
+_VRAM_REPORTING_TOLERANCE_BYTES = 16 * 1024 ** 2
 _SHA256_LENGTH = 64
 _REQUEST_SCHEMA_VERSION = 1
 _BINDING_SCHEMA_VERSION = 1
@@ -124,7 +125,7 @@ def recommend_tuning(*, device: str, total_vram_bytes: object) -> RecommendedTun
         return RecommendedTuning(1920, 1, "unavailable_fallback")
     if vram < 12 * GIB:
         return RecommendedTuning(1920, 1, "gpu_vram_table")
-    if vram < 24 * GIB:
+    if vram < 24 * GIB - _VRAM_REPORTING_TOLERANCE_BYTES:
         return RecommendedTuning(2304, 2, "gpu_vram_table")
     return RecommendedTuning(2560, 4, "gpu_vram_table")
 

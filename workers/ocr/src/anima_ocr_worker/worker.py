@@ -34,6 +34,12 @@ from .resource import OcrResource, OcrResourceError, load_ocr_resource
 
 MAX_OUTPUT_PAYLOAD_BYTES = 1_000_000
 INFERENCE_FAILURE_MESSAGE = "OCR inference failed for this image."
+IMAGE_DECODE_FAILURE_MESSAGE = "OCR could not decode this image."
+MODEL_INFERENCE_FAILURE_MESSAGE = "OCR model inference failed for this image."
+MODEL_OUTPUT_FAILURE_MESSAGE = "OCR model output was invalid for this image."
+UNEXPECTED_FAILURE_MESSAGE = "OCR encountered an unexpected error for this image."
+OUTPUT_ENCODING_FAILURE_MESSAGE = "OCR result could not be encoded safely."
+OUTPUT_SIZE_FAILURE_MESSAGE = "OCR result exceeds the output safety limit."
 OVERSIZE_MESSAGE = "OCR image dimensions exceed the first-release safety limit."
 
 
@@ -138,7 +144,7 @@ def _sequence(value: object, field: str) -> list[object]:
         raise OcrInferenceError(f"{field} is invalid") from exc
 
 
-def _clean_text(value: object) -> str:
+def _clean_text(value: object) -> str | None:
     if not isinstance(value, str):
         raise OcrInferenceError("rec_texts is invalid")
     try:
@@ -148,7 +154,9 @@ def _clean_text(value: object) -> str:
         raise OcrInferenceError("rec_texts is invalid") from exc
     result = "".join(character for character in value if unicodedata.category(character) != "Cc")
     try:
-        if not result.strip() or len(result.encode("utf-8")) > MAX_TEXT_BYTES:
+        if not result.strip():
+            return None
+        if len(result.encode("utf-8")) > MAX_TEXT_BYTES:
             raise OcrInferenceError("rec_texts is invalid")
     except UnicodeEncodeError as exc:
         raise OcrInferenceError("rec_texts is invalid") from exc
@@ -207,9 +215,12 @@ def _raw_items(value: object, image: DecodedImage) -> list[dict[str, object]]:
         raise OcrInferenceError("PaddleOCR result field lengths are invalid")
     items: list[dict[str, object]] = []
     for index in range(count):
+        text = _clean_text(sequences["rec_texts"][index])
+        if text is None:
+            continue
         polygon = _polygon(sequences["rec_polys"][index], image)
         items.append({
-            "text": _clean_text(sequences["rec_texts"][index]),
+            "text": text,
             "confidence": _finite_number(sequences["rec_scores"][index], "rec_scores", minimum=0, maximum=1),
             "polygonPixels": polygon,
             "bboxPixels": _bbox(sequences["rec_boxes"][index], polygon, image),
@@ -233,14 +244,20 @@ def _identity(item: OcrWorkItem, width: int, height: int) -> dict[str, object]:
     }
 
 
-def _inference_failure(item: OcrWorkItem, width: int, height: int) -> dict[str, object]:
+def _inference_failure(
+    item: OcrWorkItem,
+    width: int,
+    height: int,
+    *,
+    message: str = INFERENCE_FAILURE_MESSAGE,
+) -> dict[str, object]:
     return {
         **_identity(item, width, height),
         "status": "failed",
         "items": [],
         "error": {
             "code": "ocr_inference_failed",
-            "message": INFERENCE_FAILURE_MESSAGE,
+            "message": message,
             "retriable": True,
         },
     }
@@ -329,19 +346,49 @@ class OcrWorker:
         except OcrImageTooLargeError as exc:
             return _oversize_failure(item, exc.width, exc.height)
         except OcrImageDecodeError as exc:
-            return _inference_failure(item, exc.width or 1, exc.height or 1)
+            return _inference_failure(
+                item,
+                exc.width or 1,
+                exc.height or 1,
+                message=IMAGE_DECODE_FAILURE_MESSAGE,
+            )
         try:
             results = self.model.predict(decoded.image)
             if len(results) != 1:
                 raise OcrInferenceError("PaddleOCR must return one result per image")
+        except OcrModelError:
+            return _inference_failure(
+                item,
+                decoded.width,
+                decoded.height,
+                message=MODEL_INFERENCE_FAILURE_MESSAGE,
+            )
+        except Exception:
+            return _inference_failure(
+                item,
+                decoded.width,
+                decoded.height,
+                message=UNEXPECTED_FAILURE_MESSAGE,
+            )
+        try:
             raw_items = _raw_items(results[0], decoded)
             verify_source_fingerprint(item)
         except OcrSourceFingerprintError:
             raise
-        except (OcrInferenceError, OcrModelError):
-            return _inference_failure(item, decoded.width, decoded.height)
+        except OcrInferenceError:
+            return _inference_failure(
+                item,
+                decoded.width,
+                decoded.height,
+                message=MODEL_OUTPUT_FAILURE_MESSAGE,
+            )
         except Exception:
-            return _inference_failure(item, decoded.width, decoded.height)
+            return _inference_failure(
+                item,
+                decoded.width,
+                decoded.height,
+                message=UNEXPECTED_FAILURE_MESSAGE,
+            )
         if not raw_items:
             return {
                 **_identity(item, decoded.width, decoded.height),
@@ -370,11 +417,16 @@ class OcrWorker:
                     allow_nan=False,
                 ).encode("utf-8")
             except (TypeError, UnicodeEncodeError, ValueError):
-                outcome = _inference_failure(item, 1, 1)
+                outcome = _inference_failure(item, 1, 1, message=OUTPUT_ENCODING_FAILURE_MESSAGE)
                 encoded = b""
             if len(encoded) > MAX_OUTPUT_PAYLOAD_BYTES:
                 image = outcome["image"]
                 assert isinstance(image, dict)
-                outcome = _inference_failure(item, int(image["width"]), int(image["height"]))
+                outcome = _inference_failure(
+                    item,
+                    int(image["width"]),
+                    int(image["height"]),
+                    message=OUTPUT_SIZE_FAILURE_MESSAGE,
+                )
             outcomes.append(outcome)
         return process_result(outcomes)

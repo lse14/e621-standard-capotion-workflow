@@ -18,7 +18,7 @@ sys.path.insert(0, str(ROOT / "core" / "src"))
 from anima_core.contracts import JobConfig, sha256_json  # noqa: E402
 from anima_core.db import StateDatabase  # noqa: E402
 from anima_core.ocr_overlay import OcrWorkingSidecarView  # noqa: E402
-from anima_core.ocr_runtime_binding import normalize_ocr_execution, write_execution_request  # noqa: E402
+from anima_core.ocr_runtime_binding import GIB, normalize_ocr_execution, recommend_tuning, write_execution_request  # noqa: E402
 from anima_core.ocr_sidecar import OcrSidecarError, is_reusable, parse_ocr_sidecar, serialize_ocr_sidecar  # noqa: E402
 from anima_core.overlay import OverlayLayout  # noqa: E402
 from anima_core.path_safety import windows_key  # noqa: E402
@@ -31,6 +31,7 @@ from anima_core.worker_protocol import ProtocolEnvelopeV1  # noqa: E402
 OCR_RESOURCE_ID = "ocr-ppocrv5-server-paddle-v1"
 OCR_RESOURCE_MANIFEST = r"ocr-models\ocr-ppocrv5-server-paddle-v1\resource.json"
 OCR_RESOURCE_FINGERPRINT = "b" * 64
+_VRAM_REPORTING_TOLERANCE_BYTES = 16 * 1024 ** 2
 INFERENCE = {
     "useDocOrientationClassify": False,
     "useDocUnwarping": False,
@@ -47,6 +48,32 @@ def _hash_tree(root: Path) -> dict[str, str]:
         for path in sorted(root.rglob("*"))
         if path.is_file()
     }
+
+
+class OcrRuntimeTuningTests(unittest.TestCase):
+    def test_near_24_gib_cuda_report_uses_the_24_gib_tier(self) -> None:
+        reported_vram = 24 * GIB - 12 * 1024 ** 2
+
+        self.assertEqual(
+            (2560, 4),
+            (
+                recommend_tuning(device="cuda", total_vram_bytes=reported_vram).textDetLimitSideLen,
+                recommend_tuning(device="cuda", total_vram_bytes=reported_vram).textBatchSize,
+            ),
+        )
+        self.assertEqual(
+            (2304, 2),
+            (
+                recommend_tuning(
+                    device="cuda",
+                    total_vram_bytes=24 * GIB - _VRAM_REPORTING_TOLERANCE_BYTES - 1,
+                ).textDetLimitSideLen,
+                recommend_tuning(
+                    device="cuda",
+                    total_vram_bytes=24 * GIB - _VRAM_REPORTING_TOLERANCE_BYTES - 1,
+                ).textBatchSize,
+            ),
+        )
 
 
 def _success_sidecar(
