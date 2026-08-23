@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Protocol
 
-from .contracts import ProgressEvent, SampleIssue, WorkLease, job_config_supports_ocr_device, sha256_json
+from .contracts import ProgressEvent, SampleIssue, WorkLease, job_config_supports_ocr, job_config_supports_ocr_device, sha256_json
 from .db import StateDatabase
 from .db_scheduler import _complete_leased_sample_with_issue
 from .ocr_overlay import OcrWorkingSidecarView
@@ -219,8 +219,8 @@ class OcrRunner:
         if (
             not isinstance(config, dict)
             or sha256_json(config) != job["config_hash"]
-            or config.get("schemaVersion") not in {5, 6, 7, 8}
-            or int(job["config_schema_version"]) not in {5, 6, 7, 8}
+            or not job_config_supports_ocr(config.get("schemaVersion"))
+            or not job_config_supports_ocr(int(job["config_schema_version"]))
             or not isinstance(config.get("ocr"), dict)
         ):
             raise self._fatal("ocr_protocol_violation", "frozen OCR configuration is invalid")

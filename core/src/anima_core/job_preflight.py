@@ -109,7 +109,7 @@ def config_from_dict(value: object) -> JobConfig:
         if set(value) - allowed_fields:
             raise JobPreflightError("JobConfig shape is invalid; task profile is not supported by schema v9")
         if not job_config_supports_ocr(schema_version) and "ocr" in value:
-            raise JobPreflightError("OCR is only supported by JobConfig v5 through v7")
+            raise JobPreflightError("OCR is only supported by JobConfig v5 through v9")
         count_review = value.get("countReview")
         ocr = value.get("ocr")
         config = JobConfig(

@@ -254,7 +254,7 @@ class ControlPlaneApiTests(unittest.TestCase):
             write_runtime_binding(layout.resource_path("ocr-runtime-binding-v1.json"), binding)
         finally:
             database.close()
-        for schema_version in (7, 8):
+        for schema_version in (7, 8, 9):
             with self.subTest(schema_version=schema_version):
                 config = JobConfig(
                     profile="e621", workMode="in_place", overwriteMode="incremental",

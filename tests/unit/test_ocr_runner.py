@@ -430,6 +430,34 @@ class OcrRunnerTests(unittest.TestCase):
             finally:
                 fixture.close()
 
+    def test_v9_ocr_configuration_is_accepted_by_the_runner(self) -> None:
+        module = self._api()
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = OcrFixture(Path(temporary), schema_version=9)
+            try:
+                write_execution_request(
+                    fixture.layout.resource_path("ocr-execution-request-v1.json"),
+                    normalize_ocr_execution(None),
+                )
+                transport = FakeOcrTransport()
+                report = module.OcrRunner(
+                    fixture.database,
+                    fixture.scheduler,
+                    transport,
+                    fixture.view,
+                    job_id="job-ocr-runner",
+                    worker_instance_id="ocr-worker-1",
+                    resource_manifest_relative_path=OCR_RESOURCE_MANIFEST,
+                    resource_fingerprint=OCR_RESOURCE_FINGERPRINT,
+                    runtime_id="ocr-paddle",
+                    runtime_fingerprint="a" * 64,
+                    binding_path=fixture.layout.resource_path("ocr-runtime-binding-v1.json"),
+                ).run()
+                self.assertEqual("completed", report.status)
+                self.assertEqual((1, 1), (transport.hello_calls, transport.process_calls))
+            finally:
+                fixture.close()
+
     def test_v7_binds_runtime_before_the_first_single_sample_lease(self) -> None:
         module = self._api()
         required = {"runtime_id", "runtime_fingerprint", "binding_path"}

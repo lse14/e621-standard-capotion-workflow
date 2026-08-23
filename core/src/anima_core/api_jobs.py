@@ -9,7 +9,7 @@ from .annotation_restore import AnnotationRestoreCoordinator, AnnotationRestoreE
 from .api_context import ControlPlaneContext, bad_request, conflict, not_found
 from .api_models import _ConfirmBody, _PinBody, _PreflightBody, _WorkspaceBody, parse_create_job_body
 from .commit_journal import CommitJournalError, load as load_journal
-from .contracts import pipeline_module_ids
+from .contracts import job_config_supports_ocr_device, pipeline_module_ids
 from .db import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, StateDatabase
 from .export_summary import build_export_summary
 from .job_preflight import JobPreflightError
@@ -25,7 +25,7 @@ from .scheduler import SchedulerError
 
 
 def _ocr_runtime_snapshot(job: object, config: object) -> dict[str, object] | None:
-    if not isinstance(job, dict) or not isinstance(config, dict) or config.get("schemaVersion") not in {7, 8}:
+    if not isinstance(job, dict) or not isinstance(config, dict) or not job_config_supports_ocr_device(config.get("schemaVersion")):
         return None
     ocr = config.get("ocr")
     if not isinstance(ocr, dict) or ocr.get("enabled") is not True:
