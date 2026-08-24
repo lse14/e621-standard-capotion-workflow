@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -35,7 +36,14 @@ from .ocr_runtime_binding import (
     write_execution_request,
 )
 from .overlay import OverlayLayout
-from .path_safety import PathSafetyError, validate_source_output, windows_key
+from .path_safety import (
+    PathSafetyError,
+    ensure_within,
+    file_fingerprint,
+    safe_relative_path,
+    validate_source_output,
+    windows_key,
+)
 from .resource_catalog import (
     ResourceCatalog,
     ResourceCatalogError,
@@ -154,6 +162,33 @@ class JobPreparationService:
         if not job_id or not job_id.isalnum():
             raise JobPreflightError("OCR execution request job identity is invalid")
         return self.database_path.parent / f".{self.database_path.name}.ocr-requests" / job_id / "resources" / "ocr-execution-request-v1.json"
+
+    @staticmethod
+    def _rebind_full_copy_manifest(database: StateDatabase, job_id: str, dataset_root: Path) -> None:
+        """Bind immutable image checks to the copied dataset, not the source inode."""
+        rows = list(database.connection.execute(
+            "SELECT sample_id,relative_image_path FROM samples WHERE job_id=?",
+            (job_id,),
+        ))
+        with database.transaction(immediate=True):
+            for row in rows:
+                relative = safe_relative_path(str(row["relative_image_path"]))
+                image = ensure_within(
+                    dataset_root,
+                    dataset_root / Path(relative.replace("\\", os.sep)),
+                )
+                fingerprint = file_fingerprint(image)
+                database.connection.execute(
+                    """UPDATE samples SET image_file_id=?,image_size=?,image_mtime_ns=?
+                       WHERE job_id=? AND sample_id=?""",
+                    (
+                        fingerprint["file_id"],
+                        fingerprint["size"],
+                        fingerprint["mtime_ns"],
+                        job_id,
+                        int(row["sample_id"]),
+                    ),
+                )
 
     @staticmethod
     def _reject_client_frozen_resources(value: object) -> None:
@@ -586,6 +621,8 @@ class JobPreparationService:
             acquired = DatasetLock.acquire(database, source.value, job_id)
             first_lock_acquired = True
             dataset = prepare_dataset(source.value, config.outputRoot, config.workMode, job_id).datasetRoot
+            if config.workMode == "full_copy":
+                self._rebind_full_copy_manifest(database, job_id, dataset)
             if config.workMode == "full_copy":
                 acquired.release(recovery_complete=True)
                 acquired = DatasetLock.acquire(database, dataset, job_id)

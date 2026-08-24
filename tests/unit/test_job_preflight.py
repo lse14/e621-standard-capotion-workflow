@@ -22,7 +22,7 @@ from anima_core.db import StateDatabase
 from anima_core.job_preflight import JobPreflightError, JobPreparationService, config_from_dict
 from anima_core.locks import DatasetLockError
 from anima_core.overlay import OverlayLayout
-from anima_core.path_safety import windows_key
+from anima_core.path_safety import file_fingerprint, windows_key
 from anima_core.resource_catalog import ResourceCatalog
 
 
@@ -396,6 +396,36 @@ class JobPreflightTests(unittest.TestCase):
         config = JobConfig(profile="e621", workMode="in_place", overwriteMode="incremental", sourceRoot=str(source))
         config.nl["systemPrompt"] = "describe the visible image"
         return config.to_dict()
+
+    def test_full_copy_rebinds_manifest_image_fingerprint_to_the_copy(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "dataset"
+            output = root / "copy"
+            source.mkdir()
+            Image.new("RGB", (3, 3), "white").save(source / "image.png")
+            config = self._config(source)
+            config["workMode"] = "full_copy"
+            config["outputRoot"] = str(output)
+            service = JobPreparationService(root / "state.db", resource_catalog=ResourceCatalog(ROOT / "resource-library"))
+            try:
+                summary = service.preflight(config)
+                service.confirm_workspace(summary.jobId, confirmed=True, confirmed_rebuild=False)
+                database = StateDatabase.open(root / "state.db")
+                try:
+                    row = database.connection.execute(
+                        "SELECT image_file_id,image_size,image_mtime_ns FROM samples WHERE job_id=? AND sample_id=1",
+                        (summary.jobId,),
+                    ).fetchone()
+                    self.assertIsNotNone(row)
+                    actual = file_fingerprint(output / "image.png")
+                    self.assertEqual(actual["file_id"], row["image_file_id"])
+                    self.assertEqual(actual["size"], row["image_size"])
+                    self.assertEqual(actual["mtime_ns"], row["image_mtime_ns"])
+                finally:
+                    database.close()
+            finally:
+                service.close()
 
     def test_dataset_claim_conflict_keeps_new_job_ready(self) -> None:
         transitions = {
