@@ -432,7 +432,7 @@ class JobPreflightTests(unittest.TestCase):
             root = Path(temporary)
             source = root / "dataset"
             source.mkdir()
-            Image.new("RGB", (3, 3), "white").save(source / "image.png")
+            Image.new("RGB", (3, 3), "white").save(source / "000265_1ad34fe21652dc3c14829e3110757447.jpg")
             config = self._config(source)
             config["recursive"] = True
             config["dropout"]["enabled"] = True

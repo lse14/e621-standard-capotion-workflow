@@ -41,6 +41,16 @@ def _ocr_runtime_snapshot(job: object, config: object) -> dict[str, object] | No
         "effective": None,
         "startupReason": None,
     }
+    if isinstance(job, dict):
+        raw_evidence = job.get("runtime_evidence_json")
+        if isinstance(raw_evidence, str) and raw_evidence:
+            try:
+                evidence = json.loads(raw_evidence)
+            except (TypeError, json.JSONDecodeError):
+                evidence = None
+            persisted = evidence.get("ocr") if isinstance(evidence, dict) else None
+            if isinstance(persisted, dict):
+                return persisted
     overlay_root = job.get("overlay_root")
     if not isinstance(overlay_root, str) or not overlay_root:
         return {"availability": "pending", **empty}
@@ -69,6 +79,20 @@ def _ocr_runtime_snapshot(job: object, config: object) -> dict[str, object] | No
         },
         "startupReason": binding.startupReason,
     }
+
+
+def _dropout_runtime_snapshot(job: object) -> dict[str, object] | None:
+    if not isinstance(job, dict):
+        return None
+    raw_evidence = job.get("runtime_evidence_json")
+    if not isinstance(raw_evidence, str) or not raw_evidence:
+        return None
+    try:
+        evidence = json.loads(raw_evidence)
+    except (TypeError, json.JSONDecodeError):
+        return None
+    value = evidence.get("dropout") if isinstance(evidence, dict) else None
+    return value if isinstance(value, dict) else None
 
 
 def build_jobs_router(context: ControlPlaneContext) -> APIRouter:
@@ -134,6 +158,7 @@ def build_jobs_router(context: ControlPlaneContext) -> APIRouter:
             export_summary = None
             repair_preview = None
             ocr_runtime = None
+            dropout_runtime = None
             try:
                 config = json.loads(str(job["config_json"]))
                 export_config = config.get("export") if isinstance(config, dict) else None
@@ -164,6 +189,7 @@ def build_jobs_router(context: ControlPlaneContext) -> APIRouter:
                     "estimatedApiRequests": nl_upper_bound if api_enabled else 0,
                 }
                 ocr_runtime = _ocr_runtime_snapshot(dict(job), config)
+                dropout_runtime = _dropout_runtime_snapshot(dict(job))
             except (CommitJournalError, OSError, UnicodeError, ValueError) as exc:
                 raise bad_request(exc) from exc
             return {
@@ -191,6 +217,7 @@ def build_jobs_router(context: ControlPlaneContext) -> APIRouter:
                     ],
                 ],
                 "ocrRuntime": ocr_runtime,
+                "dropoutRuntime": dropout_runtime,
                 "events": [dict(row) for row in events],
                 "issues": [dict(row) for row in issues],
                 "exportSummary": export_summary,

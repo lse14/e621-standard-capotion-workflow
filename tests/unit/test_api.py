@@ -285,6 +285,45 @@ class ControlPlaneApiTests(unittest.TestCase):
                     snapshot.get("ocrRuntime"),
                 )
 
+    def test_snapshot_keeps_persisted_ocr_runtime_after_overlay_cleanup(self) -> None:
+        config = JobConfig(
+            profile="e621", workMode="in_place", overwriteMode="incremental",
+            sourceRoot=str(Path(self.temporary.name) / "dataset"), schemaVersion=9,
+        ).to_dict()
+        config["ocr"]["enabled"] = True
+        persisted = {
+            "availability": "available",
+            "runtimeId": "ocr-paddle-gpu",
+            "gpuName": "NVIDIA Persisted GPU",
+            "totalVramBytes": 24 * 1024 ** 3,
+            "requestedDevice": "cuda",
+            "observedDevice": "cuda",
+            "recommended": {"textDetLimitSideLen": 2560, "textBatchSize": 4},
+            "effective": {"textDetLimitSideLen": 2560, "textBatchSize": 4},
+            "startupReason": None,
+        }
+        dropout = {
+            "availability": "available",
+            "runtimeId": "policy",
+            "qualityEnabled": True,
+            "device": "cuda",
+            "modelLoadCount": 1,
+            "resourceFingerprint": "c" * 64,
+        }
+        database = StateDatabase.open(self.database_path)
+        try:
+            database.connection.execute(
+                "UPDATE jobs SET config_schema_version=?,config_json=?,config_hash=?,overlay_root=NULL,runtime_evidence_json=? WHERE job_id=?",
+                (9, json.dumps(config), sha256_json(config), json.dumps({"ocr": persisted, "dropout": dropout}), "job-api"),
+            )
+        finally:
+            database.close()
+        snapshot = _endpoint(self.app, "/api/jobs/{job_id}", "GET")(
+            "job-api", afterEventId=0, issueAfterSampleId=0, issueAfterIssueId=None, limit=100,
+        )
+        self.assertEqual(persisted, snapshot["ocrRuntime"])
+        self.assertEqual(dropout, snapshot["dropoutRuntime"])
+
     def test_profile_and_credential_responses_never_echo_secret(self) -> None:
         save_credential = _endpoint(self.app, "/api/nl/credentials/{reference}", "PUT")
         save_profile = _endpoint(self.app, "/api/nl/profiles/{profile_id}", "PUT")

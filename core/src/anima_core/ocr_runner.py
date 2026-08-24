@@ -346,6 +346,8 @@ class OcrRunner:
                     binding.effectiveTextDetLimitSideLen,
                     binding.effectiveTextBatchSize,
                 )
+                if hello_result is not None:
+                    self._persist_runtime_evidence(binding)
                 return binding
             request = read_execution_request(self.binding_path.with_name("ocr-execution-request-v1.json"))
             requested_device = ocr.get("device")
@@ -397,9 +399,29 @@ class OcrRunner:
                 binding.effectiveTextDetLimitSideLen,
                 binding.effectiveTextBatchSize,
             )
+            self._persist_runtime_evidence(binding)
             return binding
         except OcrExecutionError as exc:
             raise self._fatal("ocr_protocol_violation", "OCR runtime binding is unavailable or invalid") from exc
+
+    def _persist_runtime_evidence(self, binding: OcrRuntimeBindingV1) -> None:
+        self.database.set_runtime_evidence(self.job_id, "ocr", {
+            "availability": "available",
+            "runtimeId": binding.runtimeId,
+            "gpuName": binding.gpuName,
+            "totalVramBytes": binding.totalVramBytes,
+            "requestedDevice": binding.requestedDevice,
+            "observedDevice": binding.observedDevice,
+            "recommended": {
+                "textDetLimitSideLen": binding.recommended.textDetLimitSideLen,
+                "textBatchSize": binding.recommended.textBatchSize,
+            },
+            "effective": {
+                "textDetLimitSideLen": binding.effectiveTextDetLimitSideLen,
+                "textBatchSize": binding.effectiveTextBatchSize,
+            },
+            "startupReason": binding.startupReason,
+        })
 
     def _publish(self, status: str, attempt: int = 0) -> None:
         summary = self.database.module_summary(self.job_id, "ocr")

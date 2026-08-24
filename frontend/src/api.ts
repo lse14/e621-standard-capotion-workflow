@@ -19,6 +19,14 @@ export type OcrRuntimeStatus = {
   effective: { textDetLimitSideLen: number; textBatchSize: number } | null;
   startupReason: "gpu_runtime_unavailable" | "binding_invalid" | null;
 };
+export type DropoutRuntimeStatus = {
+  availability: "available";
+  runtimeId: "policy";
+  qualityEnabled: boolean;
+  device: "cpu" | "cuda" | null;
+  modelLoadCount: number;
+  resourceFingerprint: string | null;
+};
 export type CreateJobRequest = { config: Record<string, unknown>; ocrExecution?: OcrExecutionRequest };
 
 export type JobSnapshot = {
@@ -42,6 +50,7 @@ export type JobSnapshot = {
     targetCount: number; createdAt: string; finishedAt: string | null;
   }>;
   ocrRuntime: OcrRuntimeStatus | null;
+  dropoutRuntime: DropoutRuntimeStatus | null;
   nlPendingApiDecisions: number;
   nextAfterEventId: number;
   nextIssueAfterSampleId: number;

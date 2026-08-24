@@ -49,6 +49,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     api_budget_revision INTEGER NOT NULL DEFAULT 0,
     overlay_root TEXT,
     commit_journal_path TEXT,
+    runtime_evidence_json TEXT,
     resume_status TEXT,
     created_at TEXT NOT NULL,
     started_at TEXT,

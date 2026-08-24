@@ -509,6 +509,32 @@ class JobDatabaseMixin:
         if result.rowcount != 1:
             raise KeyError(f"job does not exist: {job_id}")
 
+    def get_runtime_evidence(self, job_id: str) -> dict[str, object]:
+        raw = self.get_job(job_id)["runtime_evidence_json"]
+        if raw is None:
+            return {}
+        try:
+            value = json.loads(str(raw))
+        except (TypeError, json.JSONDecodeError) as exc:
+            raise ValueError("runtime evidence is invalid JSON") from exc
+        if not isinstance(value, dict):
+            raise ValueError("runtime evidence must be an object")
+        return value
+
+    def set_runtime_evidence(self, job_id: str, module_id: str, evidence: Mapping[str, object]) -> None:
+        if module_id not in {"ocr", "dropout"} or not isinstance(evidence, Mapping):
+            raise ValueError("runtime evidence is invalid")
+        current = self.get_runtime_evidence(job_id)
+        current[module_id] = dict(evidence)
+        serialized = json.dumps(current, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        if len(serialized.encode("utf-8")) > 262_144:
+            raise ValueError("runtime evidence is too large")
+        result = self.connection.execute(
+            "UPDATE jobs SET runtime_evidence_json=? WHERE job_id=?", (serialized, job_id),
+        )
+        if result.rowcount != 1:
+            raise KeyError(f"job does not exist: {job_id}")
+
     def clear_cancellation_metadata(self, job_id: str) -> None:
         """Clear only cancellation timestamps after a recovery is accepted."""
         result = self.connection.execute(

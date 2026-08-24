@@ -203,8 +203,19 @@ class PolicyRunner:
             payload.get("schemaVersion") != 1 or payload.get("payloadType") != "policy_hello_result"
             or payload.get("ready") is not True or payload.get("modelLoadCount") != expected_loads
             or payload.get("resourceFingerprint") != fingerprint
+            or payload.get("qualityEnabled") is not (fingerprint is not None)
+            or (fingerprint is None and payload.get("device") is not None)
+            or (fingerprint is not None and payload.get("device") not in {"cpu", "cuda"})
         ):
             raise self._fatal("policy_protocol_violation", "policy hello result is invalid")
+        self.database.set_runtime_evidence(self.job_id, "dropout", {
+            "availability": "available",
+            "runtimeId": RUNTIME_ID,
+            "qualityEnabled": payload["qualityEnabled"],
+            "device": payload["device"],
+            "modelLoadCount": payload["modelLoadCount"],
+            "resourceFingerprint": payload["resourceFingerprint"],
+        })
         self._hello_done = True
 
     def _work_item(self, lease: WorkLease, row: object) -> dict[str, object]:

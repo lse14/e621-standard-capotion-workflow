@@ -202,6 +202,7 @@ export function makeSnapshot({
     repairPreview: { eligibleTargetCount: 2, estimatedApiRequests: 0 },
     repairChildren: [],
     ocrRuntime,
+    dropoutRuntime: null,
     nlPendingApiDecisions: 0,
     nextAfterEventId: 7,
     nextIssueAfterSampleId: 0,

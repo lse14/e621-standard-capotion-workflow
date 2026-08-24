@@ -358,6 +358,7 @@ class PipelineTests(unittest.TestCase):
         config.caption["enabled"] = config.classify["enabled"] = config.replace["enabled"] = config.nl["enabled"] = False
         config.countReview["enabled"] = False  # type: ignore[index]
         config.dropout["enabled"] = True
+        config.dropout["artist"]["enabled"] = False
         config.dropout["quality"]["enabled"] = False
         config.tokenBudget["enabled"] = False  # type: ignore[index]
         preparation = JobPreparationService(root / "state.db")

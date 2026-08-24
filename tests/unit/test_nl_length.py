@@ -57,7 +57,7 @@ class NlLengthTests(unittest.TestCase):
 
     def test_character_name_rejects_nonconforming_first_directory(self) -> None:
         module = self._module()
-        for value in ("role/a.png", "12_/a.png", "12_   /a.png", "12-role/a.png"):
+        for value in ("role/a.png", "000265_1ad34fe21652dc3c14829e3110757447.jpg", "12_/a.png", "12_   /a.png", "12-role/a.png"):
             with self.subTest(relative_image_path=value):
                 with self.assertRaisesRegex(ValueError, "first-level directories"):
                     module.character_name(value)

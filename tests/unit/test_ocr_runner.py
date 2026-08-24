@@ -561,6 +561,9 @@ class OcrRunnerTests(unittest.TestCase):
                     {"textDetLimitSideLen": 2560, "textBatchSize": 4},
                     transport.hello_payloads[0]["executionTuning"],
                 )
+                evidence = fixture.database.get_runtime_evidence("job-ocr-runner")
+                self.assertEqual("cuda", evidence["ocr"]["observedDevice"])
+                self.assertEqual("ocr-paddle-gpu", evidence["ocr"]["runtimeId"])
             finally:
                 fixture.close()
 

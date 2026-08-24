@@ -31,9 +31,10 @@ def _business() -> dict[str, object]:
 
 
 class _PolicyTransport:
-    def __init__(self, layout: OverlayLayout, *, mutate_count: bool = False) -> None:
+    def __init__(self, layout: OverlayLayout, *, mutate_count: bool = False, quality_device: str | None = None) -> None:
         self.layout = layout
         self.mutate_count = mutate_count
+        self.quality_device = quality_device
         self.calls = 0
 
     def exchange(self, request: ProtocolEnvelopeV1) -> ProtocolEnvelopeV1:
@@ -42,8 +43,11 @@ class _PolicyTransport:
             quality = request.payload["policy"]["quality"]
             assert isinstance(quality, dict)
             assert set(quality) == {"enabled", "dropoutProbability", "device", "batchSize", "resourceId"}
+            quality_enabled = self.quality_device is not None
             payload = {"schemaVersion": 1, "payloadType": "policy_hello_result", "ready": True,
-                       "qualityEnabled": False, "device": None, "modelLoadCount": 0, "resourceFingerprint": None}
+                       "qualityEnabled": quality_enabled, "device": self.quality_device,
+                       "modelLoadCount": 1 if quality_enabled else 0,
+                       "resourceFingerprint": request.payload["resourceFingerprint"] if quality_enabled else None}
             method = "hello"
         else:
             items = request.payload["items"]
@@ -61,7 +65,8 @@ class _PolicyTransport:
                                  "leaseId": lease, "relativeImagePath": item["relativeImagePath"],
                                  "preparedRelativePath": str(prepared.relative_to(self.layout.root)).replace("/", "\\"),
                                  "sha256": digest, "aestheticScore": None, "quality": [], "decision": {}})
-            payload = {"schemaVersion": 1, "payloadType": "policy_batch_result", "outcomes": outcomes, "modelLoadCount": 0}
+            payload = {"schemaVersion": 1, "payloadType": "policy_batch_result", "outcomes": outcomes,
+                       "modelLoadCount": 1 if self.quality_device is not None else 0}
             method = "result"
         return ProtocolEnvelopeV1(protocolVersion="1.0", kind="response", messageId=f"reply-{request.messageId}",
             runtimeId="policy", owner="policy", method=method, payload=payload, replyTo=request.messageId,
@@ -69,7 +74,7 @@ class _PolicyTransport:
 
 
 class PolicyRunnerTests(unittest.TestCase):
-    def _prepared_runner(self, root: Path, *, mutate_count: bool = False) -> tuple[StateDatabase, JobPreparationService, str, OverlayLayout, PolicyRunner]:
+    def _prepared_runner(self, root: Path, *, mutate_count: bool = False, quality_device: str | None = None) -> tuple[StateDatabase, JobPreparationService, str, OverlayLayout, PolicyRunner]:
         dataset = root / "dataset"
         artist = dataset / "1_Artist"
         artist.mkdir(parents=True)
@@ -79,7 +84,12 @@ class PolicyRunnerTests(unittest.TestCase):
         config.caption["enabled"] = config.classify["enabled"] = config.replace["enabled"] = config.nl["enabled"] = False
         config.countReview["enabled"] = False  # type: ignore[index]
         config.dropout["enabled"] = True
-        config.dropout["quality"]["enabled"] = False
+        config.dropout["quality"]["enabled"] = quality_device is not None
+        if quality_device is not None:
+            config.dropout["quality"]["resourceId"] = "lse14-scorer-5k-v1"
+            manifest = root / "dropout-models" / "lse14-scorer-5k-v1" / "resource.json"
+            manifest.parent.mkdir(parents=True)
+            manifest.write_text(json.dumps({"schemaVersion": 1, "owner": "policy", "resourceId": "lse14-scorer-5k-v1", "fingerprint": "a" * 64}), encoding="utf-8")
         preparation = JobPreparationService(root / "state.db")
         job_id = preparation.preflight(config.to_dict()).jobId
         preparation.confirm_workspace(job_id, confirmed=True, confirmed_rebuild=False)
@@ -91,9 +101,11 @@ class PolicyRunnerTests(unittest.TestCase):
         scheduler.start_module(job_id, "dropout", enabled=True, profile="e621")
         job = database.get_job(job_id)
         layout = OverlayLayout.open_existing(str(job["overlay_root"]), job_id)
-        runner = PolicyRunner(database, scheduler, _PolicyTransport(layout, mutate_count=mutate_count),
+        runner = PolicyRunner(database, scheduler, _PolicyTransport(layout, mutate_count=mutate_count, quality_device=quality_device),
             WorkingAnnotationView(BaselineView(dataset), layout), job_id=job_id,
-            worker_instance_id="policy-test", install_root=root)
+            worker_instance_id="policy-test", install_root=root,
+            resource_manifest_relative_path=r"dropout-models\lse14-scorer-5k-v1\resource.json" if quality_device is not None else None,
+            resource_fingerprint="a" * 64 if quality_device is not None else None)
         return database, preparation, job_id, layout, runner
 
     def test_policy_commits_only_valid_prepared_overlay_and_preserves_protected_fields(self) -> None:
@@ -138,6 +150,18 @@ class PolicyRunnerTests(unittest.TestCase):
                     runner.run()
                 self.assertEqual("failed", database.get_job(job_id)["status"])
                 self.assertEqual([], list((layout.root / "annotations").rglob("*.json")))
+            finally:
+                database.close()
+                preparation.close()
+
+    def test_policy_persists_quality_device_evidence_after_overlay_cleanup(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            database, preparation, job_id, _layout, runner = self._prepared_runner(Path(temporary), quality_device="cuda")
+            try:
+                self.assertEqual("completed", runner.run())
+                database.clear_workspace_metadata(job_id)
+                evidence = database.get_runtime_evidence(job_id)
+                self.assertEqual("cuda", evidence["dropout"]["device"])
             finally:
                 database.close()
                 preparation.close()
