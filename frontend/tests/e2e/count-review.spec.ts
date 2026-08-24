@@ -18,6 +18,15 @@ async function openCountReview(page: Parameters<typeof openApp>[0]) {
 }
 
 test.describe("count review characterization", () => {
+  test("shows the current module as waiting for human review", async ({ page, api }) => {
+    setJobSnapshot(api, makeSnapshot({ status: "reviewing", currentModuleId: "count_review" }));
+    await openCountReview(page);
+
+    const countModule = page.locator(".module-progress .module-row").filter({ hasText: "Count Review" });
+    await expect(countModule.locator(".status")).toHaveText("Waiting for human review");
+    await expect(countModule.locator("small")).toHaveText("Waiting for human review");
+  });
+
   test("selects a review page size without overlapping preview rows", async ({ page, api }) => {
     setJobSnapshot(api, makeSnapshot({ status: "reviewing", currentModuleId: "count_review" }));
     await openCountReview(page);

@@ -22,7 +22,22 @@ RUNTIMES = {
 }
 # Task 4 promotes this identity only inside a fully staged installation.
 ASSEMBLED_OCR_RUNTIME = ("ocr", "anima_ocr_worker.entry", "ocr-paddle", ())
-ASSEMBLED_OCR_GPU_RUNTIME = ("ocr", "anima_ocr_worker.entry", "ocr-paddle-gpu", ())
+ASSEMBLED_OCR_GPU_RUNTIME = (
+    "ocr",
+    "anima_ocr_worker.entry",
+    "ocr-paddle-gpu",
+    (
+        "Lib/site-packages/nvidia/cublas/bin",
+        "Lib/site-packages/nvidia/cuda_runtime/bin",
+        "Lib/site-packages/nvidia/cudnn/bin",
+        "Lib/site-packages/nvidia/cufft/bin",
+        "Lib/site-packages/nvidia/curand/bin",
+        "Lib/site-packages/nvidia/cusolver/bin",
+        "Lib/site-packages/nvidia/cusparse/bin",
+        "Lib/site-packages/nvidia/nvjitlink/bin",
+        "Lib/site-packages/paddle/libs",
+    ),
+)
 RUNTIME_SHARED_PACKAGES = {
     "core": ("anima_caption_format",),
     "export": ("anima_caption_format",),

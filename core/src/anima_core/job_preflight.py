@@ -487,7 +487,13 @@ class JobPreparationService:
         return config
 
     @staticmethod
-    def _validate_character_manifest(database: StateDatabase, job_id: str) -> None:
+    def _validate_named_folder_manifest(
+        database: StateDatabase,
+        job_id: str,
+        *,
+        feature_name: str,
+        name_placeholder: str,
+    ) -> None:
         invalid_count = 0
         examples: list[str] = []
         rows = database.connection.execute(
@@ -506,7 +512,7 @@ class JobPreparationService:
             remaining = invalid_count - len(examples)
             suffix = f"; {remaining} more" if remaining else ""
             raise JobPreflightError(
-                "character preset requires every in-scope image to use <digits>_<character>; "
+                f"{feature_name} requires every in-scope image to use <digits>_<{name_placeholder}>; "
                 + ", ".join(examples)
                 + suffix
             )
@@ -556,7 +562,13 @@ class JobPreparationService:
             projection = dict(database.preflight_projection_counts(job_id))
             samples, scoped = int(counts["samples"]), int(counts["scoped"])
             if job_config_supports_nl_v4(config.schemaVersion) and config.nl.get("captionPreset") == "character":
-                self._validate_character_manifest(database, job_id)
+                self._validate_named_folder_manifest(
+                    database, job_id, feature_name="character preset", name_placeholder="character"
+                )
+            if config.dropout.get("enabled") is True and config.dropout.get("artist", {}).get("enabled") is True:
+                self._validate_named_folder_manifest(
+                    database, job_id, feature_name="Dropout artist", name_placeholder="name"
+                )
             config = self._freeze_nl_attempt_budget(database, job_id, config, scoped)
             database.set_job_status(job_id, "ready")
             replace_summary = replace_index.summary() if replace_index else {

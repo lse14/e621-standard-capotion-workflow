@@ -205,10 +205,6 @@ class PolicyWorker:
         for item in items:
             try:
                 payloads[item.sampleId] = self._read_json(item)
-                if self.hello.policy.artistEnabled:
-                    # Validate artist routing before any expensive model inference.
-                    from .policy import artist_from_image_path
-                    artist_from_image_path(item.relativeImagePath)
                 if self.hello.quality.enabled:
                     images[item.sampleId] = self._open_image(item)
             except PolicyWorkerError as exc:

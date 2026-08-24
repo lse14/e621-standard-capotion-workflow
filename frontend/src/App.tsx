@@ -471,6 +471,7 @@ export function App() {
     taskProgress: t("taskProgress"),
     currentModule: t("currentModule"),
     currentBatch: t("currentBatch"),
+    waitingForHumanReview: t("waitingForHumanReview"),
     taskActions: copy.taskActions,
     activeModule: t("activeModule"),
     pauseTask: t("pauseTask"),

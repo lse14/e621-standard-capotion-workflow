@@ -427,6 +427,70 @@ class JobPreflightTests(unittest.TestCase):
             finally:
                 service.close()
 
+    def test_dropout_artist_requires_named_first_level_folder_during_preflight(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "dataset"
+            source.mkdir()
+            Image.new("RGB", (3, 3), "white").save(source / "image.png")
+            config = self._config(source)
+            config["recursive"] = True
+            config["dropout"]["enabled"] = True
+            config["dropout"]["artist"]["enabled"] = True
+            config["caption"]["resourceId"] = "tagger-default"
+            config["classify"]["resourceId"] = "classify-default"
+            config["replace"]["resourceId"] = "replace-default"
+            config["dropout"]["quality"]["resourceId"] = "dropout-default"
+            config["tokenBudget"]["enabled"] = False
+            catalog, _ = _write_test_resource_library(root, include_ocr=False)
+            (catalog.root / "defaults.json").write_text(json.dumps({
+                "schemaVersion": 3,
+                "defaults": {
+                    "replacementIndex": "replace-default",
+                    "classificationIndex": "classify-default",
+                    "taggingModel": "tagger-default",
+                    "dropoutModel": "dropout-default",
+                },
+            }), encoding="utf-8")
+            service = JobPreparationService(root / "state.db", resource_catalog=catalog)
+            try:
+                with self.assertRaisesRegex(JobPreflightError, "Dropout artist.*<digits>_<name>"):
+                    service.preflight(config)
+            finally:
+                service.close()
+
+    def test_dropout_artist_accepts_named_first_level_folder_during_preflight(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "dataset" / "1_noartname"
+            source.mkdir(parents=True)
+            Image.new("RGB", (3, 3), "white").save(source / "image.png")
+            config = self._config(source.parent)
+            config["recursive"] = True
+            config["dropout"]["enabled"] = True
+            config["dropout"]["artist"]["enabled"] = True
+            config["caption"]["resourceId"] = "tagger-default"
+            config["classify"]["resourceId"] = "classify-default"
+            config["replace"]["resourceId"] = "replace-default"
+            config["dropout"]["quality"]["resourceId"] = "dropout-default"
+            config["tokenBudget"]["enabled"] = False
+            catalog, _ = _write_test_resource_library(root, include_ocr=False)
+            (catalog.root / "defaults.json").write_text(json.dumps({
+                "schemaVersion": 3,
+                "defaults": {
+                    "replacementIndex": "replace-default",
+                    "classificationIndex": "classify-default",
+                    "taggingModel": "tagger-default",
+                    "dropoutModel": "dropout-default",
+                },
+            }), encoding="utf-8")
+            service = JobPreparationService(root / "state.db", resource_catalog=catalog)
+            try:
+                summary = service.preflight(config)
+                self.assertEqual(1, summary.inScopeCount)
+            finally:
+                service.close()
+
     def test_dataset_claim_conflict_keeps_new_job_ready(self) -> None:
         transitions = {
             "interrupted": ("preparing_workspace", "interrupted"),

@@ -156,8 +156,8 @@ test.describe("workflow guidance for remaining modules", () => {
 
   test("explains the folder artist mapping independently from the Character preset", async ({ page }) => {
     for (const scenario of [
-      { language: "en" as const, label: "Append folder to JSON artist", firstLine: "Extract the name from the image's first-level folder", character: "independent of the Character preset" },
-      { language: "zh-CN" as const, label: "将目录名追加到 JSON artist", firstLine: "从图片的一级目录提取名称", character: "独立于 Character 预设" },
+      { language: "en" as const, label: "Append folder to JSON artist", firstLine: "Extract the name from the image's first-level folder", character: "independent of the Character preset", preflight: "Import preflight blocks flat or misnamed paths", folder: "1_noartname" },
+      { language: "zh-CN" as const, label: "将目录名追加到 JSON artist", firstLine: "从图片的一级目录提取名称", character: "独立于 Character 预设", preflight: "导入预检会阻断扁平或命名不合规的路径", folder: "1_noartname" },
     ]) {
       await openApp(page, { language: scenario.language });
       await page.locator(".workflow-rail").getByRole("button", { name: /Dropout/ }).click();
@@ -168,6 +168,8 @@ test.describe("workflow guidance for remaining modules", () => {
       const tooltip = page.getByRole("tooltip");
       await expect(tooltip).toContainText(scenario.firstLine);
       await expect(tooltip).toContainText("@" + (scenario.language === "en" ? "name" : "名称"));
+      await expect(tooltip).toContainText(scenario.preflight);
+      await expect(tooltip).toContainText(scenario.folder);
       await expect(tooltip).toContainText(scenario.character);
     }
   });

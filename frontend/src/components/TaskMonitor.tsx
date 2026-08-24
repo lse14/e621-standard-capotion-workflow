@@ -40,6 +40,7 @@ export type TaskMonitorProps = {
   modules: TaskMonitorModule[];
   labels: {
     taskOverview: string; taskProgress: string; currentModule: string; currentBatch: string;
+    waitingForHumanReview: string;
     taskActions: string; activeModule: string; pauseTask: string; resumeTask: string; terminateTask: string; recoverTask: string;
     discardTask: string; repairDeleteBlocked: string; repairTask: string; backToParentTask: string;
     additionalAttempts: string; addBudget: string; pendingApiDecisions: string; confirmUnknown: string;
@@ -106,10 +107,11 @@ export function TaskMonitor({
       <div className="module-progress">{modules.map((module) => {
         const settled = module.completed + module.failed + module.skipped;
         const percentage = module.total ? Math.min(100, Math.round(settled / module.total * 100)) : 0;
+        const awaitingHumanReview = module.isCurrent && snapshot.status === "reviewing";
         return <div className={`module-row ${module.isCurrent ? "current" : ""}`} key={module.moduleId}>
-          <div className="module-row-heading"><div><strong>{module.label}</strong><span className={`status ${module.status}`}>{module.statusLabel}</span></div></div>
+          <div className="module-row-heading"><div><strong>{module.label}</strong><span className={`status ${awaitingHumanReview ? "reviewing" : module.status}`}>{awaitingHumanReview ? labels.waitingForHumanReview : module.statusLabel}</span></div></div>
           <progress value={settled} max={Math.max(module.total, 1)} />
-          <small>{settled} / {module.total} ({percentage}%) {module.issueCount ? `- ${module.issueCount} ${labels.issues}` : ""}</small>
+          <small>{awaitingHumanReview ? labels.waitingForHumanReview : `${settled} / ${module.total} (${percentage}%)${module.issueCount ? ` - ${module.issueCount} ${labels.issues}` : ""}`}</small>
         </div>;
       })}</div>
       <section className="task-actions">

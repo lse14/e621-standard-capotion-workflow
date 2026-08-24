@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -206,6 +207,19 @@ class PolicyWorkerTests(unittest.TestCase):
         )
         self.assertEqual("prepared", outcome["status"])
         self.assertEqual([], result["quality"])
+
+    def test_dropout_uses_preflight_validated_artist_path_without_revalidating(self) -> None:
+        with patch(
+            "anima_policy_worker.policy.artist_from_image_path",
+            side_effect=AssertionError("artist folder must only be validated during import preflight"),
+        ):
+            result, outcome = self._run(
+                _business(appearance=["white hair"], nl="A person smiles."),
+                drop_nl=0.0,
+                drop_appearance=0.0,
+            )
+        self.assertEqual("prepared", outcome["status"])
+        self.assertEqual("@Crow (Siranui)", result["artist"])
 
     def test_disabled_artist_does_not_require_an_artist_directory(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

@@ -311,6 +311,23 @@ class RuntimeManifestGenerationTests(unittest.TestCase):
             self.assertEqual(0, complete.returncode, complete.stdout + complete.stderr)
             self.assertTrue((install / "manifests" / "runtimes" / "ocr-paddle-gpu.json").is_file())
             self.assertTrue((install / "manifests" / "requirements" / "ocr-paddle-gpu.lock").is_file())
+            launch = json.loads(
+                (install / "manifests" / "runtimes" / "ocr-paddle-gpu.json").read_text(encoding="utf-8")
+            )["launch"]
+            self.assertEqual(
+                [
+                    "runtimes\\ocr-paddle-gpu\\Lib\\site-packages\\nvidia\\cublas\\bin",
+                    "runtimes\\ocr-paddle-gpu\\Lib\\site-packages\\nvidia\\cuda_runtime\\bin",
+                    "runtimes\\ocr-paddle-gpu\\Lib\\site-packages\\nvidia\\cudnn\\bin",
+                    "runtimes\\ocr-paddle-gpu\\Lib\\site-packages\\nvidia\\cufft\\bin",
+                    "runtimes\\ocr-paddle-gpu\\Lib\\site-packages\\nvidia\\curand\\bin",
+                    "runtimes\\ocr-paddle-gpu\\Lib\\site-packages\\nvidia\\cusolver\\bin",
+                    "runtimes\\ocr-paddle-gpu\\Lib\\site-packages\\nvidia\\cusparse\\bin",
+                    "runtimes\\ocr-paddle-gpu\\Lib\\site-packages\\nvidia\\nvjitlink\\bin",
+                    "runtimes\\ocr-paddle-gpu\\Lib\\site-packages\\paddle\\libs",
+                ],
+                launch["dllDirectoriesRelative"],
+            )
 
 
 class DistributionPythonIsolationTests(unittest.TestCase):

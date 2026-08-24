@@ -92,6 +92,13 @@ def artist_from_image_path(relative_image_path: str) -> str:
     return f"@{artist}"
 
 
+def artist_from_validated_image_path(relative_image_path: str) -> str:
+    """Extract the artist from a path already accepted by import preflight."""
+    first = relative_image_path.replace("/", "\\").split("\\", 1)[0]
+    artist = first.split("_", 1)[1]
+    return "" if artist == "noartname" else f"@{artist}"
+
+
 def merge_artists(existing: str, appended: str) -> str:
     values: list[str] = []
     seen: set[str] = set()
@@ -172,7 +179,9 @@ def apply_policy(
 
     artist_dropped = False
     if config.artistEnabled:
-        result["artist"] = merge_artists(str(result["artist"]), artist_from_image_path(relative_image_path))
+        result["artist"] = merge_artists(
+            str(result["artist"]), artist_from_validated_image_path(relative_image_path)
+        )
         artist_dropped = stable_random(config, annotation_key, "artist") < config.artistDropoutProbability
         if artist_dropped:
             result["artist"] = ""
