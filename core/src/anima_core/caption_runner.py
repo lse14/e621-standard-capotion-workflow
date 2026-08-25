@@ -421,6 +421,14 @@ class CaptionRunner:
                 "caption hello resource fingerprint does not match the frozen resource",
             )
         self._hello_result = result
+        if result.gpuFallback:
+            self.database.increment_module_diagnostic(
+                self.job_id,
+                "caption",
+                "caption_gpu_fallback",
+                severity="warning",
+                amount=1,
+            )
 
     def _leased_row(self, lease: WorkLease) -> sqlite3.Row:
         if not lease.leaseId or not lease.workerInstanceId:

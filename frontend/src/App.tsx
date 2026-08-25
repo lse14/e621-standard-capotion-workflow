@@ -377,6 +377,7 @@ export function App() {
   // F28: the backend accepts the confirmation while paused or interrupted (scheduler.py:335).
   const pendingApiDecisions = snapshot?.nlPendingApiDecisions ?? 0;
   const rawE621Converted = snapshot?.captionDiagnostics.find((item) => item.code === "e621_raw_json_converted")?.count ?? 0;
+  const captionGpuFallback = snapshot?.captionDiagnostics.find((item) => item.code === "caption_gpu_fallback")?.count ?? 0;
   const nlAwaitsDecision = snapshot?.job.currentModuleId === "nl" && ["paused", "interrupted"].includes(snapshot.job.status) && pendingApiDecisions > 0;
   const retriableCount = snapshot?.repairPreview?.eligibleTargetCount ?? 0;
   const latestEvent = snapshot?.events.length ? snapshot.events[snapshot.events.length - 1] : null;
@@ -787,6 +788,7 @@ export function App() {
         currentModuleLabel={snapshot?.job.currentModuleId ? numberedModuleLabel(snapshot.job.currentModuleId) : "-"}
         currentBatchLabel={latestEvent ? `${latestEvent.completed} / ${latestEvent.total}` : "-"}
         rawE621ConvertedMessage={rawE621Converted > 0 ? t("rawE621Converted", { count: rawE621Converted }) : null}
+        captionGpuFallbackMessage={captionGpuFallback > 0 ? t("captionGpuFallback") : null}
         modules={taskMonitorModules}
         labels={taskMonitorLabels}
         canDiscard={Boolean(snapshot && snapshot.repairChildren.length === 0 && ["ready", "interrupted", "reviewing", "cancelled_recoverable", "failed"].includes(snapshot.job.status))}

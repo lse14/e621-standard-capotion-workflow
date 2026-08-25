@@ -156,6 +156,7 @@ export function makeSnapshot({
   parentJobId = null,
   schemaVersion = 3,
   ocrRuntime = null,
+  captionDiagnostics = [],
 }: {
   jobId?: string;
   status?: string;
@@ -163,6 +164,7 @@ export function makeSnapshot({
   parentJobId?: string | null;
   schemaVersion?: number;
   ocrRuntime?: OcrRuntimeStatus | null;
+  captionDiagnostics?: JobSnapshot["captionDiagnostics"];
 } = {}): JobSnapshot {
   const moduleOrder = schemaVersion >= 6 ? V6_MODULE_ORDER : schemaVersion === 5 ? OCR_MODULE_ORDER : MODULE_ORDER;
   return {
@@ -194,7 +196,7 @@ export function makeSnapshot({
       issue_count: 0,
     })),
     diagnostics: [],
-    captionDiagnostics: [],
+    captionDiagnostics,
     ocrDiagnostics: [],
     events: [{ event_id: 7, module_id: currentModuleId ?? "caption", status, completed: 1, total: 3, attempt: 1, message: null }],
     issues: [],

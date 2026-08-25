@@ -162,10 +162,12 @@ class FakeCaptionTransport:
         *,
         fatal_code: str | None = None,
         on_process: Callable[[CaptionWorkItemV1], None] | None = None,
+        gpu_fallback: bool = False,
     ) -> None:
         self.outcome = outcome
         self.fatal_code = fatal_code
         self.on_process = on_process
+        self.gpu_fallback = gpu_fallback
         self.hello_requests = 0
         self.process_requests = 0
         self.item_counts: list[int] = []
@@ -198,6 +200,7 @@ class FakeCaptionTransport:
                 provider=PROVIDER,
                 resourceFingerprint=RESOURCE_FINGERPRINT,
                 tagCount=106_536 if request.payload.get("profile") == "danbooru" else 8_783,
+                gpuFallback=self.gpu_fallback,
             ).to_dict()
             return self._response(request, self.hello_requests, "hello", payload)
         self.process_requests += 1
@@ -301,6 +304,21 @@ class CaptionRunnerTests(unittest.TestCase):
                     1,
                     database.module_diagnostic_count("job-caption", "caption", "e621_raw_json_converted"),
                 )
+            finally:
+                database.close()
+
+    def test_gpu_fallback_from_worker_hello_records_caption_diagnostic(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            database, scheduler = self._database(Path(temporary), 1)
+            try:
+                report = self._runner(
+                    database,
+                    scheduler,
+                    FakeCaptionTransport(gpu_fallback=True),
+                    result_consumer=lambda *_: None,
+                ).run()
+                self.assertEqual("completed", report.status)
+                self.assertEqual(1, database.module_diagnostic_count("job-caption", "caption", "caption_gpu_fallback"))
             finally:
                 database.close()
 

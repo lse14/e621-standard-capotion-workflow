@@ -237,7 +237,7 @@ def _session_details(
     expected_shape: tuple[object, object, object, object],
     dynamic_batch: bool,
     runtime_name: str,
-) -> tuple[Session, str, str]:
+) -> tuple[Session, str, str, bool]:
     factory = session_factory or _default_session_factory
     try:
         session = factory(model_path)
@@ -265,7 +265,8 @@ def _session_details(
         raise CaptionSessionError("ONNX model input must use float32")
     if not providers or not isinstance(providers[0], str) or not providers[0]:
         raise CaptionSessionError("ONNX session did not report an execution provider")
-    return session, inputs[0].name, providers[0]
+    provider = providers[0]
+    return session, inputs[0].name, provider, provider != "CUDAExecutionProvider"
 
 
 def _model_probabilities(
@@ -507,6 +508,7 @@ def load_wd_metadata(paths: dict[str, Path], manifest_metadata: dict[str, object
 class TaggerAdapter(Protocol):
     metadata: CaptionMetadata
     provider: str
+    gpu_fallback: bool
     session_loads: int
 
     def preprocess(self, image: object) -> object: ...
@@ -518,7 +520,7 @@ class CaptionModel:
 
     def __init__(self, paths: dict[str, Path], *, session_factory: SessionFactory | None = None) -> None:
         self.metadata = load_metadata(paths)
-        self.session, self.input_name, self.provider = _session_details(
+        self.session, self.input_name, self.provider, self.gpu_fallback = _session_details(
             paths["model.onnx"],
             session_factory=session_factory,
             expected_shape=(1, 3, 448, 448),
@@ -550,7 +552,7 @@ class ClTaggerAdapter:
         session_factory: SessionFactory | None = None,
     ) -> None:
         self.metadata = load_cl_metadata(paths, manifest_metadata)
-        self.session, self.input_name, self.provider = _session_details(
+        self.session, self.input_name, self.provider, self.gpu_fallback = _session_details(
             paths["model"],
             session_factory=session_factory,
             expected_shape=(1, 3, 384, 384),
@@ -582,7 +584,7 @@ class WdTaggerAdapter:
         session_factory: SessionFactory | None = None,
     ) -> None:
         self.metadata = load_wd_metadata(paths, manifest_metadata)
-        self.session, self.input_name, self.provider = _session_details(
+        self.session, self.input_name, self.provider, self.gpu_fallback = _session_details(
             paths["model"],
             session_factory=session_factory,
             expected_shape=(1, 448, 448, 3),

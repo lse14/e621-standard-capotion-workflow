@@ -412,6 +412,7 @@ class CaptionResourceTests(unittest.TestCase):
             self.assertEqual(1, result["modelSessionLoads"])
             self.assertEqual(8_783, result["tagCount"])
             self.assertEqual("CPUExecutionProvider", result["provider"])
+            self.assertTrue(result["gpuFallback"])
             with self.assertRaises(CaptionWorkerInitializationError) as caught:
                 worker.initialize(_hello(root, fingerprint), install_root=root, session_factory=factory)
             self.assertEqual("caption_protocol_violation", caught.exception.code)

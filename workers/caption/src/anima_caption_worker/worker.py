@@ -86,6 +86,7 @@ class CaptionWorker:
             "pythonVersion": ".".join(map(str, sys.version_info[:3])),
             "ready": True,
             "provider": model.provider,
+            "gpuFallback": model.gpu_fallback,
             "modelSessionLoads": model.session_loads,
             "tagCount": len(model.metadata.tag_names),
             "resourceFingerprint": resource.fingerprint,

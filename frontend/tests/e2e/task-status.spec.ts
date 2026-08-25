@@ -179,6 +179,17 @@ test.describe("task status and issue characterization", () => {
     await expect(page.locator(".ocr-failure")).toContainText("Choose Auto or CPU");
   });
 
+  test("shows the Caption GPU fallback guidance", async ({ page, api }) => {
+    setJobSnapshot(api, makeSnapshot({
+      status: "running",
+      currentModuleId: "caption",
+      schemaVersion: 9,
+      captionDiagnostics: [{ code: "caption_gpu_fallback", severity: "warning", count: 1 }],
+    }));
+    await openTrackedJob(page, "running");
+    await expect(page.getByText("Caption GPU initialization failed; automatically using CPU.", { exact: true })).toBeVisible();
+  });
+
   test("task lifecycle exposes only global pause and resume controls", async ({ page, api }) => {
     const snapshot = makeSnapshot({ status: "running", currentModuleId: "caption", schemaVersion: 9 });
     setJobSnapshot(api, snapshot);

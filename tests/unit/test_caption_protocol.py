@@ -83,6 +83,13 @@ class CaptionProtocolTests(unittest.TestCase):
             resourceFingerprint="b" * 64,
         )
         self.assertEqual(hello_result, CaptionHelloResultV1.from_dict(hello_result.to_dict()))
+        fallback_result = CaptionHelloResultV1(
+            executable="E:\\app\\runtimes\\caption-e621\\python.exe",
+            provider="CPUExecutionProvider",
+            resourceFingerprint="b" * 64,
+            gpuFallback=True,
+        )
+        self.assertTrue(CaptionHelloResultV1.from_dict(fallback_result.to_dict()).gpuFallback)
 
         danbooru = {**payload, "profile": "danbooru"}
         self.assertEqual(danbooru, CaptionHelloRequestV1.from_dict(danbooru).to_dict())

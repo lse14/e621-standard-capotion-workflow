@@ -124,7 +124,8 @@
         "provider": {"type": "string", "minLength": 1, "maxLength": 64},
         "modelSessionLoads": {"const": 1},
         "tagCount": {"type": "integer", "minimum": 1, "maximum": 1000000},
-        "resourceFingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+        "resourceFingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "gpuFallback": {"type": "boolean"}
       },
       "additionalProperties": false
     },

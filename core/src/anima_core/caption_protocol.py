@@ -294,6 +294,7 @@ class CaptionHelloResultV1:
     ready: Literal[True] = True
     modelSessionLoads: Literal[1] = 1
     tagCount: int = 8_783
+    gpuFallback: bool = False
     schemaVersion: Literal[1] = 1
 
     @classmethod
@@ -306,6 +307,7 @@ class CaptionHelloResultV1:
                 "schemaVersion", "payloadType", "executable", "pythonVersion", "ready", "provider",
                 "modelSessionLoads", "tagCount", "resourceFingerprint",
             },
+            optional={"gpuFallback"},
         )
         if (
             item["payloadType"] != "caption_hello_result"
@@ -314,11 +316,15 @@ class CaptionHelloResultV1:
             or item["modelSessionLoads"] != 1
         ):
             raise CaptionProtocolError("caption hello result identity is invalid")
+        gpu_fallback = item.get("gpuFallback", False)
+        if type(gpu_fallback) is not bool:
+            raise CaptionProtocolError("gpuFallback must be a boolean")
         return cls(
             executable=_string(item["executable"], "executable", max_bytes=MAX_PATH_BYTES),
             provider=_string(item["provider"], "provider", max_bytes=64),
             resourceFingerprint=_sha256(item["resourceFingerprint"], "resourceFingerprint"),
             tagCount=_positive_int(item["tagCount"], "tagCount", maximum=MAX_CAPTION_TAGS),
+            gpuFallback=gpu_fallback,
         )
 
     def to_dict(self) -> dict[str, object]:
@@ -331,6 +337,7 @@ class CaptionHelloResultV1:
             "provider": self.provider,
             "modelSessionLoads": self.modelSessionLoads,
             "tagCount": self.tagCount,
+            "gpuFallback": self.gpuFallback,
             "resourceFingerprint": self.resourceFingerprint,
         }
 

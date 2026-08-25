@@ -37,6 +37,7 @@ export type TaskMonitorProps = {
   currentModuleLabel: string;
   currentBatchLabel: string;
   rawE621ConvertedMessage: string | null;
+  captionGpuFallbackMessage: string | null;
   modules: TaskMonitorModule[];
   labels: {
     taskOverview: string; taskProgress: string; currentModule: string; currentBatch: string;
@@ -70,7 +71,7 @@ function formatGiB(bytes: number): string {
 }
 
 export function TaskMonitor({
-  snapshot, isRepairTask, hasRepairChildren, loading, error, statusLabel, currentModuleLabel, currentBatchLabel, rawE621ConvertedMessage, modules, labels,
+  snapshot, isRepairTask, hasRepairChildren, loading, error, statusLabel, currentModuleLabel, currentBatchLabel, rawE621ConvertedMessage, captionGpuFallbackMessage, modules, labels,
   canDiscard, budget, pendingApiDecisions, nlAwaitsDecision, pendingActions, onPause, onResume, onTerminate, onRecover, onDiscard, onBackToParent,
   onBudgetChange, onAddBudget, onConfirmUnknown, onRetry,
 }: TaskMonitorProps) {
@@ -103,6 +104,7 @@ export function TaskMonitor({
           {snapshot.ocrRuntime.startupReason ? <div><dt>{labels.ocrStartupReason}</dt><dd>{snapshot.ocrRuntime.startupReason}</dd></div> : null}
         </dl>
       </section> : null}
+      {captionGpuFallbackMessage ? <p className="hint">{captionGpuFallbackMessage}</p> : null}
       {rawE621ConvertedMessage ? <p className="hint">{rawE621ConvertedMessage}</p> : null}
       <div className="module-progress">{modules.map((module) => {
         const settled = module.completed + module.failed + module.skipped;
