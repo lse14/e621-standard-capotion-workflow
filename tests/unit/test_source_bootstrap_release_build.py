@@ -118,7 +118,7 @@ class SourceBootstrapReleaseBuildTests(unittest.TestCase):
         )
         module = _load_manifest_builder()
         self.assertIsNotNone(module, "source bootstrap manifest builder must exist")
-        self.assertEqual("source-bootstrap-e621-v2", module.audit_inventory(value, REQUIREMENTS)["releaseVersion"])
+        self.assertEqual("source-bootstrap-e621-v3", module.audit_inventory(value, REQUIREMENTS)["releaseVersion"])
 
     def test_candidate_inventory_keeps_e621_indexes_in_independent_resource_packages(self) -> None:
         self.assertTrue(INVENTORY.is_file(), "source-bootstrap inventory must exist")
@@ -189,8 +189,8 @@ class SourceBootstrapReleaseBuildTests(unittest.TestCase):
         defaults = ROOT / "resource-library" / "defaults.json"
         self.assertTrue(defaults.is_file(), "source-bootstrap defaults must exist")
         value = json.loads(defaults.read_text(encoding="utf-8"))
-        self.assertEqual(2, value["schemaVersion"])
-        self.assertEqual({"e621"}, set(value["defaults"]))
+        self.assertEqual(3, value["schemaVersion"])
+        self.assertEqual({"replacementIndex", "classificationIndex", "taggingModel", "dropoutModel"}, set(value["defaults"]))
         self.assertEqual(
             {
                 "replacementIndex": "replace-e621-20260726-v2",
@@ -198,7 +198,7 @@ class SourceBootstrapReleaseBuildTests(unittest.TestCase):
                 "taggingModel": "caption-e621-eva02-large-full-v1",
                 "dropoutModel": "lse14-scorer-5k-v1",
             },
-            value["defaults"]["e621"],
+            value["defaults"],
         )
 
     def test_production_inventory_records_the_published_bootstrap_identity(self) -> None:
@@ -209,7 +209,7 @@ class SourceBootstrapReleaseBuildTests(unittest.TestCase):
         record = records[0]
         self.assertEqual("cpython311-base", record["id"])
         self.assertEqual(
-            "https://github.com/lse14/e621-standard-capotion-workflow/releases/download/source-bootstrap-e621-v2/cpython-3.11.15-win-amd64-9230c77.zip",
+            "https://github.com/lse14/e621-standard-capotion-workflow/releases/download/source-bootstrap-e621-v3/cpython-3.11.15-win-amd64-e625c5b.zip",
             record["publishedUrl"],
         )
         self.assertEqual(20565968, record["sizeBytes"])
