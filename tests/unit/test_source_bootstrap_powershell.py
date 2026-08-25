@@ -196,7 +196,7 @@ class SourceBootstrapPowerShellTests(unittest.TestCase):
         self.assertIsNotNone(match, "bootstrap must pin a published install manifest identity")
         manifest_path = ROOT / "packaging" / "installer" / "install-manifest.json"
         self.assertEqual(match.group(1), self._sha256(manifest_path.read_bytes()))
-        self.assertEqual("source-bootstrap-e621-v4", json.loads(manifest_path.read_text(encoding="utf-8"))["releaseVersion"])
+        self.assertEqual("source-bootstrap-e621-v5", json.loads(manifest_path.read_text(encoding="utf-8"))["releaseVersion"])
 
     def test_start_batch_recovers_missing_installation_state_through_the_bootstrap(self) -> None:
         batch = (ROOT / "Start-WebUI.bat").read_text(encoding="ascii")
