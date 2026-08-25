@@ -57,7 +57,7 @@ else:
         )
 
         self.assertEqual(0, completed.returncode, completed.stdout + completed.stderr)
-        self.assertIn("Source-bootstrap release gate passed for source-bootstrap-e621-v3", completed.stdout)
+        self.assertIn("Source-bootstrap release gate passed for source-bootstrap-e621-v4", completed.stdout)
 
 
 if __name__ == "__main__":
