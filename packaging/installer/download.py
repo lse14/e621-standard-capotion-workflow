@@ -4,10 +4,11 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import Protocol
+from typing import Callable, Protocol
 from urllib.parse import urlsplit
 
 
@@ -158,16 +159,36 @@ def _validate_range(response: ResponseLike, offset: int, expected_size: int) -> 
         raise ValueError("range response does not match the expected artifact")
 
 
-def _write_response(response: ResponseLike, partial: Path, *, append: bool, expected_size: int) -> None:
+def _write_response(
+    response: ResponseLike,
+    partial: Path,
+    *,
+    append: bool,
+    expected_size: int,
+    progress: Callable[[int], None] | None = None,
+) -> None:
     mode = "ab" if append else "wb"
+    last_reported = partial.stat().st_size if append else 0
+    last_report_time = time.monotonic()
     with partial.open(mode) as destination:
         while True:
             chunk = response.read(_CHUNK_SIZE)
             if not chunk:
                 break
             destination.write(chunk)
-            if destination.tell() > expected_size:
+            current_size = destination.tell()
+            if current_size > expected_size:
                 raise ValueError("download exceeds the expected artifact size")
+            now = time.monotonic()
+            if progress is not None and (
+                current_size - last_reported >= 64 * 1024 * 1024
+                or now - last_report_time >= 15
+            ):
+                progress(current_size)
+                last_reported = current_size
+                last_report_time = now
+    if progress is not None:
+        progress(partial.stat().st_size)
 
 
 def _terminal_http_error(artifact: ArtifactLike, error: urllib.error.HTTPError) -> ManualDownloadRequired | None:
@@ -182,6 +203,7 @@ def download_verified(
     *,
     transport: TransportLike | None = None,
     attempts: int = 3,
+    progress: Callable[[str], None] | None = None,
 ) -> Path:
     """Return a verified cache file or raise an actionable, non-ambiguous error."""
     if attempts < 1:
@@ -192,6 +214,8 @@ def download_verified(
     partial = cache / f"{artifact.sha256}.partial"
     if complete.exists():
         if complete.is_file() and verify_file(complete, artifact):
+            if progress is not None:
+                progress(f"Using cached artifact: {artifact.artifact_id}")
             return complete
         _remove_if_file(complete)
     if partial.exists() and (not partial.is_file() or partial.stat().st_size >= artifact.size_bytes):
@@ -200,6 +224,21 @@ def download_verified(
     failures = 0
     while failures < attempts:
         offset = partial.stat().st_size if partial.exists() else 0
+        if progress is not None:
+            progress(
+                f"Downloading {artifact.artifact_id}: "
+                f"{offset}/{artifact.size_bytes} bytes"
+            )
+
+        def report_download(current_size: int) -> None:
+            if progress is None:
+                return
+            percent = (current_size * 100) // artifact.size_bytes if artifact.size_bytes else 100
+            progress(
+                f"Downloading {artifact.artifact_id}: "
+                f"{current_size}/{artifact.size_bytes} bytes ({percent}%)"
+            )
+
         headers = {"User-Agent": _USER_AGENT}
         if offset:
             headers["Range"] = f"bytes={offset}-"
@@ -215,7 +254,13 @@ def download_verified(
                 _validate_range(response, offset, artifact.size_bytes)
             elif response.status != 200:
                 raise ValueError(f"download request returned HTTP {response.status}")
-            _write_response(response, partial, append=bool(offset), expected_size=artifact.size_bytes)
+            _write_response(
+                response,
+                partial,
+                append=bool(offset),
+                expected_size=artifact.size_bytes,
+                progress=report_download,
+            )
         except ManualDownloadRequired:
             raise
         except urllib.error.HTTPError as exc:
@@ -242,6 +287,8 @@ def download_verified(
             continue
         if verify_file(partial, artifact):
             os.replace(partial, complete)
+            if progress is not None:
+                progress(f"Verified artifact: {artifact.artifact_id}")
             return complete
         try:
             actual_size, actual_sha256 = _digest(partial)

@@ -9,7 +9,7 @@ import os
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path, PureWindowsPath
-from typing import Literal, Mapping
+from typing import Callable, Literal, Mapping
 import zipfile
 
 from manifest import Component, ComponentVariant, InstallManifest, ManifestError
@@ -309,6 +309,7 @@ def assemble_runtime(
     wheels: list[tuple[str | Path, str]],
     destination: str | Path,
     owner_sources: Mapping[str, str | Path] | None = None,
+    progress: Callable[[str], None] | None = None,
 ) -> tuple[str, ...]:
     """Build one runtime in private staging without invoking pip or another builder."""
     target: Path | None = None
@@ -324,7 +325,12 @@ def assemble_runtime(
         package_root = target / "Lib" / "site-packages"
         package_root.mkdir(parents=True, exist_ok=True)
         seen: set[str] = set()
-        for raw_wheel, manifest_relative_path in wheels:
+        for index, (raw_wheel, manifest_relative_path) in enumerate(wheels, 1):
+            if progress is not None:
+                progress(
+                    f"  Extracting wheel {index}/{len(wheels)}: "
+                    f"{PureWindowsPath(manifest_relative_path).name}"
+                )
             wheel = assert_within_root(layout.project_root, raw_wheel)
             manifest_name = PureWindowsPath(safe_relative(manifest_relative_path)).name
             if not wheel.is_file() or wheel.is_symlink() or not manifest_name.lower().endswith(".whl"):
@@ -340,6 +346,8 @@ def assemble_runtime(
             finally:
                 if extracted.exists():
                     shutil.rmtree(extracted, ignore_errors=True)
+            if progress is not None:
+                progress(f"  Extracted wheel {index}/{len(wheels)}")
         for package_name, raw_source in sorted((owner_sources or {}).items()):
             if "\\" in package_name or "/" in package_name:
                 raise AssemblyError(f"owner package name is invalid: {package_name}")

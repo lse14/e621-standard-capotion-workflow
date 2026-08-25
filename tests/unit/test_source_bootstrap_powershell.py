@@ -183,6 +183,13 @@ class SourceBootstrapPowerShellTests(unittest.TestCase):
         self.assertIn("--bootstrap-runtime", script)
         self.assertNotIn("LOCALAPPDATA", script)
 
+    def test_bootstrap_streams_unbuffered_installer_progress(self) -> None:
+        script = self._bootstrap_text()
+
+        self.assertIn("-B -I -u $installerScript", script)
+        self.assertIn("2>&1 | ForEach-Object", script)
+        self.assertNotIn("$output = & $bootstrapPython", script)
+
     def test_bootstrap_manifest_identity_matches_checked_in_release_manifest(self) -> None:
         script = self._bootstrap_text()
         match = re.search(r"\$ExpectedInstallManifestSha256\s*=\s*'([0-9a-f]{64})'", script)

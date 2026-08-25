@@ -47,6 +47,7 @@ ArtifactFetcher = Callable[[Artifact], Path]
 Probe = Callable[[PlannedComponent, Path], bool]
 RuntimeManifestWriter = Callable[[PlannedComponent, ProjectLayout], str]
 OptionalOcrModelImporter = Callable[[Path], object]
+ProgressReporter = Callable[[str], None]
 
 _MANUAL_OCR_ARCHIVE_FILENAMES = (
     "PP-OCRv5_server_det_infer.tar",
@@ -255,11 +256,16 @@ def _assemble_component(
     stage: Path,
     base_runtime: str | Path,
     fetch: ArtifactFetcher,
+    progress: ProgressReporter | None = None,
 ) -> None:
-    artifact_paths = {
-        artifact.artifact_id: _resolve_artifact(source_root, artifact, fetch)
-        for artifact in item.variant.artifacts
-    }
+    artifact_paths: dict[str, Path] = {}
+    for index, artifact in enumerate(item.variant.artifacts, 1):
+        if progress is not None:
+            progress(
+                f"  Preparing artifact {index}/{len(item.variant.artifacts)}: "
+                f"{artifact.artifact_id}"
+            )
+        artifact_paths[artifact.artifact_id] = _resolve_artifact(source_root, artifact, fetch)
     if item.runtime_id is not None:
         wheels = [
             (artifact_paths[artifact.artifact_id], artifact.relative_path)
@@ -272,6 +278,7 @@ def _assemble_component(
             wheels=wheels,
             destination=stage,
             owner_sources=_owner_sources(source_root, item.runtime_id),
+            progress=progress,
         )
     else:
         assemble_resource(layout, item, artifact_paths=artifact_paths, destination=stage)
@@ -379,6 +386,7 @@ def install_project(
     require_mandatory_e621: bool = True,
     import_optional_ocr_models: OptionalOcrModelImporter | None = None,
     preserve_bootstrap_on_success: bool = False,
+    progress: ProgressReporter | None = None,
 ) -> InstallResult:
     """Assemble, probe, publish and record a manifest-selected installation."""
     layout = ProjectLayout.create(project_root)
@@ -388,7 +396,8 @@ def install_project(
 
         validate_mandatory_e621_components(manifest)
     plan = installation_plan(manifest, accelerator=accelerator)
-    fetch = fetch_artifact or (lambda artifact: download_verified(artifact, layout.cache))
+    report = progress or (lambda _message: None)
+    fetch = fetch_artifact or (lambda artifact: download_verified(artifact, layout.cache, progress=report))
     writer = write_runtime_manifest or (lambda item, current_layout: _default_runtime_manifest_writer(source, item, current_layout))
     try:
         layout.ensure_directories()
@@ -408,7 +417,11 @@ def install_project(
             item.component.component_id: _published_target(layout, item)
             for item in skipped
         }
-        for item in pending:
+        for index, item in enumerate(pending, 1):
+            report(
+                f"Installing component {index}/{len(pending)}: "
+                f"{item.component.component_id} ({item.variant.name})"
+            )
             stage = _stage_target(stage_root, item)
             _assemble_component(
                 layout=layout,
@@ -417,9 +430,11 @@ def install_project(
                 stage=stage,
                 base_runtime=base_runtime,
                 fetch=fetch,
+                progress=report,
             )
             staged[item.component.target_relative_path] = stage
             targets[item.component.component_id] = stage
+            report(f"Prepared component: {item.component.component_id}")
 
         if probe_component is not None:
             results = _custom_probe_results(pending, targets, probe_component)
@@ -460,6 +475,7 @@ def install_project(
                     stage=fallback_stage,
                     base_runtime=base_runtime,
                     fetch=fetch,
+                    progress=report,
                 )
                 staged[fallback.component.target_relative_path] = fallback_stage
                 targets[component_id] = fallback_stage
@@ -583,6 +599,7 @@ def main() -> int:
             accelerator=arguments.accelerator,
             base_runtime=_bootstrap_runtime_from_argument(arguments.bootstrap_runtime),
             preserve_bootstrap_on_success=True,
+            progress=print,
         )
     except (AssemblyError, ManifestError, ManualDownloadRequired, OSError) as exc:
         print(f"source bootstrap failed: {exc}", file=sys.stderr)

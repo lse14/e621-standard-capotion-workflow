@@ -236,6 +236,7 @@ class IsolatedInstallerEntryTests(unittest.TestCase):
 
         self.assertEqual(0, exit_code)
         self.assertIs(True, installer.call_args.kwargs.get("preserve_bootstrap_on_success"))
+        self.assertTrue(callable(installer.call_args.kwargs.get("progress")))
 
 
 def _probes_module():

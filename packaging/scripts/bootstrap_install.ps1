@@ -402,9 +402,9 @@ try {
     $installerScript = Get-ProjectPath (Join-Path $script:projectRoot 'packaging\installer\install.py')
     if (-not (Test-Path -LiteralPath $installerScript -PathType Leaf)) { throw "Source bootstrap installer is missing: $installerScript" }
     Write-InstallLog 'Starting the standard-library installer.'
-    $output = & $bootstrapPython -B -I $installerScript --project-root $script:projectRoot --manifest $manifestPath --manifest-sha256 $actualManifestSha256 --accelerator $accelerator --bootstrap-runtime $script:bootstrapStage 2>&1
+    & $bootstrapPython -B -I -u $installerScript --project-root $script:projectRoot --manifest $manifestPath --manifest-sha256 $actualManifestSha256 --accelerator $accelerator --bootstrap-runtime $script:bootstrapStage 2>&1 |
+        ForEach-Object { Write-InstallLog ([string]$_) }
     $installerExitCode = $LASTEXITCODE
-    foreach ($line in @($output)) { Write-InstallLog ([string]$line) }
     if ($installerExitCode -ne 0) { throw "Standard-library installer failed with exit code $installerExitCode" }
     $guidePath = Get-ProjectPath (Join-Path $script:projectRoot 'OCR_MODEL_DOWNLOAD.md')
     if (-not (Test-Path -LiteralPath $guidePath -PathType Leaf)) { throw "OCR model download guide is missing: $guidePath" }
