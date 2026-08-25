@@ -41,7 +41,7 @@ export type JobSnapshot = {
   diagnostics: ReadonlyArray<{ code: string; severity: string; count: number }>;
   captionDiagnostics: ReadonlyArray<{ code: string; severity: string; count: number }>;
   ocrDiagnostics: ReadonlyArray<{ code: string; severity: string; count: number }>;
-  events: ReadonlyArray<{ event_id: number; module_id: string; status: string; completed: number; total: number; attempt: number }>;
+  events: ReadonlyArray<{ event_id: number; module_id: string; status: string; completed: number; total: number; attempt: number; message: string | null }>;
   issues: ReadonlyArray<{ issue_id: string; sample_id: number; module_id: string; code: string; severity: string; message: string; retriable: number; attempt: number; repair_start_module?: string; field_errors_json?: string }>;
   exportSummary: null | { format: "json" | "flat_txt" | "both"; commitStatus: string; scanned: number; valid: number; invalid: number; exported: number; skipped: number; issueCount: number; issuesPageEndpoint: string; convertedSamples: number; conversions: Record<string, number> };
   repairPreview: { eligibleTargetCount: number; estimatedApiRequests: number } | null;

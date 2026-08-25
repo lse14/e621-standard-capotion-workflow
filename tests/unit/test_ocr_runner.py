@@ -25,6 +25,7 @@ from anima_core.path_safety import windows_key  # noqa: E402
 from anima_core.pipeline_dispatch import PipelineDispatchMixin  # noqa: E402
 from anima_core.profiles import module_availability  # noqa: E402
 from anima_core.scheduler import BoundedScheduler  # noqa: E402
+from anima_core.stdio_transport import StdioJsonlTransportError  # noqa: E402
 from anima_core.worker_protocol import ProtocolEnvelopeV1  # noqa: E402
 
 
@@ -444,6 +445,50 @@ class OcrRunnerTests(unittest.TestCase):
         if spec is None:
             raise AssertionError("OCR runner module is missing")
         return importlib.import_module("anima_core.ocr_runner")
+
+    def test_gpu_worker_initialization_failure_recommends_cpu(self) -> None:
+        module = self._api()
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = OcrFixture(Path(temporary))
+            try:
+                runner = fixture.runner(module, FakeOcrTransport(error_code="ocr_initialization_failed"))
+                runner.runtime_id = "ocr-paddle-gpu"
+                with self.assertRaises(module.OcrRunnerFatalError) as raised:
+                    runner._exchange("hello", {}, fixture.config_hash)
+                self.assertIn("Choose Auto or CPU", str(raised.exception))
+            finally:
+                fixture.close()
+
+    def test_gpu_worker_transport_failure_recommends_cpu(self) -> None:
+        module = self._api()
+
+        class BrokenTransport:
+            def exchange(self, _request: ProtocolEnvelopeV1) -> ProtocolEnvelopeV1:
+                raise StdioJsonlTransportError("worker closed stdout without a response")
+
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = OcrFixture(Path(temporary))
+            try:
+                runner = fixture.runner(module, BrokenTransport())
+                runner.runtime_id = "ocr-paddle-gpu"
+                with self.assertRaises(module.OcrRunnerFatalError) as raised:
+                    runner._exchange("hello", {}, fixture.config_hash)
+                self.assertIn("Choose Auto or CPU", str(raised.exception))
+            finally:
+                fixture.close()
+
+    def test_failed_event_persists_terminal_ocr_message(self) -> None:
+        module = self._api()
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = OcrFixture(Path(temporary))
+            try:
+                runner = fixture.runner(module, FakeOcrTransport())
+                runner._publish("failed", message="The OCR CUDA runtime is unavailable or incompatible with this GPU. Choose Auto or CPU.")
+                events = fixture.database.event_page("job-ocr-runner", 0)
+                self.assertEqual(1, len(events))
+                self.assertIn("Choose Auto or CPU", events[0]["message"])
+            finally:
+                fixture.close()
 
     def test_disabled_ocr_neither_starts_worker_nor_hashes_images(self) -> None:
         module = self._api()

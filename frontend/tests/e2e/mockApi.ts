@@ -196,7 +196,7 @@ export function makeSnapshot({
     diagnostics: [],
     captionDiagnostics: [],
     ocrDiagnostics: [],
-    events: [{ event_id: 7, module_id: currentModuleId ?? "caption", status, completed: 1, total: 3, attempt: 1 }],
+    events: [{ event_id: 7, module_id: currentModuleId ?? "caption", status, completed: 1, total: 3, attempt: 1, message: null }],
     issues: [],
     exportSummary: null,
     repairPreview: { eligibleTargetCount: 2, estimatedApiRequests: 0 },

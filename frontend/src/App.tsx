@@ -380,6 +380,9 @@ export function App() {
   const nlAwaitsDecision = snapshot?.job.currentModuleId === "nl" && ["paused", "interrupted"].includes(snapshot.job.status) && pendingApiDecisions > 0;
   const retriableCount = snapshot?.repairPreview?.eligibleTargetCount ?? 0;
   const latestEvent = snapshot?.events.length ? snapshot.events[snapshot.events.length - 1] : null;
+  const ocrFailureMessage = snapshot?.job.status === "failed" && snapshot.job.currentModuleId === "ocr"
+    ? [...snapshot.events].reverse().find((event) => event.module_id === "ocr" && event.status === "failed" && event.message)?.message ?? null
+    : null;
   const currentStep = steps[activeStep] ?? steps[steps.length - 1];
   const visibleStepIndex = steps.indexOf(currentStep);
   const currentModuleNumber = currentStep.id === "setup" ? null : moduleOrder.indexOf(currentStep.id) + 1;
@@ -684,6 +687,7 @@ export function App() {
     resourcesLoading={resourcesLoading}
     resourceError={resourceError}
     diagnostics={snapshot?.ocrDiagnostics ?? []}
+    failureMessage={ocrFailureMessage}
     guidanceCopy={guidanceCopy}
     t={t}
     copy={copy}

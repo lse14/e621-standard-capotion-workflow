@@ -37,6 +37,7 @@ type Copy = {
   ocrTextBatch: string; ocrAutomaticTextBatch: string; ocrManualTextBatch: string;
   ocrSummary: string; ocrTotal: string; ocrNew: string; ocrReused: string; ocrSuccess: string;
   ocrNoText: string; ocrFailed: string; ocrTextItems: string; ocrIncludedForLlm: string; ocrContextOmitted: string;
+  ocrFailureReason: string;
 };
 
 export type OcrStepProps = {
@@ -49,6 +50,7 @@ export type OcrStepProps = {
   resourcesLoading: boolean;
   resourceError: string | null;
   diagnostics: ReadonlyArray<OcrDiagnostic>;
+  failureMessage: string | null;
   guidanceCopy: FieldGuidanceCopy;
   t: Translate;
   copy: Copy;
@@ -98,7 +100,7 @@ function TuningControl({
 }
 
 export function OcrStep({
-  draft, defaults, taskLocked, ocrExecution, runtime, resource, resourcesLoading, resourceError, diagnostics, guidanceCopy, t, copy, onOcrChange, onOcrExecutionChange, onRefreshResources,
+  draft, defaults, taskLocked, ocrExecution, runtime, resource, resourcesLoading, resourceError, diagnostics, failureMessage, guidanceCopy, t, copy, onOcrChange, onOcrExecutionChange, onRefreshResources,
 }: OcrStepProps) {
   const controlsDisabled = taskLocked || !draft.ocr.enabled;
   const resourceReady = Boolean(resource?.available && !["incompatible", "unavailable"].includes(resource.compatibility.status));
@@ -145,6 +147,7 @@ export function OcrStep({
       <small>{copy.ocrLicense}: {resource?.distribution.licenseStatus === "unverified" ? copy.ocrUnverified : "-"}</small>
       {!resourceReady && <><strong>{copy.ocrInstallCommand}</strong><code>Import-OcrResource.bat -Apply</code></>}
     </section>
+    {failureMessage && <section className="action-feedback ocr-failure" aria-live="assertive"><strong>{copy.ocrFailureReason}</strong><p role="alert">{failureMessage}</p></section>}
     {diagnostics.length > 0 && <section className="ocr-summary" aria-label={copy.ocrSummary}><h3>{copy.ocrSummary}</h3><dl>{summary.map(([label, code]) => <div key={code}><dt>{label}</dt><dd>{counts.get(code) ?? 0}</dd></div>)}</dl></section>}
   </div>;
 }

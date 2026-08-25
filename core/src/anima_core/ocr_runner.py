@@ -56,6 +56,8 @@ OCR_RESOURCE_ID = "ocr-ppocrv5-server-paddle-v1"
 OCR_FATAL_WORKER_CODES = frozenset(
     {"ocr_initialization_failed", "ocr_resource_invalid", "ocr_protocol_violation"}
 )
+OCR_CUDA_FAILURE_MESSAGE = "The OCR CUDA runtime is unavailable or incompatible with this GPU. Choose Auto or CPU."
+OCR_CPU_FAILURE_MESSAGE = "The OCR CPU runtime failed to initialize. Check the OCR resource installation and retry."
 
 
 class OcrTransport(Protocol):
@@ -248,7 +250,9 @@ class OcrRunner:
             raise self._fatal("ocr_protocol_violation", str(exc)) from exc
         try:
             response = self.transport.exchange(request)
-        except StdioJsonlTransportError:
+        except StdioJsonlTransportError as exc:
+            if self.runtime_id == "ocr-paddle-gpu":
+                raise self._fatal("ocr_initialization_failed", OCR_CUDA_FAILURE_MESSAGE) from exc
             raise
         except Exception as exc:
             raise self._fatal("ocr_protocol_violation", "OCR transport failed") from exc
@@ -264,9 +268,13 @@ class OcrRunner:
             raise self._fatal("ocr_protocol_violation", "OCR response envelope identity mismatch")
         if response.method == "error":
             code = response.payload.get("code")
+            if code == "ocr_initialization_failed":
+                message = OCR_CUDA_FAILURE_MESSAGE if self.runtime_id == "ocr-paddle-gpu" else OCR_CPU_FAILURE_MESSAGE
+            else:
+                message = "OCR worker returned fatal error"
             raise self._fatal(
                 code if code in OCR_FATAL_WORKER_CODES else "ocr_protocol_violation",
-                "OCR worker returned fatal error",
+                message,
             )
         if response.method != ("hello" if method == "hello" else "result"):
             raise self._fatal("ocr_protocol_violation", "OCR response method mismatch")
@@ -423,7 +431,7 @@ class OcrRunner:
             "startupReason": binding.startupReason,
         })
 
-    def _publish(self, status: str, attempt: int = 0) -> None:
+    def _publish(self, status: str, attempt: int = 0, *, message: str | None = None) -> None:
         summary = self.database.module_summary(self.job_id, "ocr")
         settled = int(summary["completed"] + summary["failed"] + summary["skipped"])
         event = ProgressEvent(
@@ -435,6 +443,7 @@ class OcrRunner:
             int(summary["total"]),
             str(self.database.get_job(self.job_id)["config_hash"]),
             attempt,
+            message=message,
         )
         self.database.append_event(event)
         if self.progress_consumer is not None:
@@ -761,16 +770,16 @@ class OcrRunner:
                         self.scheduler.complete(lease)
                     active.remove(lease)
                     self._publish("running", lease.attempt)
-        except OcrRunnerFatalError:
+        except OcrRunnerFatalError as error:
             for lease in active:
                 self.scheduler.release_unstarted(lease)
             self.database.set_module_summary(self.job_id, "ocr", status="failed", finished=True)
             self.database.set_job_status(self.job_id, "failed", current_module_id="ocr")
-            self._publish("failed")
+            self._publish("failed", message=str(error))
             raise
         except (SchedulerError, ProtocolError, OcrSidecarError, OverlayError) as exc:
             fatal = self._fatal("ocr_protocol_violation", str(exc))
             self.database.set_module_summary(self.job_id, "ocr", status="failed", finished=True)
             self.database.set_job_status(self.job_id, "failed", current_module_id="ocr")
-            self._publish("failed")
+            self._publish("failed", message=str(fatal))
             raise fatal from exc

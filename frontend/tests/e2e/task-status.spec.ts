@@ -162,6 +162,23 @@ test.describe("task status and issue characterization", () => {
     await expect(page.getByLabel("OCR device", { exact: true })).toBeDisabled();
   });
 
+  test("shows the backend CUDA failure guidance in the OCR step", async ({ page, api }) => {
+    const snapshot = makeSnapshot({ status: "failed", currentModuleId: "ocr", schemaVersion: 9 });
+    snapshot.events = [{
+      event_id: 8,
+      module_id: "ocr",
+      status: "failed",
+      completed: 0,
+      total: 3,
+      attempt: 0,
+      message: "The OCR CUDA runtime is unavailable or incompatible with this GPU. Choose Auto or CPU.",
+    }];
+    setJobSnapshot(api, snapshot);
+    await openTrackedJob(page, "failed");
+    await page.locator(".workflow-rail").getByRole("button", { name: /OCR/ }).click();
+    await expect(page.locator(".ocr-failure")).toContainText("Choose Auto or CPU");
+  });
+
   test("task lifecycle exposes only global pause and resume controls", async ({ page, api }) => {
     const snapshot = makeSnapshot({ status: "running", currentModuleId: "caption", schemaVersion: 9 });
     setJobSnapshot(api, snapshot);
