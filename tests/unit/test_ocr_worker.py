@@ -273,7 +273,25 @@ class OcrWorkerTests(unittest.TestCase):
             outcome = parse_ocr_process_result(worker.process(_request([_work_item(image_path)])))[0]
 
         self.assertEqual("no_text", outcome.status)
+
+    @unittest.skipIf(_WORKER_IMPORT_ERROR is not None, "OCR worker source is not implemented")
+    def test_empty_paddle_result_without_orientation_is_no_text(self) -> None:
+        """PaddleOCR omits orientation output when it detects no text lines."""
+        with tempfile.TemporaryDirectory() as temporary_name:
+            temporary = Path(temporary_name)
+            resource_root, manifest_relative, fingerprint = _write_resource(temporary / "resource-library")
+            image_path = temporary / "image.png"
+            Image.new("RGB", (4, 4), "white").save(image_path)
+            empty_result = _raw_result(texts=[], scores=[], polys=[], boxes=[], angles=[])
+            del empty_result["textline_orientation_angles"]
+            worker = OcrWorker(model_factory=_FakeFactory(_FakeEngine(empty_result)))
+            worker.initialize(_hello(manifest_relative, fingerprint), resource_root=resource_root)
+
+            outcome = parse_ocr_process_result(worker.process(_request([_work_item(image_path)])))[0]
+
+        self.assertEqual("no_text", outcome.status)
         self.assertEqual((), outcome.items)
+
     def test_runtime_evidence_uses_runtime_specific_paddle_versions(self) -> None:
         cases = (
             ("ocr-paddle", "paddlepaddle", "3.2.2", False),

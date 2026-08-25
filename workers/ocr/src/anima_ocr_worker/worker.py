@@ -206,12 +206,22 @@ def _orientation(value: object) -> float:
 def _raw_items(value: object, image: DecodedImage) -> list[dict[str, object]]:
     if not isinstance(value, Mapping):
         raise OcrInferenceError("PaddleOCR result is invalid")
-    required = ("rec_texts", "rec_scores", "rec_polys", "rec_boxes", "textline_orientation_angles")
+    required = ("rec_texts", "rec_scores", "rec_polys", "rec_boxes")
     if any(name not in value for name in required):
         raise OcrInferenceError("PaddleOCR result fields are incomplete")
     sequences = {name: _sequence(value[name], name) for name in required}
     count = len(sequences["rec_texts"])
     if count > MAX_PROCESS_ITEMS or any(len(values) != count for values in sequences.values()):
+        raise OcrInferenceError("PaddleOCR result field lengths are invalid")
+    if count == 0 and "textline_orientation_angles" not in value:
+        return []
+    if "textline_orientation_angles" not in value:
+        raise OcrInferenceError("PaddleOCR result fields are incomplete")
+    sequences["textline_orientation_angles"] = _sequence(
+        value["textline_orientation_angles"],
+        "textline_orientation_angles",
+    )
+    if len(sequences["textline_orientation_angles"]) != count:
         raise OcrInferenceError("PaddleOCR result field lengths are invalid")
     items: list[dict[str, object]] = []
     for index in range(count):
