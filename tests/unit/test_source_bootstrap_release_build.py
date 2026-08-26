@@ -118,7 +118,7 @@ class SourceBootstrapReleaseBuildTests(unittest.TestCase):
         )
         module = _load_manifest_builder()
         self.assertIsNotNone(module, "source bootstrap manifest builder must exist")
-        self.assertEqual("source-bootstrap-e621-v7", module.audit_inventory(value, REQUIREMENTS)["releaseVersion"])
+        self.assertEqual("source-bootstrap-e621-v8", module.audit_inventory(value, REQUIREMENTS)["releaseVersion"])
 
     def test_candidate_inventory_keeps_e621_indexes_in_independent_resource_packages(self) -> None:
         self.assertTrue(INVENTORY.is_file(), "source-bootstrap inventory must exist")
@@ -209,7 +209,7 @@ class SourceBootstrapReleaseBuildTests(unittest.TestCase):
         record = records[0]
         self.assertEqual("cpython311-base", record["id"])
         self.assertEqual(
-            "https://github.com/lse14/e621-standard-capotion-workflow/releases/download/source-bootstrap-e621-v7/cpython-3.11.15-win-amd64-105482d.zip",
+            "https://github.com/lse14/e621-standard-capotion-workflow/releases/download/source-bootstrap-e621-v8/cpython-3.11.15-win-amd64-572501a.zip",
             record["publishedUrl"],
         )
         self.assertEqual(20565968, record["sizeBytes"])
