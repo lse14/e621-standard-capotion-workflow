@@ -1580,7 +1580,7 @@ class SourceBootstrapInstallTests(unittest.TestCase):
                 (root / "resource-library" / "ocr-models" / "ocr-ppocrv5-server-paddle-v1").exists()
             )
 
-    def test_gpu_probe_failure_rebuilds_caption_policy_cpu_keeps_ocr_cpu(self) -> None:
+    def test_caption_cuda_probe_failure_keeps_cuda_while_policy_rebuilds_cpu(self) -> None:
         install_module = _install_module()
         _, manifest_module = _modules()
         manifest = manifest_module.load_manifest(fallback_fixture_manifest(include_probe_companions=True))
@@ -1638,18 +1638,18 @@ class SourceBootstrapInstallTests(unittest.TestCase):
             )
 
             state = json.loads(result.state_path.read_text(encoding="utf-8"))
-            self.assertEqual("cpu", state["components"]["caption-e621"]["variant"])
+            self.assertEqual("cuda", state["components"]["caption-e621"]["variant"])
             self.assertEqual("cpu", state["components"]["policy"]["variant"])
             self.assertEqual("cpu", state["components"]["ocr-cpu"]["variant"])
             self.assertNotIn("ocr-gpu", state["components"])
             self.assertIn(("caption-e621", "cuda"), probe_calls)
-            self.assertIn(("caption-e621", "cpu"), probe_calls)
+            self.assertNotIn(("caption-e621", "cpu"), probe_calls)
             self.assertIn(("policy", "cuda"), probe_calls)
             self.assertIn(("policy", "cpu"), probe_calls)
             self.assertIn(("ocr-gpu", "cuda"), probe_calls)
-            self.assertGreaterEqual(probe_calls.count(("e621-tagger", "shared")), 2)
+            self.assertEqual(1, probe_calls.count(("e621-tagger", "shared")))
             self.assertGreaterEqual(probe_calls.count(("quality-stack", "shared")), 2)
-            self.assertTrue(any("caption-e621 CUDA offline probe failed" in message for message in result.messages))
+            self.assertTrue(any("Caption CUDA offline probe failed; keeping the CUDA runtime" in message for message in result.messages))
             self.assertTrue(any("policy CUDA offline probe failed" in message for message in result.messages))
             self.assertTrue(any("OCR GPU offline probe failed" in message for message in result.messages))
             self.assertFalse(any("GPU runtime installed" in message for message in result.messages))

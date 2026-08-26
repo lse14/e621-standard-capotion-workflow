@@ -77,6 +77,7 @@ _CUDA_PROBE_COMPANIONS = {
     "caption-e621": "e621-tagger",
     "policy": "quality-stack",
 }
+_CAPTION_RUNTIME_CPU_FALLBACK = "caption-e621"
 
 
 @dataclass(frozen=True)
@@ -454,11 +455,17 @@ def install_project(
 
         final_components = list(plan.components)
         final_pending = list(pending)
+        rebuild_ids: set[str] = set()
         if fallback_ids:
             cpu_items = _cpu_fallback_items(manifest)
+            rebuild_ids = fallback_ids - {_CAPTION_RUNTIME_CPU_FALLBACK}
+            if _CAPTION_RUNTIME_CPU_FALLBACK in fallback_ids:
+                messages.append(
+                    "Caption CUDA offline probe failed; keeping the CUDA runtime so the worker can retry CPU if CUDA initialization fails"
+                )
             for index, item in enumerate(tuple(final_components)):
                 component_id = item.component.component_id
-                if component_id not in fallback_ids:
+                if component_id not in rebuild_ids:
                     continue
                 try:
                     fallback = cpu_items[component_id]
@@ -499,8 +506,8 @@ def install_project(
             messages.append("OCR GPU model functionality was not verified; GPU runtime remains installed")
 
         final_plan = InstallationPlan(plan.accelerator, tuple(final_components))
-        if fallback_ids:
-            retry_component_ids = _fallback_group_component_ids(fallback_ids)
+        if rebuild_ids:
+            retry_component_ids = _fallback_group_component_ids(rebuild_ids)
             retry_items = [
                 item
                 for item in final_plan.components
