@@ -11,7 +11,7 @@ import sys
 import uuid
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Callable, Mapping
+from typing import Callable, Mapping, Sequence
 
 _INSTALLER_ROOT = Path(__file__).resolve().parent
 if str(_INSTALLER_ROOT) not in sys.path:
@@ -59,6 +59,11 @@ _OCR_RESOURCE_RELATIVE = (
     / "ocr-models"
     / "ocr-ppocrv5-server-paddle-v1"
 )
+_NL_PROMPT_RESOURCE_IDS = (
+    "nl-default-prompt-v1",
+    "nl-default-prompt-v2",
+    "nl-default-prompt-v3",
+)
 
 _RUNTIME_SOURCES: dict[str, dict[str, str]] = {
     "core": {"anima_core": "core/src/anima_core", "anima_caption_format": "shared/anima_caption_format/anima_caption_format"},
@@ -77,6 +82,11 @@ _CUDA_PROBE_COMPANIONS = {
     "caption-e621": "e621-tagger",
     "policy": "quality-stack",
 }
+_FUNCTIONAL_PROBE_GROUPS = (
+    ("caption-e621", "e621-tagger"),
+    ("policy", "quality-stack"),
+    ("token-budget", "qwen3-tokenizer"),
+)
 _CAPTION_RUNTIME_CPU_FALLBACK = "caption-e621"
 
 
@@ -98,6 +108,43 @@ def _owner_sources(source_root: Path, runtime_id: str) -> dict[str, Path]:
     if missing:
         raise AssemblyError("runtime source is missing: " + ", ".join(missing))
     return result
+
+
+def _runtime_owner_sources_are_current(
+    source_root: Path,
+    layout: ProjectLayout,
+    item: PlannedComponent,
+) -> bool:
+    """Require source-owned Python modules to match before skipping a runtime."""
+    if item.runtime_id is None:
+        return True
+    source_packages = _owner_sources(source_root, item.runtime_id)
+    target = _published_target(layout, item) / "Lib" / "site-packages"
+    try:
+        for package_name, source_package in source_packages.items():
+            installed_package = target / package_name
+            if not installed_package.is_dir() or installed_package.is_symlink():
+                return False
+            source_files = {
+                path.relative_to(source_package): path
+                for path in source_package.rglob("*.py")
+                if path.is_file() and not path.is_symlink()
+            }
+            installed_files = {
+                path.relative_to(installed_package): path
+                for path in installed_package.rglob("*.py")
+                if path.is_file() and not path.is_symlink()
+            }
+            if set(source_files) != set(installed_files):
+                return False
+            for relative, source_file in source_files.items():
+                if hashlib.sha256(source_file.read_bytes()).digest() != hashlib.sha256(
+                    installed_files[relative].read_bytes()
+                ).digest():
+                    return False
+    except OSError:
+        return False
+    return True
 
 
 def _state_records(manifest: InstallManifest, plan: InstallationPlan, state: object) -> dict[str, object]:
@@ -171,6 +218,30 @@ def _load_ocr_resource_module(source_root: Path):
         sys.modules.pop(spec.name, None)
         raise
     return module
+
+
+def _load_nl_prompt_resource_module(source_root: Path):
+    path = source_root / "packaging" / "scripts" / "assemble_nl_prompt_resource.py"
+    spec = importlib.util.spec_from_file_location("_source_bootstrap_nl_prompt_resource", path)
+    if spec is None or spec.loader is None:
+        raise AssemblyError(f"NL prompt resource assembler is unavailable: {path}")
+    module = importlib.util.module_from_spec(spec)
+    try:
+        spec.loader.exec_module(module)
+    except Exception:
+        raise AssemblyError("NL prompt resource assembly failed") from None
+    return module
+
+
+def _assemble_nl_prompt_resources(source_root: Path, install_root: Path) -> None:
+    module = _load_nl_prompt_resource_module(source_root)
+    resource_root = source_root / "packaging" / "resources"
+    try:
+        for resource_id in _NL_PROMPT_RESOURCE_IDS:
+            module.assemble(resource_root / f"{resource_id}.txt", install_root)
+        module.assemble_v4(resource_root, install_root)
+    except Exception as exc:
+        raise AssemblyError(f"NL prompt resource assembly failed: {exc}") from exc
 
 
 def _complete_manual_ocr_archives(project_root: Path) -> bool:
@@ -300,7 +371,9 @@ def _default_probe_results(
     *,
     source_root: Path,
     pending: list[PlannedComponent],
+    components: Sequence[PlannedComponent],
     targets: Mapping[str, Path],
+    ocr_resource_target: Path | None = None,
     progress: ProgressReporter | None = None,
 ) -> dict[str, bool | None]:
     for item in pending:
@@ -308,7 +381,19 @@ def _default_probe_results(
             _write_runtime_manifest_at(source_root, item, _stage_target_root(targets[item.component.component_id], item))
     from probes import run_offline_probes
 
-    return run_offline_probes(pending, component_targets=targets, progress=progress)
+    selected_ids = {item.component.component_id for item in pending}
+    for group in _FUNCTIONAL_PROBE_GROUPS:
+        if selected_ids.intersection(group):
+            selected_ids.update(group)
+    probe_components = [
+        item for item in components if item.component.component_id in selected_ids
+    ]
+    return run_offline_probes(
+        probe_components,
+        component_targets=targets,
+        ocr_resource_target=ocr_resource_target,
+        progress=progress,
+    )
 
 
 def _stage_target_root(target: Path, item: PlannedComponent) -> Path:
@@ -403,11 +488,16 @@ def install_project(
     try:
         layout.ensure_directories()
         recover_transactions(layout)
+        if any(item.runtime_id == "nl" for item in plan.components):
+            _assemble_nl_prompt_resources(source, layout.runtime_root)
         existing = _state_records(manifest, plan, read_install_state(layout))
         skipped: list[PlannedComponent] = []
         pending: list[PlannedComponent] = []
         for item in plan.components:
-            if component_is_current(layout, item, existing.get(item.component.component_id)):
+            if (
+                component_is_current(layout, item, existing.get(item.component.component_id))
+                and _runtime_owner_sources_are_current(source, layout, item)
+            ):
                 skipped.append(item)
             else:
                 pending.append(item)
@@ -440,10 +530,13 @@ def install_project(
         if probe_component is not None:
             results = _custom_probe_results(pending, targets, probe_component)
         elif pending:
+            ocr_resource_target = layout.project_root / _OCR_RESOURCE_RELATIVE
             results = _default_probe_results(
                 source_root=source,
                 pending=pending,
+                components=plan.components,
                 targets=targets,
+                ocr_resource_target=ocr_resource_target if ocr_resource_target.is_dir() else None,
                 progress=report,
             )
         else:
@@ -527,6 +620,7 @@ def install_project(
                 retry_results = _default_probe_results(
                     source_root=source,
                     pending=retry_items,
+                    components=final_plan.components,
                     targets=targets,
                     progress=report,
                 )

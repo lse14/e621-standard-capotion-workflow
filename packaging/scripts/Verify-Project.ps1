@@ -281,8 +281,8 @@ else {
 }
 $script:runtimeRoot = Assert-SafeProjectRoot $selectedInstallRoot
 $script:corePython = Assert-ExistingSafePath $script:runtimeRoot (Join-Path $script:runtimeRoot 'runtimes\core\python.exe') 'embedded Core Python' $false
-$script:toolchainPython = Assert-ExistingSafePath $script:root (Join-Path $script:root '.toolchains\Python-3.11.15\PCbuild\amd64\python.exe') 'project toolchain Python' $false
-$script:nodeDirectory = Assert-ExistingSafePath $script:root (Join-Path $script:root '.toolchains\node-v24.18.0-win-x64') 'project Node toolchain' $true
+$script:toolchainPython = $script:corePython
+$script:nodeDirectory = Assert-ExistingSafePath $script:root (Join-Path $script:root '.runtime-build\node-v24.18.0-win-x64') 'project Node toolchain' $true
 $script:node = Assert-ExistingSafePath $script:root (Join-Path $script:nodeDirectory 'node.exe') 'project node executable' $false
 $script:npm = Assert-ExistingSafePath $script:root (Join-Path $script:nodeDirectory 'npm.cmd') 'project npm executable' $false
 $script:frontend = Assert-ExistingSafePath $script:root (Join-Path $script:root 'frontend') 'frontend root' $true

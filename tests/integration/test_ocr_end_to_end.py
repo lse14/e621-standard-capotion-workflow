@@ -120,7 +120,7 @@ class OcrV1EndToEndTests(unittest.TestCase):
         self.assertEqual("result", decode_frame(responses[2], runtime_id="ocr-paddle", owner="ocr").method)
         self.assertEqual(before, _tree_hashes(resource), "formal OCR resource must remain read-only")
 
-    def test_v5_core_lifecycle_matrix_preserves_duplicate_text_reuse_repair_export_and_isolation(self) -> None:
+    def test_v9_core_lifecycle_matrix_preserves_duplicate_text_reuse_repair_export_and_isolation(self) -> None:
         cases = (
             ("tests.unit.test_ocr_runner", "OcrRunnerTests", "test_success_keeps_worker_order_duplicate_text_and_business_annotations_unchanged"),
             ("tests.unit.test_ocr_runner", "OcrRunnerTests", "test_reuses_legal_formal_sidecar_and_rewrites_only_llm_threshold_in_task_overlay"),
@@ -128,7 +128,7 @@ class OcrV1EndToEndTests(unittest.TestCase):
             ("tests.unit.test_ocr_runner", "OcrRunnerTests", "test_no_text_is_a_normal_completed_result"),
             ("tests.unit.test_ocr_runner", "OcrRunnerTests", "test_normal_inference_failure_replaces_stale_text_and_settles_nonblocking_retriable_issue"),
             ("tests.unit.test_ocr_runner", "OcrRunnerTests", "test_success_sidecar_is_staged_before_completion_and_prepared_file_is_consumed"),
-            ("tests.integration.test_ocr_core_runner", "OcrCoreRunnerIntegrationTests", "test_v5_ocr_and_nl_four_mode_matrix_keeps_ocr_independent_and_serial"),
+            ("tests.integration.test_ocr_core_runner", "OcrCoreRunnerIntegrationTests", "test_v9_ocr_and_nl_four_mode_matrix_keeps_ocr_independent_and_serial"),
             ("tests.integration.test_ocr_core_runner", "OcrCoreRunnerIntegrationTests", "test_cancellation_stops_after_inflight_ocr_sidecar_is_safely_settled"),
             ("tests.integration.test_ocr_core_runner", "OcrCoreRunnerIntegrationTests", "test_worker_restart_commits_an_already_prepared_ocr_sidecar_once"),
             ("tests.integration.test_ocr_core_runner", "OcrCoreRunnerIntegrationTests", "test_ocr_only_repair_targets_the_failed_sample_then_continues_to_nl_and_export"),

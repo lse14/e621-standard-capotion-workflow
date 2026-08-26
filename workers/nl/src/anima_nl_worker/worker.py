@@ -3,11 +3,13 @@ from __future__ import annotations
 import asyncio
 import datetime as dt
 import email.utils
+import ipaddress
 import json
 import random
 import time
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -48,6 +50,18 @@ class NlWorkerError(RuntimeError):
         self.code = code
 
 
+def _trust_environment_proxy(endpoint: str) -> bool:
+    hostname = urlsplit(endpoint).hostname
+    if hostname is None:
+        return False
+    if hostname.casefold() == "localhost" or hostname.casefold().endswith(".localhost"):
+        return False
+    try:
+        return not ipaddress.ip_address(hostname).is_loopback
+    except ValueError:
+        return True
+
+
 @dataclass
 class NlWorker:
     hello: NlHelloV1 | None = None
@@ -65,7 +79,12 @@ class NlWorker:
         timeout = httpx.Timeout(hello.policy.readTimeoutSeconds, connect=hello.policy.connectTimeoutSeconds, write=hello.policy.writeTimeoutSeconds, pool=hello.policy.poolTimeoutSeconds)
         limits = httpx.Limits(max_connections=hello.policy.concurrency, max_keepalive_connections=hello.policy.concurrency)
         self.hello = hello
-        self.client = httpx.AsyncClient(timeout=timeout, limits=limits, follow_redirects=False)
+        self.client = httpx.AsyncClient(
+            timeout=timeout,
+            limits=limits,
+            follow_redirects=False,
+            trust_env=_trust_environment_proxy(hello.endpoint),
+        )
         return {"schemaVersion": 1, "payloadType": "nl_hello_result", "ready": True, "concurrency": hello.policy.concurrency}
 
     async def close(self) -> None:

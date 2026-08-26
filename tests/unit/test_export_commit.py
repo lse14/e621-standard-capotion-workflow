@@ -70,17 +70,21 @@ class ExportCommitTests(unittest.TestCase):
             annotation = Path(image_name).with_suffix("")
             (dataset / f"{annotation}.json").write_bytes(b'{"legacy":true}\n')
             (dataset / f"{annotation}.txt").write_bytes(b"legacy\n")
-        config = JobConfig(profile="e621", workMode="in_place", overwriteMode="incremental", sourceRoot=str(dataset), recursive=True, schemaVersion=5)
+        config = JobConfig(workMode="in_place", overwriteMode="incremental", sourceRoot=str(dataset), recursive=True, schemaVersion=9)
         config.caption["enabled"] = config.classify["enabled"] = config.replace["enabled"] = config.nl["enabled"] = config.dropout["enabled"] = False
         config.ocr["enabled"] = ocr_enabled
         config.countReview["enabled"] = False  # type: ignore[index]
+        assert config.tokenBudget is not None
+        config.tokenBudget["enabled"] = False
         config.export["format"] = format_value
         service = JobPreparationService(root / "state.db")
         job_id = service.preflight(config.to_dict()).jobId
         service.confirm_workspace(job_id, confirmed=True, confirmed_rebuild=False)
         database = StateDatabase.open(root / "state.db")
         scheduler = BoundedScheduler(database)
-        for module_id in ("caption", "classify", "replace", "ocr", "nl", "count_review", "dropout"):
+        for module_id in (
+            "caption", "classify", "replace", "ocr", "nl", "count_review", "dropout", "token_budget",
+        ):
             scheduler.start_module(job_id, module_id, enabled=False, profile="e621")
         scheduler.start_module(job_id, "export", enabled=True, profile="e621")
         layout = OverlayLayout.open_existing(str(database.get_job(job_id)["overlay_root"]), job_id)

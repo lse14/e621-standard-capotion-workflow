@@ -238,6 +238,7 @@ class PolicyWorker:
                     relative_image_path=item.relativeImagePath,
                     config=self.hello.policy,
                     aesthetic_score=scores.get(item.sampleId),
+                    artist_root_name=self.hello.artistRootName,
                 )
                 data = (json.dumps(result, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
                 if len(data) > MAX_JSON_BYTES:

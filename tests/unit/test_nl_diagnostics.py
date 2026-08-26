@@ -9,11 +9,14 @@ import tempfile
 import unittest
 from pathlib import Path
 from urllib.error import HTTPError, URLError
+from urllib.request import ProxyHandler
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "core" / "src"))
 
+import anima_core.nl_diagnostics as nl_diagnostics
 from anima_core.nl_diagnostics import MAX_RESPONSE_BYTES, TEST_MESSAGE, NlDiagnosticClient
 
 
@@ -157,6 +160,22 @@ class NlDiagnosticClientTests(unittest.TestCase):
         result = NlDiagnosticClient(opener=fake).discover_models(endpoint="http://127.0.0.1:1234/v1", api_key="secret-value")
         self.assertTrue(result["ok"])
         self.assertEqual("http://127.0.0.1:1234/v1/models", fake.request.full_url)
+
+    def test_default_opener_disables_system_proxy_only_for_local_endpoints(self) -> None:
+        for endpoint, expects_disabled_proxy in (
+            ("http://127.0.0.1:1234/v1", True),
+            ("http://localhost:1234/v1", True),
+            ("https://provider.example/v1", False),
+        ):
+            with self.subTest(endpoint=endpoint):
+                fake = FakeOpener(FakeResponse(_models([])))
+                with mock.patch.object(nl_diagnostics, "build_opener", return_value=fake) as builder:
+                    result = NlDiagnosticClient().discover_models(endpoint=endpoint, api_key="secret-value")
+                self.assertTrue(result["ok"])
+                proxy_handlers = [handler for handler in builder.call_args.args if isinstance(handler, ProxyHandler)]
+                self.assertEqual(expects_disabled_proxy, bool(proxy_handlers))
+                if proxy_handlers:
+                    self.assertEqual({}, proxy_handlers[0].proxies)
 
     def test_provider_and_transport_failures_have_stable_codes(self) -> None:
         cases = (

@@ -12,7 +12,22 @@ PROTOCOL_VERSION = "1.0"
 PYTHON_VERSION = "3.11.15"
 RUNTIMES = {
     "core": ("core", "anima_core.__main__", "core", ()),
-    "caption-e621": ("caption", "anima_caption_worker.entry", "caption-e621", ("Lib/site-packages/onnxruntime/capi",)),
+    "caption-e621": (
+        "caption",
+        "anima_caption_worker.entry",
+        "caption-e621",
+        (
+            "Lib/site-packages/onnxruntime/capi",
+            "Lib/site-packages/nvidia/cublas/bin",
+            "Lib/site-packages/nvidia/cuda_runtime/bin",
+            "Lib/site-packages/nvidia/cudnn/bin",
+            "Lib/site-packages/nvidia/cufft/bin",
+            "Lib/site-packages/nvidia/curand/bin",
+            "Lib/site-packages/nvidia/cusolver/bin",
+            "Lib/site-packages/nvidia/cusparse/bin",
+            "Lib/site-packages/nvidia/nvjitlink/bin",
+        ),
+    ),
     "classify-e621": ("classify", "anima_classify_worker.entry", "classify-e621", ()),
     "replace-e621": ("replace", "anima_replace_worker.entry", "replace-e621", ()),
     "nl": ("nl", "anima_nl_worker.entry", "nl", ()),

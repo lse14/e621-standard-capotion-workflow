@@ -59,7 +59,7 @@ def worker_hello_payload(runtime_id: str, install_root: Path) -> Iterator[tuple[
     if runtime_id == "replace-e621":
         yield "normal", {
             "schemaVersion": 1, "payloadType": "replace_hello_request", "jobId": "worker-test",
-            "configHash": _CONFIG_HASH, "profile": "e621",
+            "configHash": _CONFIG_HASH,
             "resourceManifestRelativePath": REPLACE_MANIFEST,
             "resourceFingerprint": REPLACE_FINGERPRINT,
         }

@@ -92,6 +92,7 @@ class PolicyHelloV1:
     configHash: str
     datasetRoot: str
     overlayRoot: str
+    artistRootName: str
     resourceManifestRelativePath: str | None
     resourceFingerprint: str | None
     quality: QualityConfigV1
@@ -127,7 +128,7 @@ def parse_hello(value: object) -> PolicyHelloV1:
         item,
         {
             "schemaVersion", "payloadType", "jobId", "configHash", "datasetRoot", "overlayRoot",
-            "resourceManifestRelativePath", "resourceFingerprint", "policy",
+            "artistRootName", "resourceManifestRelativePath", "resourceFingerprint", "policy",
         },
         "policy hello",
     )
@@ -188,6 +189,7 @@ def parse_hello(value: object) -> PolicyHelloV1:
         configHash=_sha256(item["configHash"], "configHash"),
         datasetRoot=_absolute_path(item["datasetRoot"], "datasetRoot"),
         overlayRoot=_absolute_path(item["overlayRoot"], "overlayRoot"),
+        artistRootName=_string(item["artistRootName"], "artistRootName", max_bytes=512),
         resourceManifestRelativePath=resource_path,
         resourceFingerprint=resource_fingerprint,
         quality=QualityConfigV1(

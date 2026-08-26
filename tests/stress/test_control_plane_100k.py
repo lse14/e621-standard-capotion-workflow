@@ -139,7 +139,7 @@ def _insert_batched(
 
 
 class ControlPlane100kTests(unittest.TestCase):
-    def test_v5_fake_ocr_metadata_uses_keyset_pages_and_one_resident_lease(self) -> None:
+    def test_v9_fake_ocr_metadata_uses_keyset_pages_and_one_resident_lease(self) -> None:
         self.assertEqual(
             "sample.png",
             _fake_ocr_sidecar_metadata({"sample_id": 1, "relative_image_path": "sample.png"})["relativeImagePath"],
@@ -150,20 +150,20 @@ class ControlPlane100kTests(unittest.TestCase):
             database = StateDatabase.open(database_path)
             try:
                 config = JobConfig(
-                    profile="e621",
                     workMode="in_place",
                     overwriteMode="incremental",
                     sourceRoot=str(root),
-                    schemaVersion=5,
+                    schemaVersion=9,
                 )
                 config.caption["enabled"] = config.classify["enabled"] = config.replace["enabled"] = False
                 config.ocr["enabled"] = True
                 config.nl["enabled"] = config.dropout["enabled"] = False
                 config.countReview["enabled"] = False  # type: ignore[index]
+                config.tokenBudget["enabled"] = False  # type: ignore[index]
                 frozen = config.to_dict()
                 job = _job(root)
                 job.update({
-                    "config_schema_version": 5,
+                    "config_schema_version": config.schemaVersion,
                     "config_json": json.dumps(frozen),
                     "config_hash": config.config_hash,
                     "status": "running",

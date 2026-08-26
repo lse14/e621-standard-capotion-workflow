@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -174,6 +175,41 @@ class NlWorkerTests(unittest.TestCase):
             _TEST_IMAGE_DIRECTORY.cleanup()
         _TEST_IMAGE_DIRECTORY = None
         _TEST_IMAGE_PATH = None
+
+    def test_initialize_disables_system_proxy_for_local_api(self) -> None:
+        client = _Client()
+        with patch("anima_nl_worker.worker.httpx.AsyncClient", return_value=client) as factory:
+            async def scenario() -> None:
+                worker = NlWorker()
+                await worker.initialize({**_hello(), "endpoint": "http://127.0.0.1:8765/v1"})
+                await worker.close()
+
+            asyncio.run(scenario())
+        self.assertFalse(factory.call_args.kwargs["trust_env"])
+
+    def test_local_api_direct_transport_works_with_or_without_proxy_environment(self) -> None:
+        for environment in ({}, {"HTTP_PROXY": "http://127.0.0.1:9", "HTTPS_PROXY": "http://127.0.0.1:9"}):
+            with self.subTest(proxy_environment=bool(environment)), patch.dict(os.environ, environment, clear=True):
+                client = _Client()
+                with patch("anima_nl_worker.worker.httpx.AsyncClient", return_value=client) as factory:
+                    async def scenario() -> None:
+                        worker = NlWorker()
+                        await worker.initialize({**_hello(), "endpoint": "http://127.0.0.1:8765/v1"})
+                        await worker.close()
+
+                    asyncio.run(scenario())
+                self.assertFalse(factory.call_args.kwargs["trust_env"])
+
+    def test_initialize_allows_system_proxy_for_remote_api(self) -> None:
+        client = _Client()
+        with patch("anima_nl_worker.worker.httpx.AsyncClient", return_value=client) as factory:
+            async def scenario() -> None:
+                worker = NlWorker()
+                await worker.initialize(_hello())
+                await worker.close()
+
+            asyncio.run(scenario())
+        self.assertTrue(factory.call_args.kwargs["trust_env"])
 
     def test_endpoint_and_response_validation(self) -> None:
         self.assertEqual("https://example.test/v1/chat/completions", normalize_endpoint("https://example.test/v1"))

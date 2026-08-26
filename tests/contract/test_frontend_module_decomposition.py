@@ -186,9 +186,9 @@ class FrontendModuleDecompositionTests(unittest.TestCase):
         for marker in ("NlPromptPresetLibrary", "nl-preset-cards", "listNlPromptPresets", "getNlPromptPreset"):
             self.assertIn(marker, tools_source)
 
-    def test_v8_draft_contract_keeps_token_budget_and_prompt_routing_in_draft(self) -> None:
+    def test_v9_draft_contract_keeps_token_budget_and_prompt_routing_in_draft(self) -> None:
         draft_source = (FRONTEND_SOURCE / "draft.ts").read_text(encoding="utf-8")
-        self.assertIn("schemaVersion: 8", draft_source)
+        self.assertIn("schemaVersion: 9", draft_source)
         self.assertIn('inputTxtMode: "tag"', draft_source)
         self.assertIn("taggerFallbackOnMissingTxt: true", draft_source)
         self.assertIn('device: "auto"', draft_source)
@@ -198,13 +198,13 @@ class FrontendModuleDecompositionTests(unittest.TestCase):
         self.assertIn('lengthSeed: "anima-nl-length-v1"', draft_source)
         self.assertIn('resourceId: "tokenizer-qwen3-0.6b-anima-v1"', draft_source)
 
-    def test_v8_ocr_execution_is_task_only_and_runtime_status_stays_compact(self) -> None:
+    def test_v9_ocr_execution_is_task_only_and_runtime_status_stays_compact(self) -> None:
         draft_source = (FRONTEND_SOURCE / "draft.ts").read_text(encoding="utf-8")
         api_source = (FRONTEND_SOURCE / "api.ts").read_text(encoding="utf-8")
         ocr_source = (FRONTEND_SOURCE / "components" / "steps" / "OcrStep.tsx").read_text(encoding="utf-8")
         monitor_source = (FRONTEND_SOURCE / "components" / "TaskMonitor.tsx").read_text(encoding="utf-8")
 
-        self.assertIn("schemaVersion: 8", draft_source)
+        self.assertIn("schemaVersion: 9", draft_source)
         self.assertIn('device: "auto"', draft_source)
         self.assertIn("export type OcrExecutionRequest", api_source)
         self.assertIn("ocrExecution", api_source)

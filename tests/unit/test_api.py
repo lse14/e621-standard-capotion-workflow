@@ -642,7 +642,7 @@ class ControlPlaneApiTests(unittest.TestCase):
         database = StateDatabase.open(self.database_path)
         try:
             dataset = Path(self.temporary.name) / "dataset"
-            config = JobConfig(profile="e621", workMode="in_place", overwriteMode="incremental", sourceRoot=str(dataset), schemaVersion=6)
+            config = JobConfig(workMode="in_place", overwriteMode="incremental", sourceRoot=str(dataset), schemaVersion=9)
             config.caption["enabled"] = config.classify["enabled"] = config.replace["enabled"] = False
             config.countReview["enabled"] = False  # type: ignore[index]
             config.tokenBudget.update({  # type: ignore[union-attr]
@@ -652,9 +652,9 @@ class ControlPlaneApiTests(unittest.TestCase):
             })
             database.connection.execute(
                 "UPDATE jobs SET config_schema_version=?,config_json=?,config_hash=? WHERE job_id=?",
-                (6, json.dumps(config.to_dict()), config.config_hash, "job-api"),
+                (config.schemaVersion, json.dumps(config.to_dict()), config.config_hash, "job-api"),
             )
-            for module_id in pipeline_module_ids(6):
+            for module_id in pipeline_module_ids(config.schemaVersion):
                 if module_id == "export":
                     continue
                 database.initialize_module_summary("job-api", module_id, total=1)

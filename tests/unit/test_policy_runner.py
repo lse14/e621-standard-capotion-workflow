@@ -36,10 +36,12 @@ class _PolicyTransport:
         self.mutate_count = mutate_count
         self.quality_device = quality_device
         self.calls = 0
+        self.hello_payload: dict[str, object] | None = None
 
     def exchange(self, request: ProtocolEnvelopeV1) -> ProtocolEnvelopeV1:
         self.calls += 1
         if request.method == "hello":
+            self.hello_payload = dict(request.payload)
             quality = request.payload["policy"]["quality"]
             assert isinstance(quality, dict)
             assert set(quality) == {"enabled", "dropoutProbability", "device", "batchSize", "resourceId"}
@@ -74,13 +76,27 @@ class _PolicyTransport:
 
 
 class PolicyRunnerTests(unittest.TestCase):
-    def _prepared_runner(self, root: Path, *, mutate_count: bool = False, quality_device: str | None = None) -> tuple[StateDatabase, JobPreparationService, str, OverlayLayout, PolicyRunner]:
-        dataset = root / "dataset"
+    def _prepared_runner(
+        self,
+        root: Path,
+        *,
+        mutate_count: bool = False,
+        quality_device: str | None = None,
+        full_copy: bool = False,
+    ) -> tuple[StateDatabase, JobPreparationService, str, OverlayLayout, PolicyRunner]:
+        dataset = root / "10_RootArtist"
         artist = dataset / "1_Artist"
         artist.mkdir(parents=True)
         Image.new("RGB", (3, 3), "white").save(artist / "image.png")
         (artist / "image.json").write_bytes(serialize_annotation_json(_business()))
-        config = JobConfig(profile="e621", workMode="in_place", overwriteMode="incremental", sourceRoot=str(dataset), recursive=True)
+        config = JobConfig(
+            profile="e621",
+            workMode="full_copy" if full_copy else "in_place",
+            overwriteMode="incremental",
+            sourceRoot=str(dataset),
+            outputRoot=str(root / "output-with-different-name") if full_copy else None,
+            recursive=True,
+        )
         config.caption["enabled"] = config.classify["enabled"] = config.replace["enabled"] = config.nl["enabled"] = False
         config.countReview["enabled"] = False  # type: ignore[index]
         config.dropout["enabled"] = True
@@ -100,9 +116,10 @@ class PolicyRunnerTests(unittest.TestCase):
         scheduler.start_module(job_id, "count_review", enabled=False, profile="e621")
         scheduler.start_module(job_id, "dropout", enabled=True, profile="e621")
         job = database.get_job(job_id)
+        working_dataset = Path(str(job["dataset_root"]))
         layout = OverlayLayout.open_existing(str(job["overlay_root"]), job_id)
         runner = PolicyRunner(database, scheduler, _PolicyTransport(layout, mutate_count=mutate_count, quality_device=quality_device),
-            WorkingAnnotationView(BaselineView(dataset), layout), job_id=job_id,
+            WorkingAnnotationView(BaselineView(working_dataset), layout), job_id=job_id,
             worker_instance_id="policy-test", install_root=root,
             resource_manifest_relative_path=r"dropout-models\lse14-scorer-5k-v1\resource.json" if quality_device is not None else None,
             resource_fingerprint="a" * 64 if quality_device is not None else None)
@@ -122,9 +139,30 @@ class PolicyRunnerTests(unittest.TestCase):
                 self.assertEqual(_business()["count"], result["count"])
                 self.assertEqual(_business()["tags"], result["tags"])
                 self.assertEqual(1, database.module_summary(job_id, "dropout")["completed"])
+                transport = runner.transport
+                assert isinstance(transport, _PolicyTransport)
+                assert transport.hello_payload is not None
+                self.assertEqual("10_RootArtist", transport.hello_payload["artistRootName"])
                 events = database.event_page(job_id, 0, limit=10)
                 self.assertEqual(["running", "running", "completed"], [event["status"] for event in events])
                 self.assertEqual([0, 1, 1], [event["completed"] for event in events])
+            finally:
+                database.close()
+                preparation.close()
+
+    def test_full_copy_uses_source_root_name_for_flat_artist_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            database, preparation, _job_id, _layout, runner = self._prepared_runner(
+                Path(temporary),
+                full_copy=True,
+            )
+            try:
+                self.assertEqual("completed", runner.run())
+                transport = runner.transport
+                assert isinstance(transport, _PolicyTransport)
+                assert transport.hello_payload is not None
+                self.assertEqual("10_RootArtist", transport.hello_payload["artistRootName"])
+                self.assertNotEqual("output-with-different-name", transport.hello_payload["artistRootName"])
             finally:
                 database.close()
                 preparation.close()

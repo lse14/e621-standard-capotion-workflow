@@ -90,7 +90,7 @@ def _write_test_resource_library(root: Path, *, include_ocr: bool) -> tuple[Reso
         "dropoutModel": "dropout-default",
     }
     (library / "defaults.json").write_text(
-        json.dumps({"schemaVersion": 1, "defaults": defaults}), encoding="utf-8",
+        json.dumps({"schemaVersion": 3, "defaults": defaults}), encoding="utf-8",
     )
     for kind, (category, resource_id, runtime_format, entrypoints) in layouts.items():
         package = library / category / resource_id
@@ -193,18 +193,9 @@ class JobPreflightTests(unittest.TestCase):
             profile="e621", workMode="in_place", overwriteMode="incremental",
             sourceRoot="C:\\dataset", schemaVersion=8,
         ).to_dict()
-        candidate = {
-            **legacy,
-            "schemaVersion": 9,
-            "classify": {
-                "enabled": True,
-                "indexMode": "bundled",
-                "resourceId": "classify-e621-20260724-v1",
-                "overwriteJson": False,
-                "overwriteCount": False,
-            },
-        }
-        candidate.pop("profile")
+        candidate = JobConfig(
+            workMode="in_place", overwriteMode="incremental", sourceRoot="C:\\dataset", schemaVersion=9,
+        ).to_dict()
         candidate["nl"]["systemPrompt"] = "Describe the visible image."
 
         try:
@@ -222,11 +213,8 @@ class JobPreflightTests(unittest.TestCase):
 
     def test_v9_classify_mode_rejects_mixed_client_inputs_and_frozen_metadata(self) -> None:
         base = JobConfig(
-            profile="e621", workMode="in_place", overwriteMode="incremental",
-            sourceRoot="C:\\dataset", schemaVersion=8,
+            workMode="in_place", overwriteMode="incremental", sourceRoot="C:\\dataset", schemaVersion=9,
         ).to_dict()
-        base.pop("profile")
-        base["schemaVersion"] = 9
         base["nl"]["systemPrompt"] = "Describe the visible image."
         base["classify"] = {
             "enabled": True,
@@ -264,11 +252,8 @@ class JobPreflightTests(unittest.TestCase):
                 },
             }), encoding="utf-8")
             config = JobConfig(
-                profile="e621", workMode="in_place", overwriteMode="incremental",
-                sourceRoot=str(source), schemaVersion=8,
+                workMode="in_place", overwriteMode="incremental", sourceRoot=str(source), schemaVersion=9,
             ).to_dict()
-            config.pop("profile")
-            config["schemaVersion"] = 9
             config["nl"]["systemPrompt"] = "Describe the visible image."
             config["caption"]["resourceId"] = "tagger-default"
             config["classify"] = {
@@ -344,7 +329,7 @@ class JobPreflightTests(unittest.TestCase):
         self.assertEqual(binding.RecommendedTuning(1920, 1, "unavailable_fallback"), binding.recommend_tuning(device="cuda", total_vram_bytes=None))
         self.assertEqual(binding.RecommendedTuning(1920, 1, "gpu_vram_table"), binding.recommend_tuning(device="cuda", total_vram_bytes=12 * gib - 1))
         self.assertEqual(binding.RecommendedTuning(2304, 2, "gpu_vram_table"), binding.recommend_tuning(device="cuda", total_vram_bytes=12 * gib))
-        self.assertEqual(binding.RecommendedTuning(2304, 2, "gpu_vram_table"), binding.recommend_tuning(device="cuda", total_vram_bytes=24 * gib - 1))
+        self.assertEqual(binding.RecommendedTuning(2560, 4, "gpu_vram_table"), binding.recommend_tuning(device="cuda", total_vram_bytes=24 * gib - 1))
         self.assertEqual(binding.RecommendedTuning(2560, 4, "gpu_vram_table"), binding.recommend_tuning(device="cuda", total_vram_bytes=24 * gib))
 
     def test_ocr_runtime_binding_is_atomic_and_revalidates_an_existing_record(self) -> None:
@@ -395,6 +380,8 @@ class JobPreflightTests(unittest.TestCase):
     def _config(self, source: Path) -> dict[str, object]:
         config = JobConfig(profile="e621", workMode="in_place", overwriteMode="incremental", sourceRoot=str(source))
         config.nl["systemPrompt"] = "describe the visible image"
+        assert config.tokenBudget is not None
+        config.tokenBudget["enabled"] = False
         return config.to_dict()
 
     def test_full_copy_rebinds_manifest_image_fingerprint_to_the_copy(self) -> None:
@@ -487,6 +474,41 @@ class JobPreflightTests(unittest.TestCase):
             service = JobPreparationService(root / "state.db", resource_catalog=catalog)
             try:
                 summary = service.preflight(config)
+                self.assertEqual(1, summary.inScopeCount)
+            finally:
+                service.close()
+
+    def test_dropout_artist_accepts_flat_images_when_dataset_root_is_named(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "10_uiokv"
+            source.mkdir()
+            Image.new("RGB", (3, 3), "white").save(source / "image.png")
+            config = self._config(source)
+            config["recursive"] = True
+            config["dropout"]["enabled"] = True
+            config["dropout"]["artist"]["enabled"] = True
+            config["caption"]["resourceId"] = "tagger-default"
+            config["classify"]["resourceId"] = "classify-default"
+            config["replace"]["resourceId"] = "replace-default"
+            config["dropout"]["quality"]["resourceId"] = "dropout-default"
+            config["tokenBudget"]["enabled"] = False
+            catalog, _ = _write_test_resource_library(root, include_ocr=False)
+            (catalog.root / "defaults.json").write_text(json.dumps({
+                "schemaVersion": 3,
+                "defaults": {
+                    "replacementIndex": "replace-default",
+                    "classificationIndex": "classify-default",
+                    "taggingModel": "tagger-default",
+                    "dropoutModel": "dropout-default",
+                },
+            }), encoding="utf-8")
+            service = JobPreparationService(root / "state.db", resource_catalog=catalog)
+            try:
+                try:
+                    summary = service.preflight(config)
+                except JobPreflightError as exc:
+                    self.fail(f"flat named datasets must pass artist preflight: {exc}")
                 self.assertEqual(1, summary.inScopeCount)
             finally:
                 service.close()
@@ -629,13 +651,15 @@ class JobPreflightTests(unittest.TestCase):
 
     def _ocr_config(self, source: Path, *, enabled: bool) -> dict[str, object]:
         config = JobConfig(
-            profile="e621", workMode="in_place", overwriteMode="incremental", sourceRoot=str(source), schemaVersion=5,
+            workMode="in_place", overwriteMode="incremental", sourceRoot=str(source), schemaVersion=9,
         )
-        config.nl.update({"systemPrompt": "describe the visible image", "promptVersion": "nl-default-prompt-v3"})
+        config.nl.update({"systemPrompt": "describe the visible image"})
         config.caption["resourceId"] = "tagger-default"
         config.classify["resourceId"] = "classify-default"
         config.replace["resourceId"] = "replace-default"
         config.dropout["quality"]["resourceId"] = "dropout-default"
+        assert config.tokenBudget is not None
+        config.tokenBudget["enabled"] = False
         config.ocr["enabled"] = enabled
         return config.to_dict()
 
@@ -686,10 +710,9 @@ class JobPreflightTests(unittest.TestCase):
         *,
         enabled: bool,
         max_tokens: int = 1,
-        schema_version: int = 6,
     ) -> dict[str, object]:
         config = JobConfig(
-            profile="e621", workMode="in_place", overwriteMode="incremental", sourceRoot=str(source), schemaVersion=schema_version,
+            workMode="in_place", overwriteMode="incremental", sourceRoot=str(source), schemaVersion=9,
         )
         config.caption["resourceId"] = "tagger-default"
         config.classify["resourceId"] = "classify-default"
@@ -700,9 +723,9 @@ class JobPreflightTests(unittest.TestCase):
         config.tokenBudget["maxTokens"] = max_tokens
         return config.to_dict()
 
-    def _v7_ocr_config(self, source: Path, *, enabled: bool) -> dict[str, object]:
+    def _ocr_device_config(self, source: Path, *, enabled: bool) -> dict[str, object]:
         config = JobConfig(
-            profile="e621", workMode="in_place", overwriteMode="incremental", sourceRoot=str(source), schemaVersion=7,
+            workMode="in_place", overwriteMode="incremental", sourceRoot=str(source), schemaVersion=9,
         )
         config.caption["resourceId"] = "tagger-default"
         config.classify["resourceId"] = "classify-default"
@@ -713,9 +736,9 @@ class JobPreflightTests(unittest.TestCase):
         config.ocr["enabled"] = enabled
         return config.to_dict()
 
-    def _v8_config(self, source: Path, *, input_txt_mode: str = "tag") -> JobConfig:
+    def _input_nl_config(self, source: Path, *, input_txt_mode: str = "tag") -> JobConfig:
         config = JobConfig(
-            profile="e621", workMode="in_place", overwriteMode="incremental", sourceRoot=str(source), schemaVersion=8,
+            workMode="in_place", overwriteMode="incremental", sourceRoot=str(source), schemaVersion=9,
         )
         config.caption["resourceId"] = "tagger-default"
         config.caption["inputTxtMode"] = input_txt_mode
@@ -726,14 +749,14 @@ class JobPreflightTests(unittest.TestCase):
         config.tokenBudget["enabled"] = False
         return config
 
-    def test_v8_input_nl_has_no_api_prompt_or_budget_requirement(self) -> None:
+    def test_v9_input_nl_has_no_api_prompt_or_budget_requirement(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             source = root / "dataset"
             source.mkdir()
             Image.new("RGB", (3, 3), "white").save(source / "image.png")
             catalog, _ = _write_test_resource_library(root, include_ocr=False)
-            config = self._v8_config(source, input_txt_mode="nl")
+            config = self._input_nl_config(source, input_txt_mode="nl")
             config.nl.update({"apiEnabled": True, "systemPrompt": ""})
             service = JobPreparationService(root / "state.db", resource_catalog=catalog)
             try:
@@ -754,9 +777,9 @@ class JobPreflightTests(unittest.TestCase):
             finally:
                 service.close()
 
-    def test_v8_ocr_devices_freeze_an_execution_request(self) -> None:
+    def test_v9_ocr_devices_freeze_an_execution_request(self) -> None:
         binding = self._binding_api()
-        self.assertIsNotNone(binding, "v8 OCR must reuse the v7 execution request contract")
+        self.assertIsNotNone(binding, "v9 OCR must use the current execution request contract")
         if binding is None:
             return
         for device in ("auto", "cuda", "cpu"):
@@ -766,7 +789,7 @@ class JobPreflightTests(unittest.TestCase):
                 source.mkdir()
                 Image.new("RGB", (3, 3), "white").save(source / "image.png")
                 catalog, _ = _write_test_resource_library(root, include_ocr=True)
-                config = self._v8_config(source)
+                config = self._input_nl_config(source)
                 config.ocr.update({"enabled": True, "device": device})
                 service = JobPreparationService(root / "state.db", resource_catalog=catalog)
                 try:
@@ -777,7 +800,7 @@ class JobPreflightTests(unittest.TestCase):
                 finally:
                     service.close()
 
-    def test_v7_ocr_execution_request_survives_service_restart_before_workspace_confirmation(self) -> None:
+    def test_v9_ocr_execution_request_survives_service_restart_before_workspace_confirmation(self) -> None:
         binding = self._binding_api()
         self.assertIsNotNone(binding, "Task 3.4 requires a durable task-owned OCR execution request")
         if binding is None:
@@ -794,7 +817,7 @@ class JobPreflightTests(unittest.TestCase):
             })
             first = JobPreparationService(root / "state.db", resource_catalog=catalog)
             try:
-                summary = first.preflight(self._v7_ocr_config(source, enabled=True), ocr_execution=request)
+                summary = first.preflight(self._ocr_device_config(source, enabled=True), ocr_execution=request)
             finally:
                 first.close()
             second = JobPreparationService(root / "state.db", resource_catalog=catalog)
@@ -877,7 +900,7 @@ class JobPreflightTests(unittest.TestCase):
                     self.assertRegex(frozen["resourceFingerprint"], r"^[0-9a-f]{64}$")
                     self.assertEqual(frozen["resourceFingerprint"], summary.resources["ocr"]["fingerprint"])
                     self.assertEqual(
-                        "nl-default-prompt-v3",
+                        "nl-default-prompt-v4",
                         json.loads(str(database.get_job(summary.jobId)["config_json"]))["nl"]["promptVersion"],
                     )
                 finally:
@@ -931,21 +954,17 @@ class JobPreflightTests(unittest.TestCase):
             catalog.scan = scan  # type: ignore[method-assign]
             service = JobPreparationService(root / "state.db", resource_catalog=catalog)
             try:
-                for schema_version in (6, 7):
-                    with self.subTest(schema_version=schema_version):
-                        summary = service.preflight(self._token_budget_config(
-                            source, enabled=False, schema_version=schema_version,
-                        ))
-                        database = StateDatabase.open(root / "state.db")
-                        try:
-                            frozen = json.loads(str(database.get_job(summary.jobId)["config_json"]))["tokenBudget"]
-                            self.assertNotIn("resourceManifestRelativePath", frozen)
-                            self.assertNotIn("resourceFingerprint", frozen)
-                            self.assertNotIn("contextLimit", frozen)
-                            self.assertNotIn("tokenBudget", summary.resources)
-                        finally:
-                            database.close()
-                self.assertEqual([False, False], scan_calls)
+                summary = service.preflight(self._token_budget_config(source, enabled=False))
+                database = StateDatabase.open(root / "state.db")
+                try:
+                    frozen = json.loads(str(database.get_job(summary.jobId)["config_json"]))["tokenBudget"]
+                    self.assertNotIn("resourceManifestRelativePath", frozen)
+                    self.assertNotIn("resourceFingerprint", frozen)
+                    self.assertNotIn("contextLimit", frozen)
+                    self.assertNotIn("tokenBudget", summary.resources)
+                finally:
+                    database.close()
+                self.assertEqual([False], scan_calls)
             finally:
                 service.close()
 
@@ -959,26 +978,20 @@ class JobPreflightTests(unittest.TestCase):
             manifest_path = self._write_tokenizer_resource(catalog.root, context_limit=1)
             service = JobPreparationService(root / "state.db", resource_catalog=catalog)
             try:
-                for schema_version in (6, 7):
-                    with self.subTest(schema_version=schema_version):
-                        summary = service.preflight(self._token_budget_config(
-                            source, enabled=True, max_tokens=1, schema_version=schema_version,
-                        ))
-                        database = StateDatabase.open(root / "state.db")
-                        try:
-                            frozen = json.loads(str(database.get_job(summary.jobId)["config_json"]))["tokenBudget"]
-                            self.assertEqual(TOKENIZER_RESOURCE_ID, frozen["resourceId"])
-                            self.assertEqual(r"tokenizers\tokenizer-qwen3-0.6b-anima-v1\resource.json", frozen["resourceManifestRelativePath"])
-                            self.assertRegex(frozen["resourceFingerprint"], r"^[0-9a-f]{64}$")
-                            self.assertEqual(1, frozen["contextLimit"])
-                            self.assertEqual(frozen["resourceFingerprint"], summary.resources["tokenBudget"]["fingerprint"])
-                            self.assertEqual(str(manifest_path.relative_to(catalog.root)).replace("/", "\\"), frozen["resourceManifestRelativePath"])
-                        finally:
-                            database.close()
-                        with self.assertRaisesRegex(JobPreflightError, "contextLimit"):
-                            service.preflight(self._token_budget_config(
-                                source, enabled=True, max_tokens=2, schema_version=schema_version,
-                            ))
+                summary = service.preflight(self._token_budget_config(source, enabled=True, max_tokens=1))
+                database = StateDatabase.open(root / "state.db")
+                try:
+                    frozen = json.loads(str(database.get_job(summary.jobId)["config_json"]))["tokenBudget"]
+                    self.assertEqual(TOKENIZER_RESOURCE_ID, frozen["resourceId"])
+                    self.assertEqual(r"tokenizers\tokenizer-qwen3-0.6b-anima-v1\resource.json", frozen["resourceManifestRelativePath"])
+                    self.assertRegex(frozen["resourceFingerprint"], r"^[0-9a-f]{64}$")
+                    self.assertEqual(1, frozen["contextLimit"])
+                    self.assertEqual(frozen["resourceFingerprint"], summary.resources["tokenBudget"]["fingerprint"])
+                    self.assertEqual(str(manifest_path.relative_to(catalog.root)).replace("/", "\\"), frozen["resourceManifestRelativePath"])
+                finally:
+                    database.close()
+                with self.assertRaisesRegex(JobPreflightError, "contextLimit"):
+                    service.preflight(self._token_budget_config(source, enabled=True, max_tokens=2))
             finally:
                 service.close()
 
@@ -1000,7 +1013,7 @@ class JobPreflightTests(unittest.TestCase):
             finally:
                 service.close()
 
-    def test_v6_ocr_uses_the_existing_shared_resource_freeze_path(self) -> None:
+    def test_v9_ocr_uses_the_existing_shared_resource_freeze_path(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             source = root / "dataset"
@@ -1051,27 +1064,23 @@ class JobPreflightTests(unittest.TestCase):
             catalog, _ = _write_test_resource_library(root, include_ocr=False)
             service = JobPreparationService(root / "state.db", resource_catalog=catalog)
             try:
-                for schema_version in (6, 7):
-                    with self.subTest(schema_version=schema_version):
-                        config = self._token_budget_config(source, enabled=False, schema_version=schema_version)
-                        config["nl"]["captionPreset"] = "character"
-                        with self.assertRaisesRegex(JobPreflightError, r"character.*bad\.png") as raised:
-                            service.preflight(config)
-                        self.assertNotIn(str(source), str(raised.exception))
-                        self.assertNotIn("sourceRoot", str(raised.exception))
+                config = self._token_budget_config(source, enabled=False)
+                config["nl"]["captionPreset"] = "character"
+                with self.assertRaisesRegex(JobPreflightError, r"character.*bad\.png") as raised:
+                    service.preflight(config)
+                self.assertNotIn(str(source), str(raised.exception))
+                self.assertNotIn("sourceRoot", str(raised.exception))
             finally:
                 service.close()
 
-    def test_v6_user_supplement_is_bounded_before_a_job_is_created(self) -> None:
+    def test_v9_user_supplement_is_bounded_before_a_job_is_created(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             source = Path(temporary) / "dataset"
             source.mkdir()
-            for schema_version in (6, 7):
-                with self.subTest(schema_version=schema_version):
-                    config = self._token_budget_config(source, enabled=False, schema_version=schema_version)
-                    config["nl"]["systemPrompt"] = "x" * 16_385
-                    with self.assertRaisesRegex(JobPreflightError, "supplement"):
-                        config_from_dict(config)
+            config = self._token_budget_config(source, enabled=False)
+            config["nl"]["systemPrompt"] = "x" * 16_385
+            with self.assertRaisesRegex(JobPreflightError, "supplement"):
+                config_from_dict(config)
 
     def test_preflight_persists_bounded_manifest_without_overlay_or_lock(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

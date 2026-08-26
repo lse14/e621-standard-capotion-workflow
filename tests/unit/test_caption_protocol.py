@@ -272,12 +272,12 @@ class CaptionProtocolTests(unittest.TestCase):
 
     def test_caption_schema_and_job_schema_are_parseable_and_strict(self) -> None:
         caption_schema = json.loads((ROOT / "contracts" / "schemas" / "caption-worker-v1.schema.json").read_text(encoding="utf-8"))
-        job_schema = json.loads((ROOT / "contracts" / "schemas" / "job-config-v2.schema.json").read_text(encoding="utf-8"))
+        job_schema = json.loads((ROOT / "contracts" / "schemas" / "job-config-v9.schema.json").read_text(encoding="utf-8"))
         self.assertEqual("anima://contracts/caption-worker-v1", caption_schema["$id"])
         self.assertEqual(5, len(caption_schema["oneOf"]))
-        self.assertFalse(job_schema["properties"]["caption"]["additionalProperties"])
-        self.assertFalse(job_schema["properties"]["captionFormat"]["additionalProperties"])
-        self.assertFalse(job_schema["properties"]["imageDecode"]["additionalProperties"])
+        self.assertFalse(job_schema["$defs"]["caption"]["additionalProperties"])
+        self.assertFalse(job_schema["$defs"]["captionFormat"]["additionalProperties"])
+        self.assertFalse(job_schema["$defs"]["imageDecode"]["additionalProperties"])
 
 
 if __name__ == "__main__":

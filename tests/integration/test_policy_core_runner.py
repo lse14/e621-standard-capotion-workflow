@@ -41,19 +41,20 @@ class PolicyCoreRunnerIntegrationTests(unittest.TestCase):
             artist.mkdir(parents=True)
             Image.new("RGB", (4, 4), "white").save(artist / "image.png")
             (artist / "image.json").write_bytes(serialize_annotation_json(_business()))
-            config = JobConfig(profile="e621", workMode="in_place", overwriteMode="incremental", sourceRoot=str(dataset), recursive=True)
+            config = JobConfig(workMode="in_place", overwriteMode="incremental", sourceRoot=str(dataset), recursive=True)
             config.caption["enabled"] = config.classify["enabled"] = config.replace["enabled"] = config.nl["enabled"] = False
             assert config.countReview is not None
             config.countReview["enabled"] = False
             config.dropout["enabled"] = True
             config.dropout["quality"]["enabled"] = False
+            config.tokenBudget["enabled"] = False  # type: ignore[index]
             preparation = JobPreparationService(root / "state.db")
             job_id = preparation.preflight(config.to_dict()).jobId
             preparation.confirm_workspace(job_id, confirmed=True, confirmed_rebuild=False)
             database = StateDatabase.open(root / "state.db")
             try:
                 scheduler = BoundedScheduler(database)
-                for module in ("caption", "classify", "replace", "nl", "count_review"):
+                for module in ("caption", "classify", "replace", "ocr", "nl", "count_review"):
                     scheduler.start_module(job_id, module, enabled=False, profile="e621")
                 scheduler.start_module(job_id, "dropout", enabled=True, profile="e621")
                 job = database.get_job(job_id)

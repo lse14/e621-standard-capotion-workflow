@@ -85,18 +85,25 @@ def artist_from_image_path(relative_image_path: str) -> str:
     if match is None:
         raise PolicyError("first-level directory must use the number_artist form")
     artist = match.group("artist")
-    if artist == "noartname":
-        return ""
     if not artist or artist != artist.strip() or any(character in artist for character in "\r\n\x00"):
         raise PolicyError("artist directory suffix is invalid")
     return f"@{artist}"
 
 
-def artist_from_validated_image_path(relative_image_path: str) -> str:
+def artist_from_validated_image_path(
+    relative_image_path: str,
+    *,
+    artist_root_name: str | None = None,
+) -> str:
     """Extract the artist from a path already accepted by import preflight."""
-    first = relative_image_path.replace("/", "\\").split("\\", 1)[0]
+    normalized = relative_image_path.replace("/", "\\")
+    first, separator, _ = normalized.partition("\\")
+    if not separator:
+        if artist_root_name is None:
+            raise PolicyError("flat image is missing its validated artist root name")
+        first = artist_root_name
     artist = first.split("_", 1)[1]
-    return "" if artist == "noartname" else f"@{artist}"
+    return f"@{artist}"
 
 
 def merge_artists(existing: str, appended: str) -> str:
@@ -170,6 +177,7 @@ def apply_policy(
     relative_image_path: str,
     config: PolicyConfig,
     aesthetic_score: float | None,
+    artist_root_name: str | None = None,
 ) -> tuple[dict[str, object], PolicyDecision]:
     result = _validate_business_json(payload)
     original_protected = {
@@ -180,7 +188,11 @@ def apply_policy(
     artist_dropped = False
     if config.artistEnabled:
         result["artist"] = merge_artists(
-            str(result["artist"]), artist_from_validated_image_path(relative_image_path)
+            str(result["artist"]),
+            artist_from_validated_image_path(
+                relative_image_path,
+                artist_root_name=artist_root_name,
+            ),
         )
         artist_dropped = stable_random(config, annotation_key, "artist") < config.artistDropoutProbability
         if artist_dropped:

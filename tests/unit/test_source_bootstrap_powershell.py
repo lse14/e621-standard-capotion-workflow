@@ -187,7 +187,7 @@ class SourceBootstrapPowerShellTests(unittest.TestCase):
         script = self._bootstrap_text()
 
         self.assertIn("-B -I -u $installerScript", script)
-        self.assertIn("2>&1 | ForEach-Object", script)
+        self.assertRegex(script, r"2>&1\s*\|\s*ForEach-Object")
         self.assertNotIn("$output = & $bootstrapPython", script)
 
     def test_bootstrap_manifest_identity_matches_checked_in_release_manifest(self) -> None:

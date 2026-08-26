@@ -22,6 +22,8 @@ from anima_core.db import StateDatabase
 from anima_core.job_preflight import JobPreparationService
 from anima_core.ocr_overlay import OcrWorkingSidecarView
 from anima_core.ocr_runner import OcrRunner
+from anima_core.ocr_runtime_binding import OcrRuntimeBindingV1, normalize_ocr_execution, write_execution_request, write_runtime_binding
+from anima_core.ocr_runtime_binding import GIB
 from anima_core.overlay import OverlayLayout
 from anima_core.repair import RepairPreparationService
 from anima_core.pipeline import PipelineService
@@ -49,7 +51,7 @@ class _FakeOcrTransport:
             protocolVersion="1.0",
             kind="response",
             messageId=f"reply-{request.messageId}",
-            runtimeId="ocr-paddle",
+            runtimeId=request.runtimeId,
             owner="ocr",
             method=method,
             payload=payload,
@@ -61,6 +63,8 @@ class _FakeOcrTransport:
     def exchange(self, request: ProtocolEnvelopeV1) -> ProtocolEnvelopeV1:
         if request.method == "hello":
             self.hello_calls += 1
+            expected_runtime = request.payload.get("expectedRuntimeId")
+            observed_device = "cuda" if expected_runtime == "ocr-paddle-gpu" else "cpu"
             return self._response(
                 request,
                 "hello",
@@ -72,6 +76,17 @@ class _FakeOcrTransport:
                     "pythonVersion": "3.11.15",
                     "modelSessionLoads": 1,
                     "resourceFingerprint": request.payload["resourceFingerprint"],
+                    **({
+                        "requestedDevice": request.payload["requestedDevice"],
+                        "observedDevice": observed_device,
+                        "runtimeId": expected_runtime,
+                        "runtimeFingerprint": request.payload["expectedRuntimeFingerprint"],
+                        "paddleVersion": "3.2.2",
+                        "compiledWithCuda": observed_device == "cuda",
+                        "cudaVersion": "12.6" if observed_device == "cuda" else None,
+                        "gpuName": "Test GPU" if observed_device == "cuda" else None,
+                        "totalVramBytes": 24 * GIB if observed_device == "cuda" else None,
+                    } if expected_runtime is not None else {}),
                 },
             )
         if request.method == "process_batch":
@@ -120,8 +135,8 @@ class OcrCoreRunnerIntegrationTests(unittest.TestCase):
                 scheduler.complete(lease)
         return scheduler.finish_module(job_id, module_id)
 
-    def test_v5_ocr_and_nl_four_mode_matrix_keeps_ocr_independent_and_serial(self) -> None:
-        expected_order = ("caption", "classify", "replace", "ocr", "nl", "count_review", "dropout", "export")
+    def test_v9_ocr_and_nl_four_mode_matrix_keeps_ocr_independent_and_serial(self) -> None:
+        expected_order = ("caption", "classify", "replace", "ocr", "nl", "count_review", "dropout", "token_budget", "export")
         for ocr_enabled, nl_enabled in ((False, False), (True, False), (False, True), (True, True)):
             with self.subTest(ocr=ocr_enabled, nl=nl_enabled), tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary)
@@ -129,15 +144,14 @@ class OcrCoreRunnerIntegrationTests(unittest.TestCase):
                 dataset.mkdir()
                 Image.new("RGB", (8, 6), "white").save(dataset / "sample.png")
                 config = JobConfig(
-                    profile="e621",
                     workMode="in_place",
                     overwriteMode="incremental",
                     sourceRoot=str(dataset),
-                    schemaVersion=5,
                 )
-                config.nl["promptVersion"] = "nl-default-prompt-v3"
+                config.tokenBudget["enabled"] = False  # type: ignore[index]
                 config.caption["enabled"] = config.classify["enabled"] = config.replace["enabled"] = False
                 config.ocr["enabled"] = ocr_enabled
+                config.ocr["device"] = "cpu"
                 config.nl["enabled"] = nl_enabled
                 config.nl["systemPrompt"] = "Describe the visible image."
                 config.countReview["enabled"] = False  # type: ignore[index]
@@ -150,7 +164,7 @@ class OcrCoreRunnerIntegrationTests(unittest.TestCase):
                 original_start = BoundedScheduler.start_module
                 original_run_active = pipeline._run_active_module
 
-                def record_start(scheduler, job_id, module_id, *, enabled, profile):
+                def record_start(scheduler, job_id, module_id, *, enabled, profile=None):
                     if job_id == summary.jobId:
                         started.append(module_id)
                     return original_start(scheduler, job_id, module_id, enabled=enabled, profile=profile)
@@ -174,9 +188,7 @@ class OcrCoreRunnerIntegrationTests(unittest.TestCase):
                         patch("anima_core.pipeline.ExportCommitCoordinator.commit", return_value=None),
                         hash_guard,
                     ):
-                        pipeline._spawn_transport = lambda module_id: (
-                            transport if module_id == "ocr" else self.fail(f"unexpected worker: {module_id}")
-                        )  # type: ignore[method-assign]
+                        pipeline._spawn_ocr_transport = lambda runtime_id: transport  # type: ignore[method-assign]
                         pipeline._run_active_module = run_active  # type: ignore[method-assign]
                         pipeline.start(summary.jobId)
                         deadline = time.monotonic() + 10.0
@@ -207,15 +219,14 @@ class OcrCoreRunnerIntegrationTests(unittest.TestCase):
             dataset.mkdir()
             Image.new("RGB", (8, 6), "white").save(dataset / "sample.png")
             config = JobConfig(
-                profile="e621",
-                workMode="in_place",
-                overwriteMode="incremental",
-                sourceRoot=str(dataset),
-                schemaVersion=5,
-            )
-            config.nl["promptVersion"] = "nl-default-prompt-v3"
+                    workMode="in_place",
+                    overwriteMode="incremental",
+                    sourceRoot=str(dataset),
+                )
+            config.tokenBudget["enabled"] = False  # type: ignore[index]
             config.caption["enabled"] = config.classify["enabled"] = config.replace["enabled"] = False
             config.ocr["enabled"] = True
+            config.ocr["device"] = "cpu"
             config.nl["enabled"] = config.dropout["enabled"] = False
             config.countReview["enabled"] = False  # type: ignore[index]
             preparation = JobPreparationService(root / "state.db")
@@ -244,7 +255,7 @@ class OcrCoreRunnerIntegrationTests(unittest.TestCase):
                     patch.object(OcrRunner, "_persist_sidecar", new=crash_after_persist),
                     patch("anima_core.pipeline.ExportCommitCoordinator.commit", return_value=None),
                 ):
-                    pipeline._spawn_transport = lambda module_id: transports.append(_FakeOcrTransport()) or transports[-1]  # type: ignore[method-assign]
+                    pipeline._spawn_ocr_transport = lambda runtime_id: transports.append(_FakeOcrTransport()) or transports[-1]  # type: ignore[method-assign]
                     pipeline._run_active_module = run_active  # type: ignore[method-assign]
                     pipeline.start(summary.jobId)
                     deadline = time.monotonic() + 10.0
@@ -270,15 +281,14 @@ class OcrCoreRunnerIntegrationTests(unittest.TestCase):
             dataset.mkdir()
             Image.new("RGB", (8, 6), "white").save(dataset / "sample.png")
             config = JobConfig(
-                profile="e621",
                 workMode="in_place",
                 overwriteMode="incremental",
                 sourceRoot=str(dataset),
-                schemaVersion=5,
             )
-            config.nl["promptVersion"] = "nl-default-prompt-v3"
+            config.tokenBudget["enabled"] = False  # type: ignore[index]
             config.caption["enabled"] = config.classify["enabled"] = config.replace["enabled"] = False
             config.ocr["enabled"] = True
+            config.ocr["device"] = "cpu"
             config.nl["enabled"] = config.dropout["enabled"] = False
             config.countReview["enabled"] = False  # type: ignore[index]
             preparation = JobPreparationService(root / "state.db")
@@ -302,9 +312,7 @@ class OcrCoreRunnerIntegrationTests(unittest.TestCase):
             try:
                 summary = preparation.preflight(config.to_dict())
                 preparation.confirm_workspace(summary.jobId, confirmed=True, confirmed_rebuild=False)
-                pipeline._spawn_transport = lambda module_id: (
-                    transport if module_id == "ocr" else self.fail(f"unexpected worker: {module_id}")
-                )  # type: ignore[method-assign]
+                pipeline._spawn_ocr_transport = lambda runtime_id: transport  # type: ignore[method-assign]
                 pipeline.start(summary.jobId)
                 deadline = time.monotonic() + 10.0
                 while pipeline.is_running(summary.jobId) and time.monotonic() < deadline:
@@ -334,15 +342,14 @@ class OcrCoreRunnerIntegrationTests(unittest.TestCase):
             dataset.mkdir()
             Image.new("RGB", (8, 6), "white").save(dataset / "sample.png")
             config = JobConfig(
-                profile="e621",
                 workMode="in_place",
                 overwriteMode="incremental",
                 sourceRoot=str(dataset),
-                schemaVersion=5,
             )
-            config.nl["promptVersion"] = "nl-default-prompt-v3"
+            config.tokenBudget["enabled"] = False  # type: ignore[index]
             config.caption["enabled"] = config.classify["enabled"] = config.replace["enabled"] = False
             config.ocr["enabled"] = True
+            config.ocr["device"] = "cpu"
             config.nl["enabled"] = config.dropout["enabled"] = False
             config.countReview["enabled"] = False  # type: ignore[index]
             preparation = JobPreparationService(root / "state.db")
@@ -368,7 +375,7 @@ class OcrCoreRunnerIntegrationTests(unittest.TestCase):
                 summary = preparation.preflight(config.to_dict())
                 preparation.confirm_workspace(summary.jobId, confirmed=True, confirmed_rebuild=False)
                 with patch("anima_core.pipeline.ExportCommitCoordinator.commit", return_value=None):
-                    pipeline._spawn_transport = lambda module_id: transports.append(CrashBeforeResponseTransport()) or transports[-1]  # type: ignore[method-assign]
+                    pipeline._spawn_ocr_transport = lambda runtime_id: transports.append(CrashBeforeResponseTransport()) or transports[-1]  # type: ignore[method-assign]
                     pipeline._run_active_module = run_active  # type: ignore[method-assign]
                     pipeline.start(summary.jobId)
                     deadline = time.monotonic() + 10.0
@@ -394,15 +401,14 @@ class OcrCoreRunnerIntegrationTests(unittest.TestCase):
             dataset.mkdir()
             Image.new("RGB", (8, 6), "white").save(dataset / "sample.png")
             config = JobConfig(
-                profile="e621",
                 workMode="in_place",
                 overwriteMode="incremental",
                 sourceRoot=str(dataset),
-                schemaVersion=5,
             )
-            config.nl["promptVersion"] = "nl-default-prompt-v3"
+            config.tokenBudget["enabled"] = False  # type: ignore[index]
             config.caption["enabled"] = config.classify["enabled"] = config.replace["enabled"] = False
             config.ocr["enabled"] = True
+            config.ocr["device"] = "cpu"
             config.nl["enabled"] = config.dropout["enabled"] = False
             config.countReview["enabled"] = False  # type: ignore[index]
             preparation = JobPreparationService(root / "state.db")
@@ -426,6 +432,8 @@ class OcrCoreRunnerIntegrationTests(unittest.TestCase):
                     layout = OverlayLayout.open_existing(
                         str(database.get_job(summary.jobId)["overlay_root"]), summary.jobId
                     )
+                    binding_path = layout.resource_path("ocr-runtime-binding-v1.json")
+                    write_execution_request(layout.resource_path("ocr-execution-request-v1.json"), normalize_ocr_execution(None))
                     transport = _FakeOcrTransport()
                     report = OcrRunner(
                         database,
@@ -436,6 +444,9 @@ class OcrCoreRunnerIntegrationTests(unittest.TestCase):
                         worker_instance_id="replacement-worker",
                         resource_manifest_relative_path=str(frozen["ocr"]["resourceManifestRelativePath"]),
                         resource_fingerprint=str(frozen["ocr"]["resourceFingerprint"]),
+                        runtime_id="ocr-paddle",
+                        runtime_fingerprint="a" * 64,
+                        binding_path=binding_path,
                     ).run()
                     self.assertEqual(("completed", 1), (report.status, transport.process_calls))
                     self.assertEqual("completed", database.get_sample_state(summary.jobId, stale.sampleId)["status"])
@@ -452,15 +463,14 @@ class OcrCoreRunnerIntegrationTests(unittest.TestCase):
             Image.new("RGB", (8, 6), "white").save(dataset / "retry.png")
             Image.new("RGB", (8, 6), "black").save(dataset / "untouched.png")
             config = JobConfig(
-                profile="e621",
                 workMode="in_place",
                 overwriteMode="incremental",
                 sourceRoot=str(dataset),
-                schemaVersion=5,
             )
-            config.nl["promptVersion"] = "nl-default-prompt-v3"
+            config.tokenBudget["enabled"] = False  # type: ignore[index]
             config.caption["enabled"] = config.classify["enabled"] = config.replace["enabled"] = False
             config.ocr["enabled"] = config.nl["enabled"] = True
+            config.ocr["device"] = "cpu"
             config.nl["systemPrompt"] = "Describe the visible image."
             config.countReview["enabled"] = False  # type: ignore[index]
             config.dropout["enabled"] = False
@@ -501,14 +511,41 @@ class OcrCoreRunnerIntegrationTests(unittest.TestCase):
                         message="OCR inference failed for this image.",
                         attempt=1,
                     ))
+                    parent_job = database.get_job(parent_id)
+                    parent_config = json.loads(str(parent_job["config_json"]))
+                    parent_layout = OverlayLayout.open_existing(str(parent_job["overlay_root"]), parent_id)
+                    write_runtime_binding(parent_layout.resource_path("ocr-runtime-binding-v1.json"), OcrRuntimeBindingV1.from_dict({
+                        "schemaVersion": 1,
+                        "requested": {
+                            "device": "cpu",
+                            "textDetLimitSideLen": {"mode": "auto", "value": None},
+                            "textBatchSize": {"mode": "auto", "value": None},
+                        },
+                        "recommended": {
+                            "source": "cpu",
+                            "totalVramBytes": None,
+                            "textDetLimitSideLen": 1920,
+                            "textBatchSize": 1,
+                        },
+                        "effective": {"textDetLimitSideLen": 1920, "textBatchSize": 1},
+                        "runtime": {
+                            "runtimeId": "ocr-paddle",
+                            "runtimeFingerprint": "a" * 64,
+                            "observedDevice": "cpu",
+                            "paddleVersion": "3.2.2",
+                            "compiledWithCuda": False,
+                            "cudaVersion": None,
+                            "gpuName": None,
+                        },
+                        "resourceFingerprint": str(parent_config["ocr"]["resourceFingerprint"]),
+                        "startupReason": None,
+                    }))
                 finally:
                     database.close()
                 self.assertTrue(preparation.release_lock_for_repair(parent_id))
                 repair_job = repair.prepare(parent_id)
                 with patch("anima_core.pipeline.ExportCommitCoordinator.commit", return_value=None):
-                    pipeline._spawn_transport = lambda module_id: (
-                        transport if module_id == "ocr" else self.fail(f"unexpected worker: {module_id}")
-                    )  # type: ignore[method-assign]
+                    pipeline._spawn_ocr_transport = lambda runtime_id: transport  # type: ignore[method-assign]
                     pipeline._run_active_module = run_active  # type: ignore[method-assign]
                     pipeline.start(repair_job.repairJobId)
                     deadline = time.monotonic() + 10.0

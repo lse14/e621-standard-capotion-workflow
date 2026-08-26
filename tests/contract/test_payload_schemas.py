@@ -30,19 +30,11 @@ from anima_core.classify_protocol import (
     ClassifyResultV1,
 )
 from anima_core.contracts import (
-    COUNT_REVIEW_SCHEMA_VERSIONS,
     JobConfig,
-    canonical_json,
-    job_config_supports_nl_v4,
-    job_config_supports_ocr,
-    job_config_supports_token_budget,
-    pipeline_module_ids,
-    profile_supports_job_config_schema,
     validate_job_config,
 )
 from anima_core.job_preflight import config_from_dict
 from tests.worker_test_support import worker_hello_payload
-import anima_core.contracts as contracts
 
 SCHEMAS = ROOT / "contracts" / "schemas"
 INSTALL_ROOT = ROOT / ".runtime-build"
@@ -200,7 +192,7 @@ POLICY_HELLO_RESULT = {  # workers/policy/src/anima_policy_worker/worker.py:113-
 }
 POLICY_HELLO_REQUEST = {  # core/src/anima_core/policy_runner.py:137-143
     "schemaVersion": 1, "payloadType": "policy_hello_request", "jobId": "job-1", "configHash": "a" * 64,
-    "datasetRoot": "E:\\dataset", "overlayRoot": "E:\\.dataset.anima-overlay-job-1",
+    "datasetRoot": "E:\\dataset", "overlayRoot": "E:\\.dataset.anima-overlay-job-1", "artistRootName": "10_artist",
     "resourceManifestRelativePath": "manifests\\resources\\policy-lse14.json", "resourceFingerprint": "c" * 64,
     "policy": {
         "policyVersion": "dataset-batch-policy-v1", "seed": "anima-policy-default-v1",
@@ -272,7 +264,7 @@ REPLACE_HELLO_RESULT = {  # workers/replace/src/anima_replace_worker/worker.py:3
 }
 REPLACE_CUSTOM_HELLO_REQUEST = {  # core/src/anima_core/replace_runner.py:112
     "schemaVersion": 1, "payloadType": "replace_hello_request", "jobId": "job-1", "configHash": "a" * 64,
-    "profile": "e621", "customIndexOverlayRoot": "E:\\.dataset.anima-overlay-job-1",
+    "customIndexOverlayRoot": "E:\\.dataset.anima-overlay-job-1",
     "customIndexPath": "resources\\replace\\custom.csv", "customIndexSha256": "b" * 64, "customIndexRuleCount": 12,
 }
 
@@ -532,18 +524,10 @@ class PayloadSchemaTests(unittest.TestCase):
         self.assertTrue(schema_path.is_file(), "JobConfig v9 schema must exist before v9 is accepted")
         document = _schema("job-config-v9")
         payload = JobConfig(
-            profile="e621", workMode="in_place", overwriteMode="incremental",
-            sourceRoot="C:\\data", schemaVersion=8,
+            workMode="in_place", overwriteMode="incremental", sourceRoot="C:\\data",
         ).to_dict()
-        payload.pop("profile")
-        payload["schemaVersion"] = 9
-        payload["classify"] = {
-            "enabled": True,
-            "indexMode": "bundled",
-            "resourceId": "classify-e621-20260724-v1",
-            "overwriteJson": False,
-            "overwriteCount": False,
-        }
+        self.assertNotIn("profile", payload)
+        self.assertEqual(9, payload["schemaVersion"])
         self.assertEqual([], validate(_wire(payload), document, document))
 
         with_profile = json.loads(json.dumps(payload))
@@ -674,559 +658,43 @@ class PayloadSchemaTests(unittest.TestCase):
                 mutate(payload["items"][3]["error"])
                 self.assertNotEqual([], validate(payload, document, document))
 
-    def test_frozen_job_config_matches_the_job_config_schema(self) -> None:
-        v2_document = _schema("job-config-v2")
-        v3_document = _schema("job-config-v3")
-        v4_document = _schema("job-config-v4")
-        in_place = JobConfig(profile="e621", workMode="in_place", overwriteMode="incremental", sourceRoot="C:\\data")
-        full_copy = JobConfig(
-            profile="e621", workMode="full_copy", overwriteMode="rebuild", sourceRoot="C:\\data", outputRoot="D:\\out",
-        )
-        for config in (in_place, full_copy):
-            with self.subTest(workMode=config.workMode):
-                current = _wire(config.to_dict())
-                self.assertEqual([], validate(current, v3_document, v3_document))
-                self.assertNotEqual([], validate(current, v2_document, v2_document))
-                self.assertNotEqual([], validate(current, v4_document, v4_document))
-
-                legacy = _wire(config.to_dict())
-                legacy["schemaVersion"] = 2
-                legacy.pop("countReview")
-                legacy["nl"]["promptVersion"] = "nl-default-prompt-v1"
-                self.assertEqual([], validate(legacy, v2_document, v2_document))
-                self.assertNotEqual([], validate(legacy, v3_document, v3_document))
-
-        legacy = _wire(in_place.to_dict())
-        legacy["schemaVersion"] = 2
-        legacy.pop("countReview")
-        legacy["nl"]["promptVersion"] = "nl-default-prompt-v1"
-        legacy["imageDecode"].pop("invalidImageAction")
-        self.assertEqual([], validate(legacy, v2_document, v2_document))
-        invalid = in_place.to_dict()
-        invalid["imageDecode"]["invalidImageAction"] = "ignore"
-        self.assertNotEqual([], validate(_wire(invalid), v3_document, v3_document))
-
-    def test_job_config_v4_uses_resource_driven_threshold_categories(self) -> None:
-        document = _schema("job-config-v4")
-        categories = {"general": 0.55, "character": 0.55, "copyright": 0.55}
-        config = JobConfig(
-            profile="danbooru",
-            workMode="in_place",
-            overwriteMode="incremental",
-            sourceRoot="C:\\data",
-            schemaVersion=4,
-            caption={
-                "enabled": True,
-                "thresholdMode": "per_category",
-                "categoryThresholds": categories,
-                "overwriteTxt": False,
-                "resourceId": "caption-danbooru-cl-tagger-v2-00",
-            },
-            replace={"enabled": False, "indexMode": "bundled"},
-        )
-        payload = _wire(config.to_dict())
-        self.assertEqual([], validate(payload, document, document))
-        validate_job_config(config, adjustable_categories=tuple(categories))
-        self.assertEqual(pipeline_module_ids(3), pipeline_module_ids(4))
-
-        for label, changed in (
-            ("empty", {}),
-            ("invalid-key", {"General": 0.5}),
-            ("invalid-value", {"general": True}),
-            ("out-of-range", {"general": 1.01}),
-        ):
-            with self.subTest(case=label):
-                candidate = {**payload, "caption": {**payload["caption"], "categoryThresholds": changed}}
-                self.assertNotEqual([], validate(candidate, document, document))
-
-        wrong_categories = JobConfig(
-            **{
-                **config.__dict__,
-                "caption": {**config.caption, "categoryThresholds": {"general": 0.5, "character": 0.5}},
-            }
-        )
-        with self.assertRaisesRegex(ValueError, "exactly match"):
-            validate_job_config(wrong_categories, adjustable_categories=tuple(categories))
-
-        legacy_danbooru = JobConfig(
-            profile="danbooru", workMode="in_place", overwriteMode="incremental", sourceRoot="C:\\data",
-        )
-        with self.assertRaisesRegex(ValueError, "profile_not_available:danbooru"):
-            validate_job_config(legacy_danbooru)
-
-    def test_job_config_v5_freezes_independent_ocr_without_changing_v2_to_v4(self) -> None:
-        self.assertEqual(
-            ("caption", "classify", "replace", "ocr", "nl", "count_review", "dropout", "export"),
-            pipeline_module_ids(5),
-        )
-        self.assertEqual(("caption", "classify", "replace", "nl", "dropout", "export"), pipeline_module_ids(2))
-        self.assertEqual(
-            ("caption", "classify", "replace", "nl", "count_review", "dropout", "export"),
-            pipeline_module_ids(3),
-        )
-        self.assertEqual(pipeline_module_ids(3), pipeline_module_ids(4))
-        self.assertTrue(profile_supports_job_config_schema("e621", 5))
-        self.assertTrue(profile_supports_job_config_schema("danbooru", 5))
-        self.assertFalse(profile_supports_job_config_schema("danbooru", 3))
-
-        v5_document = _schema("job-config-v5")
-        v5 = JobConfig(
-            profile="e621",
-            workMode="in_place",
-            overwriteMode="incremental",
-            sourceRoot="C:\\data",
-            schemaVersion=5,
-            nl={
-                "enabled": True,
-                "reuseOriginalNl": True,
-                "apiEnabled": True,
-                "useImage": True,
-                "useFullJson": False,
-                "systemPrompt": "Describe the image.",
-                "promptVersion": "nl-default-prompt-v3",
-            },
-        )
-        payload = _wire(v5.to_dict())
-        self.assertEqual(
-            {
-                "enabled": False,
-                "llmMinConfidence": 0.5,
-                "forceReprocess": False,
-                "resourceId": "ocr-ppocrv5-server-paddle-v1",
-            },
-            payload["ocr"],
-        )
-        self.assertEqual(
-            ("caption", "classify", "replace", "ocr", "nl", "countReview", "dropout", "export"),
-            tuple(name for name in payload if name in {"caption", "classify", "replace", "ocr", "nl", "countReview", "dropout", "export"}),
-        )
-        self.assertEqual([], validate(payload, v5_document, v5_document))
-        validate_job_config(v5)
-        with self.assertRaisesRegex(ValueError, "legacy JobConfig is incompatible"):
-            config_from_dict(payload)
-
-        v5_with_v2_prompt = {**payload, "nl": {**payload["nl"], "promptVersion": "nl-default-prompt-v2"}}
-        self.assertNotEqual([], validate(_wire(v5_with_v2_prompt), v5_document, v5_document))
-        with self.assertRaises(ValueError):
-            config_from_dict(v5_with_v2_prompt)
-
-        for label, changed in (
-            ("enabled-must-be-boolean", {"enabled": 1}),
-            ("force-must-be-boolean", {"forceReprocess": 0}),
-            ("confidence-must-be-finite", {"llmMinConfidence": math.nan}),
-            ("confidence-must-be-in-range", {"llmMinConfidence": 1.01}),
-            ("resource-id-must-be-valid", {"resourceId": "ocr_invalid"}),
-            ("device-is-not-supported", {"device": "cpu"}),
-            ("batch-is-not-supported", {"batch": 1}),
-            ("prefetch-is-not-supported", {"prefetch": 1}),
-            ("threads-is-not-supported", {"threads": 1}),
-        ):
-            with self.subTest(case=label):
-                candidate = {**payload, "ocr": {**payload["ocr"], **changed}}
-                self.assertNotEqual([], validate(_wire(candidate), v5_document, v5_document))
-                with self.assertRaises(ValueError):
-                    config_from_dict(candidate)
-
-        for schema_version, expected_hash in (
-            (2, "950b32172780dc4857801056aaaa87a3512c08d907e67801480d231a66b9d4c2"),
-            (3, "41eab9dc75134098954de0a24cf9f9fa1fc0ad9672be5a4a461d6e965c62157f"),
-            (4, "8dbf56d3aede07d317a7e3296fb401c675ecae9d344c89c651bb3c8067e25e85"),
-        ):
-            with self.subTest(legacy_schema=schema_version):
-                legacy = JobConfig(
-                    profile="e621",
-                    workMode="in_place",
-                    overwriteMode="incremental",
-                    sourceRoot="C:\\data",
-                    schemaVersion=schema_version,
-                    countReview=None if schema_version == 2 else {"enabled": True, "protocolVersion": "count-review-v1"},
-                )
-                if schema_version == 2:
-                    legacy.nl["promptVersion"] = "nl-default-prompt-v1"
-                legacy_payload = _wire(legacy.to_dict())
-                self.assertNotIn("ocr", legacy_payload)
-                self.assertEqual(expected_hash, legacy.config_hash)
-                rejected = {**legacy_payload, "ocr": dict(payload["ocr"])}
-                with self.assertRaises(ValueError):
-                    config_from_dict(rejected)
-
-        linked = {**payload, "nl": {**payload["nl"], "ocr": True}}
-        self.assertNotEqual([], validate(_wire(linked), v5_document, v5_document))
-        with self.assertRaises(ValueError):
-            config_from_dict(linked)
-
-    def test_job_config_v6_freezes_token_budget_and_nl_routing_contracts(self) -> None:
-        schema_path = SCHEMAS / "job-config-v6.schema.json"
-        self.assertTrue(schema_path.is_file(), "JobConfig v6 schema must exist before v6 is accepted")
-        if not schema_path.is_file():
-            return
-        document = _schema("job-config-v6")
-        base = JobConfig(
-            profile="e621",
-            workMode="in_place",
-            overwriteMode="incremental",
-            sourceRoot="C:\\data",
-            schemaVersion=5,
-        ).to_dict()
-        payload = {
-            **base,
-            "schemaVersion": 6,
-            "nl": {
-                **base["nl"],
-                "promptVersion": "nl-default-prompt-v4",
-                "captionPreset": "general",
-                "lengthDistribution": {"short": 33, "medium": 34, "long": 33},
-                "lengthSeed": "anima-nl-length-v1",
-            },
-            "tokenBudget": {
-                "enabled": True,
-                "maxTokens": 512,
-                "resourceId": "tokenizer-qwen3-0.6b-anima-v1",
-            },
-        }
-        self.assertEqual([], validate(_wire(payload), document, document))
-        config = JobConfig(
-            profile="e621",
-            workMode="in_place",
-            overwriteMode="incremental",
-            sourceRoot="C:\\data",
-            schemaVersion=6,
-            nl=dict(payload["nl"]),
-            tokenBudget=dict(payload["tokenBudget"]),
-        )
-        self.assertEqual(payload, config.to_dict())
-        validate_job_config(config)
-        self.assertEqual(
-            {"enabled": True, "maxTokens": 512, "resourceId": "tokenizer-qwen3-0.6b-anima-v1"},
-            config.tokenBudget,
-        )
-        frozen_token_budget = {
-            **payload["tokenBudget"],
-            "resourceManifestRelativePath": r"tokenizers\tokenizer-qwen3-0.6b-anima-v1\resource.json",
-            "resourceFingerprint": "a" * 64,
-            "contextLimit": 512,
-        }
-        frozen_payload = {**payload, "tokenBudget": frozen_token_budget}
-        self.assertEqual([], validate(_wire(frozen_payload), document, document))
-        validate_job_config(JobConfig(
-            profile="e621",
-            workMode="in_place",
-            overwriteMode="incremental",
-            sourceRoot="C:\\data",
-            schemaVersion=6,
-            nl=dict(frozen_payload["nl"]),
-            tokenBudget=dict(frozen_payload["tokenBudget"]),
-        ))
-
-        invalid = (
-            ("prompt-version", {**payload, "nl": {**payload["nl"], "promptVersion": "nl-default-prompt-v3"}}, True),
-            ("preset", {**payload, "nl": {**payload["nl"], "captionPreset": "other"}}, True),
-            ("distribution-bool", {**payload, "nl": {**payload["nl"], "lengthDistribution": {"short": True, "medium": 34, "long": 33}}}, True),
-            ("distribution-total", {**payload, "nl": {**payload["nl"], "lengthDistribution": {"short": 34, "medium": 34, "long": 33}}}, False),
-            ("empty-seed", {**payload, "nl": {**payload["nl"], "lengthSeed": ""}}, True),
-            ("long-seed", {**payload, "nl": {**payload["nl"], "lengthSeed": "x" * 257}}, True),
-            ("token-budget-partial-freeze", {**payload, "tokenBudget": {**payload["tokenBudget"], "contextLimit": 4096}}, True),
-            ("token-budget-enabled-bool", {**payload, "tokenBudget": {**payload["tokenBudget"], "enabled": 1}}, True),
-            ("token-budget-max-bool", {**payload, "tokenBudget": {**payload["tokenBudget"], "maxTokens": True}}, True),
-            ("token-budget-max-positive", {**payload, "tokenBudget": {**payload["tokenBudget"], "maxTokens": 0}}, True),
-        )
-        for label, candidate, schema_rejects in invalid:
-            with self.subTest(case=label):
-                if schema_rejects:
-                    self.assertNotEqual([], validate(_wire(candidate), document, document))
-                else:
-                    self.assertEqual([], validate(_wire(candidate), document, document))
-                with self.assertRaises(ValueError):
-                    validate_job_config(JobConfig(
-                        profile="e621",
-                        workMode="in_place",
-                        overwriteMode="incremental",
-                        sourceRoot="C:\\data",
-                        schemaVersion=6,
-                        nl=dict(candidate["nl"]),
-                        tokenBudget=dict(candidate["tokenBudget"]),
-                    ))
-
-        for schema_version in (2, 3, 4, 5):
-            with self.subTest(legacy_schema=schema_version):
-                legacy = JobConfig(
-                    profile="e621",
-                    workMode="in_place",
-                    overwriteMode="incremental",
-                    sourceRoot="C:\\data",
-                    countReview=None if schema_version == 2 else {"enabled": True, "protocolVersion": "count-review-v1"},
-                    schemaVersion=schema_version,
-                )
-                if schema_version == 2:
-                    legacy.nl["promptVersion"] = "nl-default-prompt-v1"
-                legacy_payload = legacy.to_dict()
-                legacy_payload["tokenBudget"] = dict(payload["tokenBudget"])
-                legacy_payload["nl"] = {**legacy_payload["nl"], "captionPreset": "general"}
-                legacy_document = _schema(f"job-config-v{schema_version}")
-                self.assertNotEqual([], validate(_wire(legacy_payload), legacy_document, legacy_document))
-                with self.assertRaises(ValueError):
-                    validate_job_config(JobConfig(
-                        profile="e621",
-                        workMode="in_place",
-                        overwriteMode="incremental",
-                        sourceRoot="C:\\data",
-                        countReview=None if schema_version == 2 else {"enabled": True, "protocolVersion": "count-review-v1"},
-                        schemaVersion=schema_version,
-                        nl={**legacy.nl, "captionPreset": "general"},
-                        tokenBudget=dict(payload["tokenBudget"]),
-                    ))
-
-    def test_job_config_v7_adds_only_strict_ocr_device_to_v6(self) -> None:
-        schema_path = SCHEMAS / "job-config-v7.schema.json"
-        self.assertTrue(schema_path.is_file(), "JobConfig v7 schema must exist before v7 is accepted")
-        if not schema_path.is_file():
-            return
-        document = _schema("job-config-v7")
-        v7 = JobConfig(
-            profile="e621",
-            workMode="in_place",
-            overwriteMode="incremental",
-            sourceRoot="C:\\data",
-            schemaVersion=7,
-        )
-        payload = _wire(v7.to_dict())
-        self.assertEqual("auto", payload["ocr"]["device"])
-        self.assertEqual("nl-default-prompt-v4", payload["nl"]["promptVersion"])
-        self.assertEqual(
-            {
-                "enabled": True,
-                "maxTokens": 512,
-                "resourceId": "tokenizer-qwen3-0.6b-anima-v1",
-            },
-            payload["tokenBudget"],
-        )
-        self.assertEqual(pipeline_module_ids(6), pipeline_module_ids(7))
-        self.assertEqual([], validate(payload, document, document))
-        validate_job_config(v7)
-
-        frozen_ocr_without_device = {
-            key: value
-            for key, value in payload["ocr"].items()
-            if key != "device"
-        }
-        frozen_ocr_without_device.update({
-            "resourceManifestRelativePath": r"ocr-models\ocr-ppocrv5-server-paddle-v1\resource.json",
-            "resourceFingerprint": "c" * 64,
-        })
-        frozen_ocr_config = JobConfig(
-            profile="e621",
-            workMode="in_place",
-            overwriteMode="incremental",
-            sourceRoot="C:\\data",
-            schemaVersion=7,
-            ocr=frozen_ocr_without_device,
-        )
-        self.assertEqual("auto", frozen_ocr_config.to_dict()["ocr"]["device"])
-        validate_job_config(frozen_ocr_config)
-
-        for profile in ("e621", "danbooru"):
-            with self.subTest(profile=profile):
-                self.assertTrue(profile_supports_job_config_schema(profile, 7))
-
-        for device in ("auto", "cuda", "cpu"):
-            with self.subTest(device=device):
-                candidate = {**payload, "ocr": {**payload["ocr"], "device": device}}
-                self.assertEqual([], validate(candidate, document, document))
-                candidate_config = JobConfig(
-                    profile="e621",
-                    workMode="in_place",
-                    overwriteMode="incremental",
-                    sourceRoot="C:\\data",
-                    schemaVersion=7,
-                    ocr=dict(candidate["ocr"]),
-                )
-                validate_job_config(candidate_config)
-                self.assertEqual(device, candidate_config.to_dict()["ocr"]["device"])
-
-        for device in ("gpu", "CUDA", "", None, 1, True):
-            with self.subTest(device=device):
-                candidate = {**payload, "ocr": {**payload["ocr"], "device": device}}
-                self.assertNotEqual([], validate(candidate, document, document))
-                with self.assertRaises(ValueError):
-                    validate_job_config(JobConfig(
-                        profile="e621",
-                        workMode="in_place",
-                        overwriteMode="incremental",
-                        sourceRoot="C:\\data",
-                        schemaVersion=7,
-                        ocr=dict(candidate["ocr"]),
-                    ))
-
-        for version in range(2, 7):
-            with self.subTest(legacy_version=version):
-                legacy = JobConfig(
-                    profile="e621",
-                    workMode="in_place",
-                    overwriteMode="incremental",
-                    sourceRoot="C:\\data",
-                    countReview=None if version == 2 else {"enabled": True, "protocolVersion": "count-review-v1"},
-                    schemaVersion=version,
-                )
-                if version == 2:
-                    legacy.nl["promptVersion"] = "nl-default-prompt-v1"
-                candidate = legacy.to_dict()
-                if version in {5, 6}:
-                    candidate["ocr"] = {
-                        **candidate["ocr"],
-                        "device": "cpu",
-                    }
-                else:
-                    candidate["ocr"] = {
-                        "enabled": False,
-                        "llmMinConfidence": 0.5,
-                        "forceReprocess": False,
-                        "resourceId": "ocr-ppocrv5-server-paddle-v1",
-                        "device": "cpu",
-                }
-                legacy_document = _schema(f"job-config-v{version}")
-                self.assertNotEqual([], validate(_wire(candidate), legacy_document, legacy_document))
-                with self.assertRaisesRegex(ValueError, "ocr device"):
-                    validate_job_config(JobConfig(
-                        profile="e621",
-                        workMode="in_place",
-                        overwriteMode="incremental",
-                        sourceRoot="C:\\data",
-                        countReview=None if version == 2 else {"enabled": True, "protocolVersion": "count-review-v1"},
-                        schemaVersion=version,
-                        nl=dict(candidate["nl"]),
-                        ocr=dict(candidate["ocr"]),
-                    ))
-
-    def test_job_config_v8_adds_txt_input_mode_without_changing_v2_to_v7(self) -> None:
-        schema_path = SCHEMAS / "job-config-v8.schema.json"
-        self.assertTrue(schema_path.is_file(), "JobConfig v8 schema must exist before v8 is accepted")
-        document = _schema("job-config-v8")
-        v8 = JobConfig(
-            profile="e621",
-            workMode="in_place",
-            overwriteMode="incremental",
-            sourceRoot="C:\\data",
-            schemaVersion=8,
-        )
-        self.assertEqual(
-            {"inputTxtMode": "tag", "taggerFallbackOnMissingTxt": True},
-            {key: v8.caption[key] for key in ("inputTxtMode", "taggerFallbackOnMissingTxt")},
-        )
-        v8.nl["systemPrompt"] = "Describe the image."
-        payload = _wire(v8.to_dict())
-        self.assertEqual((1881, "a85332ab0c70e3838a386b7489f48e37aee39d5966aab481a9b14de5b2019377"), (
-            len(canonical_json(JobConfig(
-                profile="e621", workMode="in_place", overwriteMode="incremental", sourceRoot="C:\\data", schemaVersion=7,
-            ).to_dict()).encode("utf-8")),
+    def test_current_job_config_matches_the_v9_schema(self) -> None:
+        document = _schema("job-config-v9")
+        configs = (
+            JobConfig(workMode="in_place", overwriteMode="incremental", sourceRoot="C:\\data"),
             JobConfig(
-                profile="e621", workMode="in_place", overwriteMode="incremental", sourceRoot="C:\\data", schemaVersion=7,
-            ).config_hash,
-        ))
-        self.assertTrue(hasattr(contracts, "job_config_supports_caption_input_txt_mode"))
-        self.assertTrue(hasattr(contracts, "job_config_supports_ocr_device"))
-        self.assertTrue(contracts.job_config_supports_caption_input_txt_mode(8))
-        self.assertTrue(contracts.job_config_supports_ocr_device(8))
-        self.assertEqual(frozenset({3, 4, 5, 6, 7, 8, 9}), COUNT_REVIEW_SCHEMA_VERSIONS)
-        self.assertEqual((True, True, True), (
-            job_config_supports_ocr(8),
-            job_config_supports_nl_v4(8),
-            job_config_supports_token_budget(8),
-        ))
-        for profile in ("e621", "danbooru"):
-            with self.subTest(profile=profile):
-                self.assertTrue(profile_supports_job_config_schema(profile, 8))
-        self.assertEqual(pipeline_module_ids(7), pipeline_module_ids(8))
-        self.assertEqual([], validate(payload, document, document))
-        validate_job_config(v8)
-        with self.assertRaisesRegex(ValueError, "legacy JobConfig is incompatible"):
-            config_from_dict(payload)
+                workMode="full_copy", overwriteMode="rebuild",
+                sourceRoot="C:\\data", outputRoot="D:\\out",
+            ),
+        )
+        for config in configs:
+            with self.subTest(workMode=config.workMode):
+                payload = _wire(config.to_dict())
+                self.assertEqual(9, payload["schemaVersion"])
+                self.assertNotIn("profile", payload)
+                self.assertEqual([], validate(payload, document, document))
+                validate_job_config(config)
 
-        for label, mutate, defaulted_key in (
-            ("missing-input-mode", lambda candidate: candidate["caption"].pop("inputTxtMode"), "inputTxtMode"),
-            ("missing-fallback", lambda candidate: candidate["caption"].pop("taggerFallbackOnMissingTxt"), "taggerFallbackOnMissingTxt"),
-            ("invalid-input-mode", lambda candidate: candidate["caption"].__setitem__("inputTxtMode", "tags"), None),
-            ("non-boolean-fallback", lambda candidate: candidate["caption"].__setitem__("taggerFallbackOnMissingTxt", 1), None),
-            ("unknown-caption-field", lambda candidate: candidate["caption"].__setitem__("txtModeExtra", True), None),
-        ):
-            with self.subTest(case=label):
-                candidate = _wire(payload)
-                mutate(candidate)
-                self.assertNotEqual([], validate(candidate, document, document))
-                with self.assertRaises(ValueError):
-                    config_from_dict(candidate)
+        invalid = _wire(configs[0].to_dict())
+        invalid["imageDecode"]["invalidImageAction"] = "ignore"
+        self.assertNotEqual([], validate(invalid, document, document))
 
-        for schema_version in range(2, 8):
-            with self.subTest(legacy_schema_version=schema_version):
-                legacy = JobConfig(
-                    profile="e621",
-                    workMode="in_place",
-                    overwriteMode="incremental",
-                    sourceRoot="C:\\data",
-                    countReview=None if schema_version == 2 else {"enabled": True, "protocolVersion": "count-review-v1"},
-                    schemaVersion=schema_version,
-                )
-                if schema_version == 2:
-                    legacy.nl["promptVersion"] = "nl-default-prompt-v1"
-                candidate = legacy.to_dict()
-                candidate["caption"] = {
-                    **candidate["caption"],
-                    "inputTxtMode": "tag",
-                    "taggerFallbackOnMissingTxt": True,
-                }
-                with self.assertRaises(ValueError):
-                    config_from_dict(candidate)
-
-    def test_job_config_capabilities_are_bool_safe_and_versioned(self) -> None:
-        self.assertEqual(frozenset({3, 4, 5, 6, 7, 8, 9}), COUNT_REVIEW_SCHEMA_VERSIONS)
-
-        expected = {
-            2: (False, False, False),
-            3: (False, False, False),
-            4: (False, False, False),
-            5: (True, False, False),
-            6: (True, True, True),
-            7: (True, True, True),
-            8: (True, True, True),
-            9: (True, True, True),
-        }
-        for version, values in expected.items():
-            with self.subTest(version=version):
-                self.assertEqual(values, (
-                    job_config_supports_ocr(version),
-                    job_config_supports_nl_v4(version),
-                    job_config_supports_token_budget(version),
-                ))
-
-        for invalid in (None, True, False, 6.0, "7", 10):
-            with self.subTest(invalid=invalid):
-                self.assertEqual((False, False, False), (
-                    job_config_supports_ocr(invalid),
-                    job_config_supports_nl_v4(invalid),
-                    job_config_supports_token_budget(invalid),
-                ))
-
-    def test_v2_to_v6_default_config_bytes_and_hashes_remain_frozen(self) -> None:
-        expected_canonical_configs = {
-            2: (1476, "950b32172780dc4857801056aaaa87a3512c08d907e67801480d231a66b9d4c2"),
-            3: (1543, "41eab9dc75134098954de0a24cf9f9fa1fc0ad9672be5a4a461d6e965c62157f"),
-            4: (1543, "8dbf56d3aede07d317a7e3296fb401c675ecae9d344c89c651bb3c8067e25e85"),
-            5: (1657, "76f0d5a380e9ce92eb2c7fe7593d5e58ca9a1467928be18583e33abd7bcd9608"),
-            6: (1865, "fd1f9b0b8eb7fea25475834dce223ea3243473d1db0b8ade0415b4bc28eb8cc9"),
-        }
-        for schema_version, (expected_bytes, expected_hash) in expected_canonical_configs.items():
+    def test_legacy_job_config_versions_are_rejected_explicitly(self) -> None:
+        current = _wire(JobConfig(
+            workMode="in_place", overwriteMode="incremental", sourceRoot="C:\\data",
+        ).to_dict())
+        for schema_version in range(2, 9):
             with self.subTest(schema_version=schema_version):
-                config = JobConfig(
-                    profile="e621",
-                    workMode="in_place",
-                    overwriteMode="incremental",
-                    sourceRoot="C:\\data",
-                    countReview=None if schema_version == 2 else {"enabled": True, "protocolVersion": "count-review-v1"},
-                    schemaVersion=schema_version,
-                )
-                if schema_version == 2:
-                    config.nl["promptVersion"] = "nl-default-prompt-v1"
-                self.assertEqual(expected_bytes, len(canonical_json(config.to_dict()).encode("utf-8")))
-                self.assertEqual(expected_hash, config.config_hash)
+                legacy = _wire(current)
+                legacy["schemaVersion"] = schema_version
+                legacy["profile"] = "e621"
+                legacy_document = _schema(f"job-config-v{schema_version}")
+                self.assertNotEqual([], validate(legacy, legacy_document, legacy_document))
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "legacy JobConfig is incompatible",
+                ):
+                    config_from_dict(legacy)
 
     def test_token_budget_worker_schema_rejects_untrusted_outcomes(self) -> None:
         schema_path = SCHEMAS / "token-budget-worker-v1.schema.json"
@@ -1313,8 +781,8 @@ class PayloadSchemaTests(unittest.TestCase):
     def test_nl_and_dropout_sections_are_no_longer_unconstrained(self) -> None:
         # F45: both used to be bare {"type": "object"}, so an illegal policy only failed in
         # nl_runner.py after Caption, Classify and Replace had already run.
-        document = _schema("job-config-v3")
-        base = JobConfig(profile="e621", workMode="in_place", overwriteMode="incremental", sourceRoot="C:\\data").to_dict()
+        document = _schema("job-config-v9")
+        base = JobConfig(workMode="in_place", overwriteMode="incremental", sourceRoot="C:\\data").to_dict()
         invalid = (
             ("nl-unknown-key", {**base, "nl": {**base["nl"], "typo": True}}),
             ("nl-api-without-context", {**base, "nl": {**base["nl"], "apiEnabled": True, "useImage": False, "useFullJson": False}}),

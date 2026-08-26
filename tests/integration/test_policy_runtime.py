@@ -60,6 +60,7 @@ class PolicyRuntimeIntegrationTests(unittest.TestCase):
                 "configHash": "b" * 64,
                 "datasetRoot": str(dataset),
                 "overlayRoot": str(overlay),
+                "artistRootName": "dataset",
                 "resourceManifestRelativePath": RESOURCE_MANIFEST,
                 "resourceFingerprint": RESOURCE_FINGERPRINT,
                 "policy": {

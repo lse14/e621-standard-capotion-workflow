@@ -52,6 +52,7 @@ def offline_environment(
     *,
     install_root: Path | None = None,
     resource_root: Path | None = None,
+    dll_directories: Sequence[Path] = (),
 ) -> dict[str, str]:
     """Return a child environment that cannot use configured network proxies."""
     result = dict(os.environ if environment is None else environment)
@@ -64,6 +65,10 @@ def offline_environment(
         result["ANIMA_INSTALL_ROOT"] = str(install_root)
     if resource_root is not None:
         result["ANIMA_RESOURCE_ROOT"] = str(resource_root)
+    if dll_directories:
+        result["PATH"] = os.pathsep.join(
+            [*(str(directory) for directory in dll_directories), result.get("PATH", "")]
+        )
     return result
 
 
@@ -323,9 +328,30 @@ print(json.dumps({"kind": "caption", "provider": model.provider, "tags": tags}, 
         script,
         (str(install_root), relative, fingerprint),
         cwd=_runtime_root(runtime),
-        environment=offline_environment(install_root=install_root),
+        environment=offline_environment(
+            install_root=install_root,
+            dll_directories=_caption_cuda_dll_directories(runtime, variant),
+        ),
         runner=runner,
     )
+
+
+def _caption_cuda_dll_directories(runtime: Path, variant: str) -> tuple[Path, ...]:
+    if variant != "cuda":
+        return ()
+    directories = (
+        runtime / "Lib" / "site-packages" / "nvidia" / "cublas" / "bin",
+        runtime / "Lib" / "site-packages" / "nvidia" / "cuda_runtime" / "bin",
+        runtime / "Lib" / "site-packages" / "nvidia" / "cudnn" / "bin",
+        runtime / "Lib" / "site-packages" / "nvidia" / "cufft" / "bin",
+        runtime / "Lib" / "site-packages" / "nvidia" / "curand" / "bin",
+        runtime / "Lib" / "site-packages" / "nvidia" / "cusolver" / "bin",
+        runtime / "Lib" / "site-packages" / "nvidia" / "cusparse" / "bin",
+        runtime / "Lib" / "site-packages" / "nvidia" / "nvjitlink" / "bin",
+    )
+    if not all(directory.is_dir() and not directory.is_symlink() for directory in directories):
+        raise ProbeError("Caption CUDA runtime dependencies are incomplete")
+    return directories
 
 
 def _probe_quality(runtime: Path, resource_target: Path, variant: str, *, runner: Runner | None) -> dict[str, object]:
@@ -509,6 +535,7 @@ def run_offline_probes(
     components: Sequence[object],
     *,
     component_targets: Mapping[str, Path],
+    ocr_resource_target: Path | None = None,
     runner: Runner | None = None,
     progress: ProgressReporter | None = None,
 ) -> dict[str, bool | None]:
@@ -587,22 +614,26 @@ def run_offline_probes(
         ),
         "token-budget",
     )
-    if "ocr-models" in selected:
+    if ocr_resource_target is None and "ocr-models" in selected:
+        ocr_resource_target = _target(component_targets, "ocr-models")
+    if ocr_resource_target is not None:
+        if not ocr_resource_target.is_dir() or ocr_resource_target.is_symlink():
+            raise ProbeError("OCR resource probe target is invalid")
         run_group(
-            ("ocr-cpu", "ocr-models"),
+            ("ocr-cpu",),
             lambda: _probe_ocr(
                 _target(component_targets, "ocr-cpu"),
-                _target(component_targets, "ocr-models"),
+                ocr_resource_target,
                 "cpu",
                 runner=runner,
             ),
             "ocr-cpu",
         )
         run_group(
-            ("ocr-gpu", "ocr-models"),
+            ("ocr-gpu",),
             lambda: _probe_ocr(
                 _target(component_targets, "ocr-gpu"),
-                _target(component_targets, "ocr-models"),
+                ocr_resource_target,
                 "cuda",
                 runner=runner,
             ),

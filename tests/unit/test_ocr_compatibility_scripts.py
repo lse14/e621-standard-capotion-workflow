@@ -18,9 +18,7 @@ COMPATIBILITY_SCRIPT = ROOT / "packaging" / "scripts" / "Test-OcrCompatibility.p
 CLEANUP_SCRIPT = ROOT / "packaging" / "scripts" / "Clean-OcrImport.ps1"
 DRIVER = ROOT / "packaging" / "scripts" / "ocr_compatibility.py"
 RUNTIME_PROBE = ROOT / "packaging" / "scripts" / "ocr_runtime_probe.py"
-TOOLCHAIN_PYTHON = (
-    ROOT / ".toolchains" / "Python-3.11.15" / "PCbuild" / "amd64" / "python.exe"
-)
+TOOLCHAIN_PYTHON = ROOT / ".runtime-build" / "runtimes" / "core" / "python.exe"
 
 
 def _ps_literal(value: str | Path) -> str:

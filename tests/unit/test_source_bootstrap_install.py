@@ -423,6 +423,67 @@ class SourceBootstrapInstallTests(unittest.TestCase):
             self.assertIn("model = create_tagger_adapter(resource)", scripts[0])
             self.assertNotIn("CaptionModel(resource.entrypoints)", scripts[0])
 
+    def test_caption_cuda_runtime_manifest_exposes_packaged_nvidia_dll_directories(self) -> None:
+        generator = _runtime_manifest_generator()
+
+        specifications = generator.runtime_specs(
+            lock_names={"caption-e621": "caption-e621-cuda"}
+        )
+
+        self.assertEqual(
+            (
+                "Lib/site-packages/onnxruntime/capi",
+                "Lib/site-packages/nvidia/cublas/bin",
+                "Lib/site-packages/nvidia/cuda_runtime/bin",
+                "Lib/site-packages/nvidia/cudnn/bin",
+                "Lib/site-packages/nvidia/cufft/bin",
+                "Lib/site-packages/nvidia/curand/bin",
+                "Lib/site-packages/nvidia/cusolver/bin",
+                "Lib/site-packages/nvidia/cusparse/bin",
+                "Lib/site-packages/nvidia/nvjitlink/bin",
+            ),
+            specifications["caption-e621"][3],
+        )
+
+    def test_caption_cuda_lock_includes_onnxruntime_gpu_dependencies(self) -> None:
+        lock = (ROOT / "packaging" / "requirements" / "caption-e621-cuda.lock").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("nvidia-cublas-cu12==12.9.0.13", lock)
+        self.assertIn("nvidia-cuda-runtime-cu12==12.9.37", lock)
+        self.assertIn("nvidia-cudnn-cu12==9.9.0.52", lock)
+        self.assertIn("nvidia-cufft-cu12==11.4.0.6", lock)
+        self.assertIn("nvidia-curand-cu12==10.3.10.19", lock)
+        self.assertIn("nvidia-cusolver-cu12==11.7.4.40", lock)
+        self.assertIn("nvidia-cusparse-cu12==12.5.9.5", lock)
+        self.assertIn("nvidia-nvjitlink-cu12==12.9.86", lock)
+
+    def test_source_bootstrap_assembles_all_frozen_nl_prompt_resources(self) -> None:
+        install_module = _install_module()
+        with tempfile.TemporaryDirectory() as temporary_name:
+            install_root = Path(temporary_name)
+
+            install_module._assemble_nl_prompt_resources(ROOT, install_root)
+
+            resource_ids = (
+                "nl-default-prompt-v1",
+                "nl-default-prompt-v2",
+                "nl-default-prompt-v3",
+                "nl-default-prompt-v4-base",
+                "nl-default-prompt-v4-general",
+                "nl-default-prompt-v4-style",
+                "nl-default-prompt-v4-character",
+                "nl-default-prompt-v4-short",
+                "nl-default-prompt-v4-medium",
+                "nl-default-prompt-v4-long",
+            )
+            for resource_id in resource_ids:
+                with self.subTest(resource_id=resource_id):
+                    self.assertTrue(
+                        (install_root / "manifests" / "resources" / f"{resource_id}.json").is_file()
+                    )
+
     def test_default_probe_rejects_gpu_ocr_result_outside_cpu_tolerance(self) -> None:
         probes = _probes_module()
         with tempfile.TemporaryDirectory() as temporary_name:
@@ -816,6 +877,50 @@ class SourceBootstrapInstallTests(unittest.TestCase):
             )
 
             self.assertIsNone(results["ocr-cpu"])
+
+    def test_existing_ocr_resource_runs_cpu_and_gpu_offline_probes(self) -> None:
+        probes = _probes_module()
+        with tempfile.TemporaryDirectory() as temporary_name:
+            root = Path(temporary_name)
+            cpu_runtime = root / "runtimes" / "ocr-paddle"
+            gpu_runtime = root / "runtimes" / "ocr-paddle-gpu"
+            resource = root / "resource-library" / "ocr-models" / "fixture"
+            for target in (cpu_runtime, gpu_runtime, resource):
+                target.mkdir(parents=True)
+            (resource / "resource.json").write_text(
+                json.dumps({"fingerprint": "a" * 64}), encoding="utf-8"
+            )
+            components = (
+                SimpleNamespace(
+                    component=SimpleNamespace(component_id="ocr-cpu"),
+                    variant=SimpleNamespace(name="cpu"),
+                ),
+                SimpleNamespace(
+                    component=SimpleNamespace(component_id="ocr-gpu"),
+                    variant=SimpleNamespace(name="cuda"),
+                ),
+            )
+
+            def runner(command, **_kwargs):
+                device = command[-1]
+                output = json.dumps(
+                    {
+                        "kind": "ocr",
+                        "device": "cpu" if device == "cpu" else "gpu:0",
+                        "resultCount": 1,
+                        "texts": ["offline"],
+                    }
+                )
+                return subprocess.CompletedProcess(command, 0, output, "")
+
+            results = probes.run_offline_probes(
+                components,
+                component_targets={"ocr-cpu": cpu_runtime, "ocr-gpu": gpu_runtime},
+                ocr_resource_target=resource,
+                runner=runner,
+            )
+
+            self.assertEqual({"ocr-cpu": True, "ocr-gpu": True}, results)
 
     def test_runtime_manifest_uses_selected_caption_cpu_lock(self) -> None:
         generator = _runtime_manifest_generator()
@@ -1276,6 +1381,23 @@ class SourceBootstrapInstallTests(unittest.TestCase):
             self.assertEqual(("core", "fixture-resource"), second.skipped_component_ids)
             self.assertEqual([], calls)
 
+            (source / "__init__.py").write_text("VALUE = 'changed'\n", encoding="ascii")
+            third = install_module.install_project(
+                project_root=root,
+                source_root=root,
+                manifest=manifest,
+                accelerator="cpu",
+                base_runtime=base,
+                fetch_artifact=fetch,
+                probe_component=probe,
+                write_runtime_manifest=_write_fixture_runtime_manifest,
+                require_mandatory_e621=False,
+            )
+
+            self.assertEqual(("core",), third.installed_component_ids)
+            self.assertEqual(("fixture-resource",), third.skipped_component_ids)
+            self.assertEqual(["core-cpu-wheel"], calls)
+
     def test_offline_probe_failure_preserves_exit_code_and_stderr(self) -> None:
         probes = _probes_module()
         with tempfile.TemporaryDirectory() as temporary_name:
@@ -1331,31 +1453,44 @@ class SourceBootstrapInstallTests(unittest.TestCase):
             self.assertTrue(any("Offline probe started: core" in event for event in events))
             self.assertTrue(any("Offline probe passed: core" in event for event in events))
 
-    def test_default_probe_results_only_passes_pending_components_to_probe_runner(self) -> None:
+    def test_default_probe_results_adds_installed_companion_without_rewriting_it(self) -> None:
         install_module = _install_module()
         probes = _probes_module()
         with tempfile.TemporaryDirectory() as temporary_name:
             root = Path(temporary_name)
             target = root / "runtimes" / "core"
             target.mkdir(parents=True)
-            item = SimpleNamespace(
-                component=SimpleNamespace(component_id="core"),
-                variant=SimpleNamespace(name="cpu"),
-                runtime_id="core",
-                lock_name="core",
+            policy = SimpleNamespace(
+                component=SimpleNamespace(component_id="policy"),
+                variant=SimpleNamespace(name="cuda"),
+                runtime_id="policy",
+                lock_name="policy",
+            )
+            quality = SimpleNamespace(
+                component=SimpleNamespace(component_id="quality-stack"),
+                variant=SimpleNamespace(name="shared"),
+                runtime_id=None,
+                lock_name=None,
             )
             with (
-                mock.patch.object(install_module, "_write_runtime_manifest_at"),
-                mock.patch.object(probes, "run_offline_probes", return_value={"core": True}) as run,
+                mock.patch.object(install_module, "_write_runtime_manifest_at") as write_manifest,
+                mock.patch.object(
+                    probes,
+                    "run_offline_probes",
+                    return_value={"policy": True, "quality-stack": True},
+                ) as run,
             ):
                 result = install_module._default_probe_results(
                     source_root=root,
-                    pending=[item],
-                    targets={"core": target},
+                    pending=[policy],
+                    components=[policy, quality],
+                    targets={"policy": target, "quality-stack": root / "quality-stack"},
                 )
 
-            self.assertEqual({"core": True}, result)
-            self.assertEqual([item], list(run.call_args.args[0]))
+            self.assertEqual({"policy": True, "quality-stack": True}, result)
+            self.assertEqual([policy, quality], list(run.call_args.args[0]))
+            write_manifest.assert_called_once()
+            self.assertIs(policy, write_manifest.call_args.args[1])
 
     def test_source_tree_resource_is_verified_and_never_fetched(self) -> None:
         install_module = _install_module()

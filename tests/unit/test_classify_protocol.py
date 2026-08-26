@@ -78,13 +78,14 @@ def _decision() -> ClassifyCountDecisionV1:
 
 class ClassifyProtocolTests(unittest.TestCase):
     def test_job_config_and_both_schemas_are_strict(self) -> None:
-        job_schema = json.loads((ROOT / "contracts" / "schemas" / "job-config-v2.schema.json").read_text())
+        job_schema = json.loads((ROOT / "contracts" / "schemas" / "job-config-v9.schema.json").read_text())
         classify_schema = json.loads(
             (ROOT / "contracts" / "schemas" / "classify-worker-v1.schema.json").read_text()
         )
-        classify = job_schema["properties"]["classify"]
+        classify = job_schema["$defs"]["classify"]
         self.assertFalse(classify["additionalProperties"])
-        self.assertEqual("^[a-z0-9][a-z0-9-]{0,127}$", classify["properties"]["wikiDataSourceId"]["pattern"])
+        self.assertEqual("#/$defs/resourceId", classify["properties"]["wikiDataSourceId"]["$ref"])
+        self.assertEqual("^[a-z0-9][a-z0-9-]{0,127}$", job_schema["$defs"]["resourceId"]["pattern"])
         self.assertEqual("anima://contracts/classify-worker-v1", classify_schema["$id"])
         self.assertEqual(5, len(classify_schema["oneOf"]))
 

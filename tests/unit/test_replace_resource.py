@@ -26,7 +26,7 @@ class ReplaceResourceTests(unittest.TestCase):
         worker = ReplaceWorker()
         hello = worker.initialize({
             "schemaVersion": 1, "payloadType": "replace_hello_request", "jobId": "job-1", "configHash": "a" * 64,
-            "profile": "e621", "resourceManifestRelativePath": RESOURCE_MANIFEST,
+            "resourceManifestRelativePath": RESOURCE_MANIFEST,
             "resourceFingerprint": RESOURCE_FINGERPRINT,
         }, install_root=install)
         self.assertEqual((True, 1, 86_922), (hello["ready"], hello["indexLoads"], hello["ruleCount"]))
@@ -43,7 +43,7 @@ class ReplaceResourceTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             worker.initialize({}, install_root=install)
 
-    def test_danbooru_cannot_initialize_the_e621_replace_worker(self) -> None:
+    def test_legacy_profile_cannot_initialize_the_profileless_replace_worker(self) -> None:
         worker = ReplaceWorker()
         with self.assertRaises(RuntimeError):
             worker.initialize({

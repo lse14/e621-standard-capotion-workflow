@@ -25,6 +25,7 @@ def _hello(
     drop_appearance: float,
     artist_enabled: bool = True,
     appearance_nl_enabled: bool = True,
+    artist_root_name: str = "dataset",
 ) -> dict[str, object]:
     return {
         "schemaVersion": 1,
@@ -33,6 +34,7 @@ def _hello(
         "configHash": "a" * 64,
         "datasetRoot": str(dataset),
         "overlayRoot": str(overlay),
+        "artistRootName": artist_root_name,
         "resourceManifestRelativePath": None,
         "resourceFingerprint": None,
         "policy": {
@@ -258,6 +260,57 @@ class PolicyWorkerTests(unittest.TestCase):
             })
             outcome = worker.process(item)["outcomes"][0]
             self.assertEqual("prepared", outcome["status"])
+
+    def test_flat_dataset_uses_validated_dataset_root_name_for_artist(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            dataset = root / "10_uiokv"
+            dataset.mkdir()
+            image = dataset / "image.png"
+            image.write_bytes(b"fingerprint-only")
+            (dataset / "image.json").write_text(
+                json.dumps(_business(appearance=["white hair"], nl="A person smiles.")),
+                encoding="utf-8",
+            )
+            overlay = root / ".anima-job-policy"
+            overlay.mkdir()
+            (overlay / "overlay-manifest.json").write_text(
+                json.dumps({"schemaVersion": 1, "jobId": "job-policy", "datasetRoot": str(dataset)}),
+                encoding="utf-8",
+            )
+            try:
+                worker = PolicyWorker()
+                worker.initialize(
+                    _hello(
+                        dataset,
+                        overlay,
+                        drop_nl=0.0,
+                        drop_appearance=0.0,
+                        artist_root_name="10_uiokv",
+                    ),
+                    install_root=root,
+                )
+                info = image.stat()
+                items = parse_process({
+                    "schemaVersion": 1,
+                    "payloadType": "policy_process_request",
+                    "items": [{
+                        "schemaVersion": 1,
+                        "sampleId": 1,
+                        "leaseId": "lease-policy-flat",
+                        "relativeImagePath": "image.png",
+                        "annotationKey": "image",
+                        "imageSize": info.st_size,
+                        "imageMtimeNs": info.st_mtime_ns,
+                        "imageFileId": None,
+                    }],
+                })
+                outcome = worker.process(items)["outcomes"][0]
+            except Exception as exc:
+                self.fail(f"flat named datasets must be accepted: {exc}")
+            self.assertEqual("prepared", outcome["status"])
+            prepared = overlay / Path(str(outcome["preparedRelativePath"]).replace("\\", "/"))
+            self.assertEqual("@uiokv", json.loads(prepared.read_text(encoding="utf-8"))["artist"])
 
 
 if __name__ == "__main__":

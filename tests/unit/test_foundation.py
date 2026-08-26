@@ -40,10 +40,8 @@ from anima_core.workspace import prepare_dataset
 
 def _job_row(job_id: str, dataset_root: Path) -> dict[str, object]:
     config = JobConfig(
-        profile="e621", workMode="in_place", overwriteMode="incremental", sourceRoot=str(dataset_root),
-        countReview=None, schemaVersion=2,
+        workMode="in_place", overwriteMode="incremental", sourceRoot=str(dataset_root), schemaVersion=9,
     )
-    config.nl["promptVersion"] = "nl-default-prompt-v1"
     return {
         "job_id": job_id,
         "config_schema_version": config.schemaVersion,

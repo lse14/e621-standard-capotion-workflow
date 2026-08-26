@@ -121,7 +121,7 @@ class ResourceCatalogTests(unittest.TestCase):
             "dropoutModel": "dropout-default",
         }
         (self.root / "defaults.json").write_text(
-            json.dumps({"schemaVersion": 1, "defaults": self.ids}), encoding="utf-8"
+            json.dumps({"schemaVersion": 3, "defaults": self.ids}), encoding="utf-8"
         )
         self._write_package("replacement-index", "default", self.ids["replacementIndex"], documentation=True)
         self._write_package("classification-index", "default", self.ids["classificationIndex"])
@@ -317,19 +317,9 @@ class ResourceCatalogTests(unittest.TestCase):
         path.write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
         return path
 
-    def _use_profile_defaults(self, *, tagging_model: str, classification_index: str) -> None:
+    def _use_current_defaults(self) -> None:
         (self.root / "defaults.json").write_text(
-            json.dumps({
-                "schemaVersion": 2,
-                "defaults": {
-                    "e621": self.ids,
-                    "danbooru": {
-                        "taggingModel": tagging_model,
-                        "classificationIndex": classification_index,
-                        "dropoutModel": self.ids["dropoutModel"],
-                    },
-                },
-            }),
+            json.dumps({"schemaVersion": 3, "defaults": self.ids}),
             encoding="utf-8",
         )
 
@@ -346,16 +336,16 @@ class ResourceCatalogTests(unittest.TestCase):
         second = catalog.scan().package("replacement-index", self.ids["replacementIndex"], verify_hashes=False)
         self.assertEqual(fingerprint, second.fingerprint)
 
-    def test_v2_defaults_allow_an_e621_only_distribution(self) -> None:
-        (self.root / "defaults.json").write_text(
-            json.dumps({"schemaVersion": 2, "defaults": {"e621": self.ids}}),
-            encoding="utf-8",
-        )
-
+    def test_schema3_defaults_are_flat_and_profile_independent(self) -> None:
+        self._use_current_defaults()
         snapshot = ResourceCatalog(self.root).scan()
+        api = snapshot.api_dict()
 
-        self.assertEqual({"e621": self.ids}, snapshot.defaults)
-        self.assertEqual({"e621"}, set(snapshot.api_dict()["profiles"]))
+        self.assertEqual(self.ids, snapshot.defaults)
+        self.assertEqual(self.ids, snapshot.defaults_for("e621"))
+        self.assertEqual(self.ids, snapshot.defaults_for("danbooru"))
+        self.assertEqual(self.ids, api["defaults"])
+        self.assertNotIn("profiles", api)
 
     def test_scan_is_size_only_but_preflight_hash_verification_rejects_tampering(self) -> None:
         catalog = ResourceCatalog(self.root)
@@ -394,16 +384,13 @@ class ResourceCatalogTests(unittest.TestCase):
         with self.assertRaisesRegex(ResourceCatalogError, "default resources are unavailable"):
             ResourceCatalog(self.root).scan()
 
-    def test_v2_defaults_isolate_missing_danbooru_resources(self) -> None:
-        self._use_profile_defaults(tagging_model="missing-danbooru-tagger", classification_index="missing-danbooru-index")
+    def test_schema3_api_publishes_optional_danbooru_placeholders_without_profiles(self) -> None:
+        self._use_current_defaults()
         snapshot = ResourceCatalog(self.root).scan()
         api = snapshot.api_dict()
-        self.assertTrue(api["profiles"]["e621"]["available"])
-        self.assertFalse(api["profiles"]["danbooru"]["available"])
-        self.assertEqual(
-            {"missing-danbooru-tagger", "missing-danbooru-index"},
-            {item["resourceId"] for item in api["profiles"]["danbooru"]["missingDefaults"]},
-        )
+        self.assertEqual(3, api["schemaVersion"])
+        self.assertEqual(self.ids, api["defaults"])
+        self.assertNotIn("profiles", api)
         placeholders = {
             item["resourceId"]: item
             for item in api["resources"]
@@ -422,12 +409,12 @@ class ResourceCatalogTests(unittest.TestCase):
             "local-only",
             placeholders["caption-danbooru-wd-eva02-large-v3"]["distribution"]["mode"],
         )
-        self.assertEqual(self.ids, snapshot.defaults_for("e621"))
+        self.assertEqual(self.ids, snapshot.defaults_for())
 
     def test_manifest_v2_exposes_distribution_categories_and_compatibility(self) -> None:
         resource_id = "caption-danbooru-cl-tagger-v2-00"
         manifest_path = self._write_v2_tagger(resource_id)
-        self._use_profile_defaults(tagging_model=resource_id, classification_index="missing-danbooru-index")
+        self._use_current_defaults()
         snapshot = ResourceCatalog(self.root).scan()
         package = snapshot.package("tagging-model", resource_id, verify_hashes=True, profile="danbooru")
         first_fingerprint = package.fingerprint
@@ -435,7 +422,11 @@ class ResourceCatalogTests(unittest.TestCase):
         self.assertEqual("local-only", package.distribution["mode"])
 
         resource = next(item for item in snapshot.api_dict()["resources"] if item["resourceId"] == resource_id)
-        self.assertEqual("unavailable", resource["compatibility"]["status"])
+        self.assertEqual("incompatible", resource["compatibility"]["status"])
+        self.assertEqual(
+            self.ids["classificationIndex"],
+            resource["compatibility"]["classificationResourceId"],
+        )
         self.assertEqual(["meta", "rating", "quality"], resource["excludedCategories"])
         self.assertEqual(
             {"general": 0.55, "character": 0.55, "copyright": 0.55},
@@ -480,7 +471,7 @@ class ResourceCatalogTests(unittest.TestCase):
     def test_release_copy_excludes_local_only_packages_and_detects_leaks(self) -> None:
         resource_id = "caption-danbooru-cl-tagger-v2-00"
         self._write_v2_tagger(resource_id)
-        self._use_profile_defaults(tagging_model=resource_id, classification_index="missing-danbooru-index")
+        self._use_current_defaults()
         destination = Path(self.temporary.name) / "release-resource-library"
         result = copy_distributable(self.root, destination)
         self.assertEqual([resource_id], result["excludedLocalOnlyResourceIds"])
@@ -488,7 +479,9 @@ class ResourceCatalogTests(unittest.TestCase):
 
         released = ResourceCatalog(destination).scan()
         self.assertEqual(set(self.ids.values()), {package.resource_id for package in released.packages})
-        self.assertTrue(released.api_dict()["profiles"]["e621"]["available"])
+        self.assertEqual(self.ids, released.defaults)
+        self.assertEqual((), released.missing_defaults())
+        self.assertNotIn("profiles", released.api_dict())
         assert_no_local_only_leaks(destination)
 
         leaked = destination / "tagging-models" / resource_id / "model.onnx"
@@ -768,11 +761,21 @@ class ResourceCatalogTests(unittest.TestCase):
             self.skipTest("existing OCR resource is blocked by Windows ACL")
         self.assertEqual("368c31b8af0e96cc61239097688a457a050dfcc1205d054d4e631bd20529c9ca", fingerprints[OCR_RESOURCE_ID])
         self.assertEqual(set(expected_existing) | {OCR_RESOURCE_ID}, set(fingerprints))
-        self.assertEqual(2, snapshot.defaults_schema_version)
-        self.assertEqual({"danbooru", "e621"}, set(snapshot.api_dict()["profiles"]))
+        self.assertEqual(3, snapshot.defaults_schema_version)
         self.assertEqual(
             {
-                "taggingModel": "caption-danbooru-cl-tagger-v2-00",
+                "replacementIndex": "replace-e621-20260726-v2",
+                "taggingModel": "caption-e621-eva02-large-full-v1",
+                "classificationIndex": "classify-e621-20260724-v1",
+                "dropoutModel": "lse14-scorer-5k-v1",
+            },
+            snapshot.defaults,
+        )
+        self.assertNotIn("profiles", snapshot.api_dict())
+        self.assertEqual(
+            {
+                "replacementIndex": "replace-e621-20260726-v2",
+                "taggingModel": "caption-e621-eva02-large-full-v1",
                 "classificationIndex": "classify-e621-20260724-v1",
                 "dropoutModel": "lse14-scorer-5k-v1",
             },

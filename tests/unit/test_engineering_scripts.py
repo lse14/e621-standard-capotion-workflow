@@ -26,11 +26,11 @@ OCR_GPU_RESET = ROOT / "Reset-OcrGpuRuntime.bat"
 OCR_GPU_CLEAN = ROOT / "Clean-OcrGpuArtifacts.bat"
 CLEAN_SCRIPT = ROOT / "packaging" / "scripts" / "Clean-LocalArtifacts.ps1"
 BROWSER_SCRIPT = ROOT / "packaging" / "scripts" / "Install-FrontendBrowser.ps1"
-PROJECT_NODE = ROOT / ".toolchains" / "node-v24.18.0-win-x64" / "node.exe"
+PROJECT_NODE = ROOT / ".runtime-build" / "node-v24.18.0-win-x64" / "node.exe"
 VERIFY_SCRIPT = ROOT / "packaging" / "scripts" / "Verify-Project.ps1"
 CORE_PYTHON = ROOT / ".runtime-build" / "runtimes" / "core" / "python.exe"
-TOOLCHAIN_PYTHON = ROOT / ".toolchains" / "Python-3.11.15" / "PCbuild" / "amd64" / "python.exe"
-PROJECT_NPM = ROOT / ".toolchains" / "node-v24.18.0-win-x64" / "npm.cmd"
+TOOLCHAIN_PYTHON = CORE_PYTHON
+PROJECT_NPM = ROOT / ".runtime-build" / "node-v24.18.0-win-x64" / "npm.cmd"
 README = ROOT / "README.md"
 RULES = ROOT / "RULES.md"
 MODELS_README = ROOT / "models" / "README.md"
@@ -932,7 +932,7 @@ class FrontendBrowserScriptTests(unittest.TestCase):
         self.assertEqual(str(PROJECT_NODE), record["Node"])
         self.assertEqual("v24.18.0", record["NodeVersion"])
         self.assertEqual(
-            str(ROOT / ".toolchains" / "node-v24.18.0-win-x64" / "npm.cmd"),
+            str(PROJECT_NPM),
             record["Npm"],
         )
         self.assertEqual("11.16.0", record["NpmVersion"])
@@ -962,7 +962,7 @@ class FrontendBrowserScriptTests(unittest.TestCase):
     def test_wrong_local_npm_version_is_rejected_and_no_bare_tool_commands_are_used(self) -> None:
         with tempfile.TemporaryDirectory(dir=ROOT) as temporary:
             project = Path(temporary)
-            toolchain = project / ".toolchains" / "node-v24.18.0-win-x64"
+            toolchain = project / ".runtime-build" / "node-v24.18.0-win-x64"
             toolchain.mkdir(parents=True)
             os.link(PROJECT_NODE, toolchain / "node.exe")
             (toolchain / "npm.cmd").write_text("@echo 0.0.0\r\n", encoding="ascii")
@@ -1008,30 +1008,36 @@ class VerifyProjectScriptTests(unittest.TestCase):
         self.assertEqual(0, completed.returncode, completed.stdout + completed.stderr)
 
     def test_isolated_release_install_root_selects_its_embedded_core_and_ocr_state(self) -> None:
-        release_root = Path(r"E:\AnimaOptionalOcrReleaseValidation-20260805-01\final-none-20260806-02")
-        self.assertTrue(release_root.is_dir(), "optional OCR release fixture is missing")
-        command = (
-            "$ErrorActionPreference='Stop'; "
-            f". {_ps_literal(VERIFY_SCRIPT)} -ProjectRoot {_ps_literal(ROOT)} -InstallRoot {_ps_literal(release_root)}; "
-            "$gate = @(Get-Gates -Level Fast)[0]; "
-            "[pscustomobject]@{runtimeRoot=$script:runtimeRoot; corePython=$script:corePython; ocrMode=$script:ocrMode; gateExecutable=$gate.Executable; gateArguments=@($gate.Arguments)} | ConvertTo-Json -Compress"
-        )
-        completed = _powershell(command)
+        with tempfile.TemporaryDirectory(dir=ROOT) as temporary:
+            release_root = Path(temporary) / "release"
+            shutil.copytree(
+                ROOT / ".runtime-build" / "runtimes" / "core",
+                release_root / "runtimes" / "core",
+                copy_function=os.link,
+            )
+            (release_root / "resource-library").mkdir()
+            command = (
+                "$ErrorActionPreference='Stop'; "
+                f". {_ps_literal(VERIFY_SCRIPT)} -ProjectRoot {_ps_literal(ROOT)} -InstallRoot {_ps_literal(release_root)}; "
+                "$gate = @(Get-Gates -Level Fast)[0]; "
+                "[pscustomobject]@{runtimeRoot=$script:runtimeRoot; corePython=$script:corePython; ocrMode=$script:ocrMode; gateExecutable=$gate.Executable; gateArguments=@($gate.Arguments)} | ConvertTo-Json -Compress"
+            )
+            completed = _powershell(command)
 
-        self.assertEqual(0, completed.returncode, completed.stdout + completed.stderr)
-        actual = json.loads(completed.stdout)
-        expected_core = str(release_root / "runtimes" / "core" / "python.exe")
-        self.assertEqual(str(release_root), actual["runtimeRoot"])
-        self.assertEqual(expected_core, actual["corePython"])
-        self.assertEqual("None", actual["ocrMode"])
-        self.assertEqual(expected_core, actual["gateExecutable"])
-        self.assertEqual(
-            [
-                "-B", "-I", str(EMBEDDED_SUITE), "--level", "fast", "--ocr-mode", "none",
-                "--install-root", str(release_root),
-            ],
-            actual["gateArguments"],
-        )
+            self.assertEqual(0, completed.returncode, completed.stdout + completed.stderr)
+            actual = json.loads(completed.stdout)
+            expected_core = str(release_root / "runtimes" / "core" / "python.exe")
+            self.assertEqual(str(release_root), actual["runtimeRoot"])
+            self.assertEqual(expected_core, actual["corePython"])
+            self.assertEqual("None", actual["ocrMode"])
+            self.assertEqual(expected_core, actual["gateExecutable"])
+            self.assertEqual(
+                [
+                    "-B", "-I", str(EMBEDDED_SUITE), "--level", "fast", "--ocr-mode", "none",
+                    "--install-root", str(release_root),
+                ],
+                actual["gateArguments"],
+            )
 
     def test_ocr_runtime_lifecycle_reports_assembled_without_adding_a_gate(self) -> None:
         source = VERIFY_SCRIPT.read_text(encoding="utf-8")
@@ -1332,8 +1338,8 @@ class ReadmeDocumentationTests(unittest.TestCase):
         required_text = (
             r".runtime-build\runtimes\core\python.exe",
             r".toolchains\Python-3.11.15\PCbuild\amd64\python.exe",
-            r".toolchains\node-v24.18.0-win-x64\node.exe",
-            r".toolchains\node-v24.18.0-win-x64\npm.cmd",
+            r".runtime-build\node-v24.18.0-win-x64\node.exe",
+            r".runtime-build\node-v24.18.0-win-x64\npm.cmd",
             "Install-WebUI.bat",
             "Start-WebUI.bat",
             "Stop-WebUI.bat",

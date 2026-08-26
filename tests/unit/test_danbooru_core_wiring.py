@@ -59,6 +59,23 @@ class _FixtureDropoutPackage:
         del verify_hashes
 
 
+@dataclass(frozen=True)
+class _FixtureReplacementPackage:
+    library_root: Path
+    package_root: Path
+    manifest_relative_path: str = r"replacement-indexes\fixture-replacement\resource.json"
+    schema_version: int = 1
+    kind: str = "replacement-index"
+    resource_id: str = "fixture-replacement"
+    resource_version: str = "fixture-v1"
+    profile: str = "e621"
+    fingerprint: str = "f" * 64
+    metadata: dict[str, object] | None = None
+
+    def verify_files(self, *, verify_hashes: bool) -> None:
+        del verify_hashes
+
+
 class _StaticCatalog:
     def __init__(self, root: Path, snapshot: ResourceCatalogSnapshot) -> None:
         self.root = root
@@ -82,17 +99,21 @@ def _fixture_catalog(root: Path) -> tuple[_StaticCatalog, ResourcePackage, Resou
         "classification-index",
     )
     cl = next(item for item in taggers if item.runtime_format == "cl-tagger-v2-onnx-v1")
+    replacement = _FixtureReplacementPackage(
+        library,
+        library / "replacement-indexes" / "fixture-replacement",
+        metadata={"ruleCount": 0},
+    )
     dropout = _FixtureDropoutPackage(library, library / "dropout-models" / "fixture-dropout")
     snapshot = ResourceCatalogSnapshot(
-        defaults_schema_version=2,
+        defaults_schema_version=3,
         defaults={
-            "danbooru": {
-                "taggingModel": cl.resource_id,
-                "classificationIndex": classification.resource_id,
-                "dropoutModel": dropout.resource_id,
-            }
+            "replacementIndex": replacement.resource_id,
+            "taggingModel": cl.resource_id,
+            "classificationIndex": classification.resource_id,
+            "dropoutModel": dropout.resource_id,
         },
-        packages=(*taggers, classification, dropout),  # type: ignore[arg-type]
+        packages=(*taggers, classification, replacement, dropout),  # type: ignore[arg-type]
         invalid=(),
     )
     return _StaticCatalog(library, snapshot), cl, classification
@@ -106,11 +127,10 @@ def _config(
     active: bool,
 ) -> JobConfig:
     config = JobConfig(
-        profile="danbooru",
         workMode="in_place",
         overwriteMode="incremental",
         sourceRoot=str(dataset),
-        schemaVersion=4,
+        schemaVersion=9,
     )
     config.caption.clear()
     config.caption.update({
@@ -119,6 +139,8 @@ def _config(
         "categoryThresholds": {"general": 0.61, "character": 0.52, "copyright": 0.55},
         "overwriteTxt": False,
         "resourceId": cl.resource_id,
+        "inputTxtMode": "tag",
+        "taggerFallbackOnMissingTxt": True,
     })
     config.classify.update({
         "enabled": active,
@@ -126,12 +148,16 @@ def _config(
     })
     config.replace.clear()
     config.replace.update({"enabled": False, "indexMode": "bundled"})
+    config.ocr["enabled"] = False
     config.nl.update({"enabled": False, "apiEnabled": False})
     assert config.countReview is not None
     config.countReview.update({"enabled": False, "protocolVersion": "count-review-v1"})
     config.dropout["enabled"] = active
+    config.dropout["artist"]["enabled"] = False
     config.dropout["quality"]["enabled"] = False
     config.dropout["quality"]["resourceId"] = "fixture-dropout"
+    assert config.tokenBudget is not None
+    config.tokenBudget["enabled"] = False
     return config
 
 
@@ -211,7 +237,7 @@ class _DanbooruClassifyTransport:
 
 
 class DanbooruCoreWiringTests(unittest.TestCase):
-    def test_preflight_freezes_profile_resources_without_a_replace_resource(self) -> None:
+    def test_preflight_freezes_current_resources_without_a_task_profile(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             dataset = root / "dataset"
@@ -222,18 +248,16 @@ class DanbooruCoreWiringTests(unittest.TestCase):
             preparation = JobPreparationService(root / "state.db", resource_catalog=catalog)  # type: ignore[arg-type]
             try:
                 summary = preparation.preflight(config.to_dict())
-                self.assertIsNone(summary.replaceIndex)
-                self.assertEqual({"caption", "classify", "dropout"}, set(summary.resources))
+                self.assertEqual("fixture-replacement", summary.replaceIndex["resourceId"])
+                self.assertEqual({"caption", "classify", "replace", "dropout"}, set(summary.resources))
                 database = StateDatabase.open(root / "state.db")
                 try:
                     job = database.get_job(summary.jobId)
                     frozen = json.loads(str(job["config_json"]))
-                    self.assertEqual((4, "danbooru"), (
-                        job["config_schema_version"], job["profile"],
-                    ))
-                    self.assertEqual(
-                        {"enabled": False, "indexMode": "bundled"}, frozen["replace"]
-                    )
+                    self.assertEqual(9, job["config_schema_version"])
+                    self.assertNotIn("profile", job.keys())
+                    self.assertNotIn("profile", frozen)
+                    self.assertEqual("fixture-replacement", frozen["replace"]["resourceId"])
                     self.assertEqual(
                         str(classification.metadata["wikiDataSourceId"]),
                         frozen["classify"]["wikiDataSourceId"],
@@ -281,7 +305,7 @@ class DanbooruCoreWiringTests(unittest.TestCase):
             finally:
                 preparation.close()
 
-    def test_missing_local_tagger_has_an_actionable_no_fallback_error(self) -> None:
+    def test_missing_selected_tagger_reports_the_current_resource_id(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             dataset = root / "dataset"
@@ -301,28 +325,31 @@ class DanbooruCoreWiringTests(unittest.TestCase):
                 ),
             )
             config = JobConfig(
-                profile="danbooru",
                 workMode="in_place",
                 overwriteMode="incremental",
                 sourceRoot=str(dataset),
-                schemaVersion=4,
+                schemaVersion=9,
             )
             config.caption["resourceId"] = "caption-danbooru-cl-tagger-v2-00"
             config.classify["resourceId"] = "danbooru-classify-20260727-v1"
             config.replace.clear()
             config.replace.update({"enabled": False, "indexMode": "bundled"})
+            config.ocr["enabled"] = False
             config.nl.update({"enabled": False, "apiEnabled": False})
+            assert config.tokenBudget is not None
+            config.tokenBudget["enabled"] = False
             service = JobPreparationService(
                 root / "state.db",
                 resource_catalog=missing_tagger_catalog,  # type: ignore[arg-type]
             )
             with self.assertRaisesRegex(
                 JobPreflightError,
-                "manual_install_required.*cella110n/cl_tagger_v2.*Automatic download.*fallback",
+                "selected tagging-model is unavailable: caption-danbooru-cl-tagger-v2-00",
             ):
                 service.preflight(config.to_dict())
+            service.close()
 
-    def test_classify_runner_uses_danbooru_v4_identity_and_persists_evidence(self) -> None:
+    def test_classify_runner_uses_frozen_resource_identity_and_persists_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             dataset = root / "dataset"
@@ -420,14 +447,14 @@ class DanbooruCoreWiringTests(unittest.TestCase):
                         database.get_count_observation(summary.jobId, 1)["status"],
                     )
                     frozen = json.loads(str(database.get_job(summary.jobId)["config_json"]))
-                    self.assertNotIn("resourceId", frozen["replace"])
+                    self.assertEqual("fixture-replacement", frozen["replace"]["resourceId"])
                 finally:
                     database.close()
                     pipeline.close()
             finally:
                 preparation.close()
 
-    def test_repair_copies_the_exact_v4_profile_resources_and_thresholds(self) -> None:
+    def test_repair_copies_the_exact_v9_resources_and_thresholds(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             dataset = root / "dataset"
@@ -473,18 +500,17 @@ class DanbooruCoreWiringTests(unittest.TestCase):
                     child = database.get_job(result.repairJobId)
                     self.assertEqual(
                         (
-                            4,
-                            "danbooru",
+                            9,
                             parent["config_json"],
                             parent["config_hash"],
                         ),
                         (
                             child["config_schema_version"],
-                            child["profile"],
                             child["config_json"],
                             child["config_hash"],
                         ),
                     )
+                    self.assertNotIn("profile", child.keys())
                 finally:
                     database.close()
             finally:

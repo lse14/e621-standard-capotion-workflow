@@ -175,7 +175,7 @@ function Remove-ValidatedFrontendTarget([string]$Project, [string]$Frontend, [st
 }
 
 $project = Assert-SafeProjectRoot $ProjectRoot
-$toolchain = Assert-ExistingSafePath $project (Join-Path $project '.toolchains\node-v24.18.0-win-x64') 'project Node toolchain' $true
+$toolchain = Assert-ExistingSafePath $project (Join-Path $project '.runtime-build\node-v24.18.0-win-x64') 'project Node toolchain' $true
 $nodeDirectory = $toolchain
 $node = Assert-ExistingSafePath $project (Join-Path $nodeDirectory 'node.exe') 'project node executable' $false
 $npm = Assert-ExistingSafePath $project (Join-Path $nodeDirectory 'npm.cmd') 'project npm executable' $false

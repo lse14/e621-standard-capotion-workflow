@@ -195,6 +195,7 @@ class PolicyRunner:
         payload = self._exchange("hello", {
             "schemaVersion": 1, "payloadType": "policy_hello_request", "jobId": self.job_id,
             "configHash": config_hash, "datasetRoot": str(job["dataset_root"]), "overlayRoot": overlay,
+            "artistRootName": Path(str(job["source_root"])).name,
             "resourceManifestRelativePath": manifest if fingerprint is not None else None,
             "resourceFingerprint": fingerprint, "policy": policy,
         }, config_hash)

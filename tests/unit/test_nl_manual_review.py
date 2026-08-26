@@ -53,9 +53,11 @@ class NlManualReviewTests(unittest.TestCase):
             name = "image" if sample_id == 1 else f"image-{sample_id}"
             Image.new("RGB", (2, 2), "white").save(dataset / f"{name}.png")
             (dataset / f"{name}.json").write_bytes(serialize_annotation_json({"nl": "", "tags": []}))
-        config = JobConfig(profile="e621", workMode="in_place", overwriteMode="incremental", sourceRoot=str(dataset))
-        config.caption["enabled"] = config.classify["enabled"] = config.replace["enabled"] = False
+        config = JobConfig(workMode="in_place", overwriteMode="incremental", sourceRoot=str(dataset), schemaVersion=9)
+        config.caption["enabled"] = config.classify["enabled"] = config.replace["enabled"] = config.ocr["enabled"] = False
         config.countReview["enabled"] = False  # type: ignore[index]
+        assert config.tokenBudget is not None
+        config.tokenBudget["enabled"] = False
         config.nl.update({"apiEnabled": True, "useImage": True, "reuseOriginalNl": False, "systemPrompt": "describe"})
         preparation = JobPreparationService(root / "state.db")
         job_id = preparation.preflight(config.to_dict()).jobId
@@ -63,7 +65,7 @@ class NlManualReviewTests(unittest.TestCase):
         database = StateDatabase.open(root / "state.db")
         samples = database.page_samples(job_id, limit=sample_count)
         scheduler = BoundedScheduler(database)
-        for module in ("caption", "classify", "replace"):
+        for module in ("caption", "classify", "replace", "ocr"):
             scheduler.start_module(job_id, module, enabled=False, profile="e621")
         scheduler.start_module(job_id, "nl", enabled=True, profile="e621")
         database.set_job_status(job_id, "reviewing", current_module_id="nl")

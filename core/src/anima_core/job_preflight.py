@@ -217,6 +217,35 @@ class JobPreparationService:
             raise ResourceCatalogError(f"{field} resourceId is invalid")
         return value
 
+    def _restore_missing_bundled_resource_ids(self, raw_config: object) -> object:
+        """Restore resource IDs from the catalog before reading older ready jobs."""
+        if not isinstance(raw_config, dict) or raw_config.get("schemaVersion") != 9:
+            return raw_config
+        token_budget = raw_config.get("tokenBudget")
+        include_tokenizers = isinstance(token_budget, dict) and token_budget.get("enabled") is True
+        defaults = self.resource_catalog.scan(include_tokenizers=include_tokenizers).defaults_for()
+
+        def restore(section_name: str, default_key: str) -> None:
+            section = raw_config.get(section_name)
+            if isinstance(section, dict) and "resourceId" not in section:
+                section["resourceId"] = defaults[default_key]
+
+        restore("caption", "taggingModel")
+        classify = raw_config.get("classify")
+        if isinstance(classify, dict) and classify.get("indexMode") == "bundled" and "resourceId" not in classify:
+            classify["resourceId"] = defaults["classificationIndex"]
+        replace = raw_config.get("replace")
+        if isinstance(replace, dict) and replace.get("indexMode") == "bundled" and "resourceId" not in replace:
+            replace["resourceId"] = defaults["replacementIndex"]
+        dropout = raw_config.get("dropout")
+        quality = dropout.get("quality") if isinstance(dropout, dict) else None
+        if isinstance(quality, dict) and "resourceId" not in quality:
+            quality["resourceId"] = defaults["dropoutModel"]
+        ocr = raw_config.get("ocr")
+        if isinstance(ocr, dict) and ocr.get("enabled") is True and "resourceId" not in ocr:
+            ocr["resourceId"] = OCR_MODEL_RESOURCE_ID
+        return raw_config
+
     @staticmethod
     def _freeze_reference(section: dict[str, object], package: ResourcePackage) -> None:
         section["resourceId"] = package.resource_id
@@ -493,6 +522,7 @@ class JobPreparationService:
         *,
         feature_name: str,
         name_placeholder: str,
+        flat_root_name: str | None = None,
     ) -> None:
         invalid_count = 0
         examples: list[str] = []
@@ -503,7 +533,8 @@ class JobPreparationService:
         for row in rows:
             relative = str(row["relative_image_path"]).replace("\\", "/")
             try:
-                character_name(relative)
+                candidate = f"{flat_root_name}/{relative}" if flat_root_name is not None and "/" not in relative else relative
+                character_name(candidate)
             except ValueError:
                 invalid_count += 1
                 if len(examples) < 8:
@@ -567,7 +598,11 @@ class JobPreparationService:
                 )
             if config.dropout.get("enabled") is True and config.dropout.get("artist", {}).get("enabled") is True:
                 self._validate_named_folder_manifest(
-                    database, job_id, feature_name="Dropout artist", name_placeholder="name"
+                    database,
+                    job_id,
+                    feature_name="Dropout artist",
+                    name_placeholder="name",
+                    flat_root_name=source.value.name,
                 )
             config = self._freeze_nl_attempt_budget(database, job_id, config, scoped)
             database.set_job_status(job_id, "ready")
@@ -604,8 +639,10 @@ class JobPreparationService:
             job = database.get_job(job_id)
             if job["status"] != "ready":
                 raise JobPreflightError("only a ready preflight job can prepare a workspace")
-            config = config_from_dict(json.loads(str(job["config_json"])))
-            previous_hash = config.config_hash
+            raw_config = json.loads(str(job["config_json"]))
+            raw_config = self._restore_missing_bundled_resource_ids(raw_config)
+            config = config_from_dict(raw_config)
+            previous_hash = str(job["config_hash"])
             try:
                 self._resolve_resources(config, freeze=False)
             except CustomClassificationResourceError as exc:

@@ -126,7 +126,7 @@
   "oneOf": [
     {
       "type": "object",
-      "required": ["schemaVersion", "payloadType", "jobId", "configHash", "datasetRoot", "overlayRoot", "resourceManifestRelativePath", "resourceFingerprint", "policy"],
+      "required": ["schemaVersion", "payloadType", "jobId", "configHash", "datasetRoot", "overlayRoot", "artistRootName", "resourceManifestRelativePath", "resourceFingerprint", "policy"],
       "properties": {
         "schemaVersion": {"const": 1},
         "payloadType": {"const": "policy_hello_request"},
@@ -134,6 +134,7 @@
         "configHash": {"$ref": "#/$defs/sha256"},
         "datasetRoot": {"$ref": "#/$defs/absolutePath"},
         "overlayRoot": {"$ref": "#/$defs/absolutePath"},
+        "artistRootName": {"type": "string", "minLength": 1, "maxLength": 512},
         "resourceManifestRelativePath": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/relativePath"}]},
         "resourceFingerprint": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/sha256"}]},
         "policy": {"$ref": "#/$defs/policyConfig"}

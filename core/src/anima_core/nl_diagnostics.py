@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import ipaddress
 import re
 import socket
 import ssl
@@ -9,7 +10,7 @@ from collections.abc import Callable
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit, urlunsplit
-from urllib.request import HTTPRedirectHandler, Request, build_opener
+from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
 
 TEST_MESSAGE = "This is an Anima API connectivity test. Reply with one short confirmation sentence."
@@ -29,6 +30,25 @@ _WINDOWS_PATH = re.compile(r"(?i)(?:[a-z]:\\|/)(?:[^\s]+)")
 class _NoRedirectHandler(HTTPRedirectHandler):
     def redirect_request(self, request: Request, fp: Any, code: int, msg: str, headers: Any, newurl: str) -> None:
         return None
+
+
+def _trust_environment_proxy(endpoint: str) -> bool:
+    hostname = urlsplit(endpoint).hostname
+    if hostname is None:
+        return False
+    if hostname.casefold() == "localhost" or hostname.casefold().endswith(".localhost"):
+        return False
+    try:
+        return not ipaddress.ip_address(hostname).is_loopback
+    except ValueError:
+        return True
+
+
+def _default_opener(endpoint: str) -> object:
+    handlers: list[object] = [_NoRedirectHandler()]
+    if not _trust_environment_proxy(endpoint):
+        handlers.insert(0, ProxyHandler({}))
+    return build_opener(*handlers)
 
 
 def _strict_json(data: bytes) -> object:
@@ -142,12 +162,13 @@ class NlDiagnosticClient:
     """Single-request diagnostic traffic kept outside normal NL jobs and worker protocols."""
 
     def __init__(self, *, opener: object | None = None, clock: Callable[[], float] = time.perf_counter) -> None:
-        self._opener = opener if opener is not None else build_opener(_NoRedirectHandler())
+        self._opener = opener
         self._clock = clock
 
     def _request(self, request: Request, *, api_key: str, endpoint: str) -> tuple[bytes | None, str | None, str | None]:
         try:
-            response = self._opener.open(request, timeout=_REQUEST_TIMEOUT_SECONDS)
+            opener = self._opener if self._opener is not None else _default_opener(endpoint)
+            response = opener.open(request, timeout=_REQUEST_TIMEOUT_SECONDS)
             with response:
                 status = response.getcode()
                 if not isinstance(status, int) or status < 200 or status >= 300:

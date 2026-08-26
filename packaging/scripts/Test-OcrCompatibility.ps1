@@ -66,7 +66,7 @@ if (($projectItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne
     throw "reparse point is not allowed: $($projectItem.FullName)"
 }
 $project = $projectItem.FullName
-$projectPython = Assert-ExistingProjectPath $project (Join-Path $project '.toolchains\Python-3.11.15\PCbuild\amd64\python.exe') 'project Python' $false
+$projectPython = Assert-ExistingProjectPath $project (Join-Path $project '.runtime-build\runtimes\core\python.exe') 'project Python' $false
 $driver = Assert-ExistingProjectPath $project (Join-Path $project 'packaging\scripts\ocr_compatibility.py') 'OCR compatibility driver' $false
 $cleanup = Assert-ExistingProjectPath $project (Join-Path $project 'packaging\scripts\Clean-OcrImport.ps1') 'OCR cleanup script' $false
 $workingRoot = [System.IO.Path]::GetFullPath((Join-Path $project '.runtime-build\ocr-import'))

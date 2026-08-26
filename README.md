@@ -91,8 +91,8 @@ Import-TokenizerResources.bat -Apply
 ```text
 .runtime-build\runtimes\core\python.exe
 .toolchains\Python-3.11.15\PCbuild\amd64\python.exe
-.toolchains\node-v24.18.0-win-x64\node.exe
-.toolchains\node-v24.18.0-win-x64\npm.cmd
+.runtime-build\node-v24.18.0-win-x64\node.exe
+.runtime-build\node-v24.18.0-win-x64\npm.cmd
 ```
 
 维护者可运行以下预览/验证入口；只有带 `-Apply` 的命令才会写入项目目录：
