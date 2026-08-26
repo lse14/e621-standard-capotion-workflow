@@ -156,8 +156,8 @@ test.describe("workflow guidance for remaining modules", () => {
 
   test("explains the folder artist mapping independently from the Character preset", async ({ page }) => {
     for (const scenario of [
-      { language: "en" as const, label: "Append folder to JSON artist", firstLine: "Extract the name from the image's first-level folder", character: "independent of the Character preset", preflight: "Import preflight blocks flat or misnamed paths", folder: "1_noartname" },
-      { language: "zh-CN" as const, label: "将目录名追加到 JSON artist", firstLine: "从图片的一级目录提取名称", character: "独立于 Character 预设", preflight: "导入预检会阻断扁平或命名不合规的路径", folder: "1_noartname" },
+      { language: "en" as const, label: "Append folder to JSON artist", firstLine: "Extract the name from the first-level folder or a flat dataset root", character: "independent of the Character preset", preflight: "Import preflight validates the folder or root name", folder: "10_uiokv" },
+      { language: "zh-CN" as const, label: "将目录名追加到 JSON artist", firstLine: "从一级目录或平铺数据集根目录提取名称", character: "独立于 Character 预设", preflight: "导入预检会校验目录或根目录名称", folder: "10_uiokv" },
     ]) {
       await openApp(page, { language: scenario.language });
       await page.locator(".workflow-rail").getByRole("button", { name: /Dropout/ }).click();
