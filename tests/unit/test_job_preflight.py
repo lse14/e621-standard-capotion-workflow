@@ -449,7 +449,7 @@ class JobPreflightTests(unittest.TestCase):
     def test_dropout_artist_accepts_named_first_level_folder_during_preflight(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            source = root / "dataset" / "1_noartname"
+            source = root / "dataset" / "1_artist"
             source.mkdir(parents=True)
             Image.new("RGB", (3, 3), "white").save(source / "image.png")
             config = self._config(source.parent)

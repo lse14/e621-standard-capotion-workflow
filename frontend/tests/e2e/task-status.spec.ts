@@ -69,6 +69,10 @@ const lifecycleStateMatrix = [
 ] as const;
 
 test.describe("task status and issue characterization", () => {
+  test("rejects obsolete JobConfig snapshot fixtures", () => {
+    expect(() => makeSnapshot({ schemaVersion: 8 })).toThrow("only supports JobConfig schema v9");
+  });
+
   test("keeps the task monitor idle when no recent task exists", async ({ page, api }) => {
     const staleJobId = "stale-task-from-previous-session";
     failRoute(api, `GET /api/jobs/${staleJobId}`, "job does not exist", 404);
@@ -431,6 +435,7 @@ test.describe("task status and issue characterization", () => {
 
     await openApp(page, { jobId: jobs[0].jobId, language: "en" });
     const status = page.locator(".task-monitor > .monitor-heading > .status");
+    await expect(status).toHaveText(jobs[0].statusLabel);
     for (const entry of jobs) {
       await selectTask(page, entry.jobId);
       await expect(status).toHaveText(entry.statusLabel);
@@ -443,7 +448,7 @@ test.describe("task status and issue characterization", () => {
   });
 
   test("shows OCR diagnostics and starts OCR repair through the existing endpoint", async ({ page, api }) => {
-    const snapshot = makeSnapshot({ status: "failed", currentModuleId: "ocr", schemaVersion: 5 });
+    const snapshot = makeSnapshot({ status: "failed", currentModuleId: "ocr", schemaVersion: 9 });
     snapshot.ocrDiagnostics = [
       { code: "ocr_total", severity: "info", count: 3 },
       { code: "ocr_new", severity: "info", count: 1 },

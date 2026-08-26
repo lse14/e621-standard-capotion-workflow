@@ -25,9 +25,7 @@ import type {
 
 const LOCAL_ORIGIN = `http://127.0.0.1:${process.env.ANIMA_E2E_PORT ?? "4173"}`;
 const TIMESTAMP = "2026-07-30T00:00:00Z";
-const MODULE_ORDER = ["caption", "classify", "replace", "nl", "count_review", "dropout", "export"] as const;
-const OCR_MODULE_ORDER = ["caption", "classify", "replace", "ocr", "nl", "count_review", "dropout", "export"] as const;
-const V6_MODULE_ORDER = ["caption", "classify", "replace", "ocr", "nl", "count_review", "dropout", "token_budget", "export"] as const;
+const V9_MODULE_ORDER = ["caption", "classify", "replace", "ocr", "nl", "count_review", "dropout", "token_budget", "export"] as const;
 const TRANSPARENT_PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScL4wQAAAABJRU5ErkJggg==",
   "base64",
@@ -154,7 +152,7 @@ export function makeSnapshot({
   status = "ready",
   currentModuleId,
   parentJobId = null,
-  schemaVersion = 3,
+  schemaVersion = 9,
   ocrRuntime = null,
   captionDiagnostics = [],
 }: {
@@ -166,7 +164,8 @@ export function makeSnapshot({
   ocrRuntime?: OcrRuntimeStatus | null;
   captionDiagnostics?: JobSnapshot["captionDiagnostics"];
 } = {}): JobSnapshot {
-  const moduleOrder = schemaVersion >= 6 ? V6_MODULE_ORDER : schemaVersion === 5 ? OCR_MODULE_ORDER : MODULE_ORDER;
+  if (schemaVersion !== 9) throw new Error("mockApi snapshots only supports JobConfig schema v9");
+  const moduleOrder = V9_MODULE_ORDER;
   return {
     job: {
       jobId,
@@ -625,7 +624,7 @@ async function handleApiRequest(scenario: ApiScenario, route: Route, pathname: s
       return fulfillJson(route, { detail: "ocr_resource_install_required: selected OCR resource is unavailable" }, 400);
     }
     const schemaVersion = config && (config as { schemaVersion?: unknown }).schemaVersion;
-    const snapshot = schemaVersion === 7 || schemaVersion === 8 || schemaVersion === 9
+    const snapshot = schemaVersion === 9
       ? makeSnapshot({
         jobId: scenario.preflight.jobId,
         schemaVersion,
@@ -636,10 +635,6 @@ async function handleApiRequest(scenario: ApiScenario, route: Route, pathname: s
           effective: { textDetLimitSideLen: 2560, textBatchSize: 4 }, startupReason: null,
         } : null,
       })
-      : schemaVersion === 6
-      ? makeSnapshot({ jobId: scenario.preflight.jobId, schemaVersion: 6 })
-      : schemaVersion === 5
-      ? makeSnapshot({ jobId: scenario.preflight.jobId, schemaVersion: 5 })
       : snapshotFor(scenario, scenario.preflight.jobId);
     scenario.snapshots.set(scenario.preflight.jobId, snapshot);
     updateJobState(snapshot, "ready");

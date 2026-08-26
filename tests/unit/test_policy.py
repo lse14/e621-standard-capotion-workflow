@@ -55,7 +55,7 @@ class PolicyTests(unittest.TestCase):
     def test_artist_uses_first_directory_and_preserves_suffix(self) -> None:
         self.assertEqual("@Crow (Siranui)", artist_from_image_path(r"1_Crow (Siranui)\image.png"))
         self.assertEqual("@6suan", artist_from_image_path(r"10_6suan\nested\image.webp"))
-        self.assertEqual("@noartname", artist_from_image_path(r"1_noartname\image.jpg"))
+        self.assertEqual("@artist", artist_from_image_path(r"1_artist\image.jpg"))
         for invalid in ("image.png", r"artist\image.png", r"1_\image.png", r"..\1_artist\image.png"):
             with self.subTest(path=invalid), self.assertRaises(PolicyError):
                 artist_from_image_path(invalid)

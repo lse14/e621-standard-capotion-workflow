@@ -121,7 +121,7 @@ test.describe("workflow characterization", () => {
     await expect.poll(() => mutationsFor(api, "POST", "/api/jobs/job-e621-characterization/start").length).toBe(1);
   });
 
-  test("lets Caption choose v8 TXT input handling and sends the selected mode", async ({ page, api }) => {
+  test("lets Caption choose v9 TXT input handling and sends the selected mode", async ({ page, api }) => {
     await openApp(page, { language: "en" });
     await page.locator(".workflow-rail").getByRole("button", { name: /Caption/ }).click();
 

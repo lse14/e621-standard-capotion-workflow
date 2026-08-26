@@ -55,7 +55,7 @@ test.describe("mobile characterization baseline", () => {
 });
 
 test("captures the Token Budget desktop configuration and keeps its edit grid stable", async ({ page, api }) => {
-  setJobSnapshot(api, makeSnapshot({ schemaVersion: 6, status: "reviewing", currentModuleId: "token_budget" }));
+  setJobSnapshot(api, makeSnapshot({ schemaVersion: 9, status: "reviewing", currentModuleId: "token_budget" }));
   await openApp(page, { jobId: "job-e621-characterization", language: "en" });
   await page.locator(".workflow-rail").getByRole("button", { name: /Token Budget/ }).click();
   const editGrid = page.locator(".token-budget-edit-grid").first();
@@ -72,7 +72,7 @@ test.describe("mobile Token Budget baseline", () => {
   test.use({ viewport: { width: 390, height: 844 } });
 
   test("keeps the review workflow within the mobile viewport", async ({ page, api }) => {
-    setJobSnapshot(api, makeSnapshot({ schemaVersion: 6, status: "reviewing", currentModuleId: "token_budget" }));
+    setJobSnapshot(api, makeSnapshot({ schemaVersion: 9, status: "reviewing", currentModuleId: "token_budget" }));
     await openApp(page, { jobId: "job-e621-characterization", language: "en" });
     await page.locator(".workflow-rail").getByRole("button", { name: /Token Budget/ }).click();
     const reviewItem = page.locator(".token-budget-review-item").first();

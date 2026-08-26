@@ -49,8 +49,7 @@ test.describe("application shell characterization", () => {
       "After E621 Replace, each resulting tag containing anthro has a 50% chance of being replaced entirely with furry.",
     );
 
-    await page.getByRole("button", { name: "Danbooru", exact: true }).click();
-    await expect(page.locator('[data-config-surface="classify"]')).not.toContainText("anthro");
+    await expect(page.locator('[data-config-surface="classify"]').getByRole("button", { name: "Danbooru", exact: true })).toHaveCount(0);
   });
 
   test("shows local resource loading before the selectable E621 tagger", async ({ page, api }) => {
