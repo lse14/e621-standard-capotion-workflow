@@ -9,6 +9,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import validate_resource_library
+
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "core" / "src"))
@@ -130,6 +132,10 @@ class ResourceCatalogTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.temporary.cleanup()
+
+    def test_resource_validator_accepts_profileless_flat_defaults(self) -> None:
+        result = validate_resource_library.validate(self.root)
+        self.assertEqual(["e621"], result["compatibleProfiles"])
 
     def _write_package(
         self,

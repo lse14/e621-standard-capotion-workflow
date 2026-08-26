@@ -23,19 +23,18 @@ def validate(root: Path, *, release: bool = False) -> dict[str, object]:
         raise ValueError(f"resource library contains invalid packages: {details}")
     for package in snapshot.packages:
         package.verify_files(verify_hashes=True)
-    compatible_profiles: list[str] = []
-    for profile in sorted(snapshot.defaults):
-        if snapshot.missing_defaults(profile):
-            continue
-        defaults = snapshot.defaults_for(profile)
-        tagging = snapshot.package(
-            "tagging-model", defaults["taggingModel"], verify_hashes=False, profile=profile,
-        )
-        classification = snapshot.package(
-            "classification-index", defaults["classificationIndex"], verify_hashes=False, profile=profile,
-        )
-        verify_tagger_dictionary_compatibility(tagging, classification)
-        compatible_profiles.append(profile)
+    defaults = snapshot.defaults_for()
+    tagging = snapshot.package(
+        "tagging-model", defaults["taggingModel"], verify_hashes=False,
+    )
+    classification = snapshot.package(
+        "classification-index", defaults["classificationIndex"], verify_hashes=False,
+    )
+    verify_tagger_dictionary_compatibility(tagging, classification)
+    compatible_profiles = sorted({
+        package.profile for package in (tagging, classification)
+        if package.profile != "shared"
+    })
     if release:
         assert_no_local_only_leaks(root)
     return {
