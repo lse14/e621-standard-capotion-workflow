@@ -346,7 +346,12 @@ function Clear-BootstrapFailureArtifacts {
         if (Test-ReparsePoint $transactionsRoot) { throw "Bootstrap transactions are a reparse point: $transactionsRoot" }
         [System.IO.Directory]::Delete($transactionsRoot, $true)
     }
-    # Retain complete and partial downloads for verified reuse or safe resume on retry.
+    $cacheRoot = Get-ProjectPath (Join-Path $installerRoot 'cache')
+    if (Test-Path -LiteralPath $cacheRoot -PathType Container) {
+        if (Test-ReparsePoint $cacheRoot) { throw "Bootstrap cache is a reparse point: $cacheRoot" }
+        [System.IO.Directory]::Delete($cacheRoot, $true)
+    }
+    # Failed source bootstrap attempts leave only the installed runtimes and log evidence.
 }
 
 function Clear-BootstrapSuccessArtifacts {

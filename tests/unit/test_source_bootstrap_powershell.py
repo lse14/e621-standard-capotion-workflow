@@ -358,7 +358,7 @@ class SourceBootstrapPowerShellTests(unittest.TestCase):
         self.assertIn("Clear-BootstrapSuccessArtifacts", script)
         self.assertIn("Join-Path $script:runtimeBuildRoot 'source-bootstrap'", script)
 
-    def test_failure_cleanup_preserves_verified_bootstrap_cache_for_retry(self) -> None:
+    def test_failure_cleanup_removes_bootstrap_cache_after_failure(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_name:
             root = Path(temporary_name)
             installer = root / ".runtime-build" / "source-bootstrap"
@@ -394,8 +394,8 @@ class SourceBootstrapPowerShellTests(unittest.TestCase):
             )
             self.assertEqual(0, completed.returncode, completed.stdout + completed.stderr)
             result = json.loads(completed.stdout)
-            self.assertTrue(result["complete"])
-            self.assertTrue(result["partial"])
+            self.assertFalse(result["complete"])
+            self.assertFalse(result["partial"])
             self.assertFalse(result["staging"])
             self.assertFalse(result["bootstrap"])
             self.assertFalse(result["transactions"])
