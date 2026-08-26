@@ -5,6 +5,7 @@ import json
 import math
 import os
 import subprocess
+import time
 from pathlib import Path
 from typing import Callable, Mapping, Sequence
 
@@ -30,6 +31,20 @@ class ProbeError(RuntimeError):
 
 
 Runner = Callable[..., subprocess.CompletedProcess[str]]
+ProgressReporter = Callable[[str], None]
+_PROBE_DETAIL_LIMIT = 2000
+
+
+def _probe_detail(value: object) -> str:
+    if isinstance(value, bytes):
+        text = value.decode("utf-8", errors="replace").strip()
+    else:
+        text = str(value or "").strip()
+    if not text:
+        return ""
+    if len(text) > _PROBE_DETAIL_LIMIT:
+        text = "..." + text[-_PROBE_DETAIL_LIMIT:]
+    return " ".join(text.split())
 
 
 def offline_environment(
@@ -75,10 +90,18 @@ def _run_script(
             check=False,
             timeout=900,
         )
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        raise ProbeError("offline probe process could not be started") from exc
+    except subprocess.TimeoutExpired as exc:
+        detail = _probe_detail(exc.stderr or exc.stdout)
+        suffix = f": {detail}" if detail else ""
+        raise ProbeError(f"offline probe timed out after 900 seconds{suffix}") from exc
+    except OSError as exc:
+        detail = _probe_detail(exc)
+        suffix = f": {detail}" if detail else ""
+        raise ProbeError(f"offline probe process could not be started{suffix}") from exc
     if completed.returncode != 0:
-        raise ProbeError("offline probe process failed")
+        detail = _probe_detail(completed.stderr or completed.stdout)
+        suffix = f": {detail}" if detail else ""
+        raise ProbeError(f"offline probe process failed (exit code {completed.returncode}){suffix}")
     return completed.stdout.strip()
 
 
@@ -487,6 +510,7 @@ def run_offline_probes(
     *,
     component_targets: Mapping[str, Path],
     runner: Runner | None = None,
+    progress: ProgressReporter | None = None,
 ) -> dict[str, bool | None]:
     """Run all known functional probes and return one result for every selected component."""
     selected: dict[str, object] = {}
@@ -506,14 +530,24 @@ def run_offline_probes(
     def run_group(component_ids: tuple[str, ...], callback: Callable[[], dict[str, object]], evidence_component: str) -> None:
         if not all(component_id in selected for component_id in component_ids):
             return
+        label = evidence_component
+        if len(component_ids) > 1:
+            label += " (" + ", ".join(component_ids) + ")"
+        started = time.monotonic()
+        if progress is not None:
+            progress(f"Offline probe started: {label}")
         try:
             evidence = callback()
             validate_evidence(evidence_component, variants[evidence_component], evidence)
-        except ProbeError:
+        except ProbeError as exc:
+            if progress is not None:
+                progress(f"Offline probe failed: {label} after {time.monotonic() - started:.1f}s: {exc}")
             return
         evidence_by_component[evidence_component] = evidence
         for component_id in component_ids:
             results[component_id] = True
+        if progress is not None:
+            progress(f"Offline probe passed: {label} after {time.monotonic() - started:.1f}s")
 
     run_group(("core",), lambda: _probe_core(_target(component_targets, "core"), runner=runner), "core")
     for source_component_id in ("classify-e621", "replace-e621", "nl", "export"):

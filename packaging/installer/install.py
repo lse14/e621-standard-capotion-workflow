@@ -298,16 +298,16 @@ def _custom_probe_results(
 def _default_probe_results(
     *,
     source_root: Path,
-    plan: InstallationPlan,
     pending: list[PlannedComponent],
     targets: Mapping[str, Path],
-) -> dict[str, bool]:
+    progress: ProgressReporter | None = None,
+) -> dict[str, bool | None]:
     for item in pending:
         if item.runtime_id is not None:
             _write_runtime_manifest_at(source_root, item, _stage_target_root(targets[item.component.component_id], item))
     from probes import run_offline_probes
 
-    return run_offline_probes(plan.components, component_targets=targets)
+    return run_offline_probes(pending, component_targets=targets, progress=progress)
 
 
 def _stage_target_root(target: Path, item: PlannedComponent) -> Path:
@@ -441,9 +441,9 @@ def install_project(
         elif pending:
             results = _default_probe_results(
                 source_root=source,
-                plan=plan,
                 pending=pending,
                 targets=targets,
+                progress=report,
             )
         else:
             results = {}
@@ -506,6 +506,10 @@ def install_project(
                 for item in final_plan.components
                 if item.component.component_id in retry_component_ids
             ]
+            report(
+                "Retrying offline probes after CPU fallback: "
+                + ", ".join(item.component.component_id for item in retry_items)
+            )
             if probe_component is not None:
                 retry_results = _custom_probe_results(
                     retry_items,
@@ -515,9 +519,9 @@ def install_project(
             else:
                 retry_results = _default_probe_results(
                     source_root=source,
-                    plan=final_plan,
-                    pending=final_pending,
+                    pending=retry_items,
                     targets=targets,
+                    progress=report,
                 )
             _retry_fallbacks, _retry_discarded_gpu, retry_failures = _classify_probe_failures(
                 retry_items,

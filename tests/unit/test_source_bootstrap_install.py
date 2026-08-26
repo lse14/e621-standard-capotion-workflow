@@ -1276,6 +1276,87 @@ class SourceBootstrapInstallTests(unittest.TestCase):
             self.assertEqual(("core", "fixture-resource"), second.skipped_component_ids)
             self.assertEqual([], calls)
 
+    def test_offline_probe_failure_preserves_exit_code_and_stderr(self) -> None:
+        probes = _probes_module()
+        with tempfile.TemporaryDirectory() as temporary_name:
+            root = Path(temporary_name)
+            python = root / "python.exe"
+            python.write_bytes(b"python")
+
+            def runner(command, **_kwargs):
+                return subprocess.CompletedProcess(
+                    command,
+                    17,
+                    "",
+                    "CUDAExecutionProvider initialization failed\nprovider unavailable",
+                )
+
+            with self.assertRaisesRegex(
+                probes.ProbeError,
+                r"exit code 17.*CUDAExecutionProvider initialization failed.*provider unavailable",
+            ):
+                probes.run_json_probe(
+                    python,
+                    "print('{}')",
+                    (),
+                    cwd=root,
+                    runner=runner,
+                )
+
+    def test_offline_probe_reports_component_progress(self) -> None:
+        probes = _probes_module()
+        with tempfile.TemporaryDirectory() as temporary_name:
+            root = Path(temporary_name)
+            runtime = root / "runtimes" / "core"
+            runtime.mkdir(parents=True)
+            (runtime / "python.exe").write_bytes(b"python")
+            events: list[str] = []
+
+            def runner(command, **_kwargs):
+                return subprocess.CompletedProcess(command, 0, "anima-core-runtime-ok\n", "")
+
+            results = probes.run_offline_probes(
+                (
+                    SimpleNamespace(
+                        component=SimpleNamespace(component_id="core"),
+                        variant=SimpleNamespace(name="cpu"),
+                    ),
+                ),
+                component_targets={"core": runtime},
+                runner=runner,
+                progress=events.append,
+            )
+
+            self.assertEqual({"core": True}, results)
+            self.assertTrue(any("Offline probe started: core" in event for event in events))
+            self.assertTrue(any("Offline probe passed: core" in event for event in events))
+
+    def test_default_probe_results_only_passes_pending_components_to_probe_runner(self) -> None:
+        install_module = _install_module()
+        probes = _probes_module()
+        with tempfile.TemporaryDirectory() as temporary_name:
+            root = Path(temporary_name)
+            target = root / "runtimes" / "core"
+            target.mkdir(parents=True)
+            item = SimpleNamespace(
+                component=SimpleNamespace(component_id="core"),
+                variant=SimpleNamespace(name="cpu"),
+                runtime_id="core",
+                lock_name="core",
+            )
+            with (
+                mock.patch.object(install_module, "_write_runtime_manifest_at"),
+                mock.patch.object(probes, "run_offline_probes", return_value={"core": True}) as run,
+            ):
+                result = install_module._default_probe_results(
+                    source_root=root,
+                    pending=[item],
+                    targets={"core": target},
+                )
+
+            self.assertEqual({"core": True}, result)
+            self.assertEqual([item], list(run.call_args.args[0]))
+
     def test_source_tree_resource_is_verified_and_never_fetched(self) -> None:
         install_module = _install_module()
         _, manifest_module = _modules()
