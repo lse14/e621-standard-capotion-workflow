@@ -17,7 +17,7 @@ sys.path.insert(0, str(ROOT / "core" / "src"))
 
 from PIL import Image
 
-from anima_core.contracts import JobConfig, sha256_json
+from anima_core.contracts import JobConfig, sha256_json, validate_job_config
 from anima_core.db import StateDatabase
 from anima_core.job_preflight import JobPreflightError, JobPreparationService, config_from_dict
 from anima_core.locks import DatasetLockError
@@ -188,6 +188,44 @@ def _write_test_resource_library(root: Path, *, include_ocr: bool) -> tuple[Reso
 
 
 class JobPreflightTests(unittest.TestCase):
+    def test_count_review_allows_nl_disabled_with_classify_enabled(self) -> None:
+        for schema_version in range(3, 10):
+            with self.subTest(schema_version=schema_version):
+                config = JobConfig(
+                    profile=None if schema_version == 9 else "e621",
+                    workMode="in_place",
+                    overwriteMode="incremental",
+                    sourceRoot="C:\\dataset",
+                    schemaVersion=schema_version,
+                )
+                if schema_version != 9:
+                    config.classify.pop("indexMode")
+                    config.classify["wikiDataSourceId"] = None
+                config.nl["enabled"] = False
+                config.countReview["enabled"] = True  # type: ignore[index]
+
+                validate_job_config(config)
+
+    def test_count_review_requires_classify_across_supported_schemas(self) -> None:
+        for schema_version in range(3, 10):
+            with self.subTest(schema_version=schema_version):
+                config = JobConfig(
+                    profile=None if schema_version == 9 else "e621",
+                    workMode="in_place",
+                    overwriteMode="incremental",
+                    sourceRoot="C:\\dataset",
+                    schemaVersion=schema_version,
+                )
+                if schema_version != 9:
+                    config.classify.pop("indexMode")
+                    config.classify["wikiDataSourceId"] = None
+                config.classify["enabled"] = False
+                config.nl["enabled"] = False
+                config.countReview["enabled"] = True  # type: ignore[index]
+
+                with self.assertRaisesRegex(ValueError, "countReview requires classify to be enabled"):
+                    validate_job_config(config)
+
     def test_v9_config_has_no_task_profile_and_rejects_legacy_job_configs(self) -> None:
         legacy = JobConfig(
             profile="e621", workMode="in_place", overwriteMode="incremental",
@@ -394,7 +432,12 @@ class JobPreflightTests(unittest.TestCase):
             config = self._config(source)
             config["workMode"] = "full_copy"
             config["outputRoot"] = str(output)
-            service = JobPreparationService(root / "state.db", resource_catalog=ResourceCatalog(ROOT / "resource-library"))
+            config["caption"]["resourceId"] = "tagger-default"
+            config["classify"]["resourceId"] = "classify-default"
+            config["replace"]["resourceId"] = "replace-default"
+            config["dropout"]["quality"]["resourceId"] = "dropout-default"
+            catalog, _ = _write_test_resource_library(root, include_ocr=False)
+            service = JobPreparationService(root / "state.db", resource_catalog=catalog)
             try:
                 summary = service.preflight(config)
                 service.confirm_workspace(summary.jobId, confirmed=True, confirmed_rebuild=False)

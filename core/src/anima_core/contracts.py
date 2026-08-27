@@ -560,7 +560,7 @@ def validate_job_config(
             raise ValueError("classify dictionaryEntryCount is invalid")
         if classify.get("resourceProfile") not in {"e621", "danbooru"}:
             raise ValueError("classify resourceProfile is invalid")
-    if config.schemaVersion in {3, 4, 5} and config.countReview is not None and config.countReview["enabled"] and not classify["enabled"]:
+    if config.countReview is not None and config.countReview["enabled"] and not classify["enabled"]:
         raise ValueError("countReview requires classify to be enabled")
 
     if not job_config_supports_ocr_device(config.schemaVersion) and isinstance(config.ocr, dict) and "device" in config.ocr:

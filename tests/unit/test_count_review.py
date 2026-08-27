@@ -255,6 +255,21 @@ class CountReviewFixture:
 
 
 class CountReviewTests(unittest.TestCase):
+    def test_nl_disabled_count_review_runs_from_classify_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = CountReviewFixture(
+                Path(temporary),
+                ((_evidence("solo"), _observation("not_requested")),),
+            )
+            try:
+                self.assertEqual("completed", fixture.runner().run())
+                decision = fixture.database.get_count_review_decision("job-review", 1)
+                self.assertEqual(("auto_resolved", "solo", "classify"), (
+                    decision["status"], decision["final_count"], decision["selected_source"],
+                ))
+            finally:
+                fixture.close()
+
     def test_danbooru_v4_pending_review_confirms_and_applies_only_count(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             fixture = CountReviewFixture(
