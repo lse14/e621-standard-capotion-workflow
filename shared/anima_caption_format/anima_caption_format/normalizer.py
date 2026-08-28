@@ -10,7 +10,7 @@ import json
 import re
 import unicodedata
 from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import Any, Literal, Mapping
 
 
 MAX_JSON_BYTES = 1_048_576
@@ -37,6 +37,7 @@ class CaptionDisplayPolicy:
     preserve_escapes: bool
     triggers_enabled: bool
     trigger_terms: tuple[str, ...]
+    flat_txt_layout: Literal["single_line", "nl_newline"] = "nl_newline"
 
     @classmethod
     def from_mapping(cls, value: Mapping[str, object]) -> "CaptionDisplayPolicy":
@@ -50,7 +51,10 @@ class CaptionDisplayPolicy:
         )
         if not all(type(flag) is bool for flag in flags):
             raise ValueError("caption display flags are invalid")
-        return cls(flags[0], flags[1], flags[2], tuple(terms))  # type: ignore[arg-type]
+        layout = value.get("flatTxtLayout", "nl_newline")
+        if layout not in {"single_line", "nl_newline"}:
+            raise ValueError("caption flat TXT layout is invalid")
+        return cls(flags[0], flags[1], flags[2], tuple(terms), layout)  # type: ignore[arg-type]
 
 
 @dataclass(frozen=True)

@@ -8,6 +8,22 @@ export type OcrExecutionRequest = {
   textDetLimitSideLen: OcrExecutionTuning;
   textBatchSize: OcrExecutionTuning;
 };
+export type DeviceRecommendationResponse = {
+  schemaVersion: number;
+  baselineVersion: string;
+  cpuPhysicalCores: number;
+  cpuLogicalCores: number;
+  gpu: {
+    available: boolean;
+    name: string | null;
+    totalVramBytes: number | null;
+    freeVramBytes: number | null;
+    probeSource: string;
+  };
+  moduleBatchSize: Record<"caption" | "classify" | "replace" | "ocr" | "nl" | "countReview" | "dropout" | "tokenBudget" | "export", number>;
+  reasons: Record<string, string>;
+  probeErrors: string[];
+};
 export type OcrRuntimeStatus = {
   availability: "pending" | "available" | "unavailable";
   runtimeId: "ocr-paddle" | "ocr-paddle-gpu" | null;
@@ -296,6 +312,9 @@ export function testNlMessage(body: NlTestMessageRequest): Promise<TestMessageRe
   return request("/api/nl/diagnostics/test-message", { method: "POST", body: JSON.stringify(body) });
 }
 export function listResources(): Promise<ResourceCatalogResponse> { return request("/api/resources"); }
+export function getDeviceRecommendations(rpm = 60): Promise<DeviceRecommendationResponse> {
+  return request(`/api/application/device-recommendations?rpm=${encodeURIComponent(String(rpm))}`);
+}
 export function selectLocalPath(purpose: PathPickerPurpose, currentPath: string | null): Promise<SelectLocalPathResponse> {
   return request("/api/application/select-path", {
     method: "POST",

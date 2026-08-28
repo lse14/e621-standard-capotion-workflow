@@ -411,13 +411,87 @@ class OcrWorker:
             "items": raw_items,
         }
 
+    def _process_prediction(
+        self,
+        item: OcrWorkItem,
+        decoded: DecodedImage,
+        result: object,
+    ) -> dict[str, object]:
+        try:
+            raw_items = _raw_items(result, decoded)
+            verify_source_fingerprint(item)
+        except OcrSourceFingerprintError:
+            raise
+        except OcrInferenceError:
+            return _inference_failure(
+                item,
+                decoded.width,
+                decoded.height,
+                message=MODEL_OUTPUT_FAILURE_MESSAGE,
+            )
+        except Exception:
+            return _inference_failure(
+                item,
+                decoded.width,
+                decoded.height,
+                message=UNEXPECTED_FAILURE_MESSAGE,
+            )
+        if not raw_items:
+            return {
+                **_identity(item, decoded.width, decoded.height),
+                "status": "no_text",
+                "items": [],
+            }
+        return {
+            **_identity(item, decoded.width, decoded.height),
+            "status": "success",
+            "items": raw_items,
+        }
+
     def process(self, payload: object) -> dict[str, object]:
         if self.model is None or self.hello is None:
             raise OcrWorkerInitializationError("OCR worker is not initialized")
         request = parse_process(payload)
+        outcomes_by_identity: dict[tuple[int, str], dict[str, object]] = {}
+        decoded_items: list[tuple[OcrWorkItem, DecodedImage]] = []
+        for item in request.items:
+            try:
+                decoded_items.append((item, decode_and_verify(item)))
+            except OcrImageTooLargeError as exc:
+                outcomes_by_identity[(item.sample_id, item.lease_id)] = _oversize_failure(item, exc.width, exc.height)
+            except OcrImageDecodeError as exc:
+                outcomes_by_identity[(item.sample_id, item.lease_id)] = _inference_failure(
+                    item,
+                    exc.width or 1,
+                    exc.height or 1,
+                    message=IMAGE_DECODE_FAILURE_MESSAGE,
+                )
+
+        predictions: list[object | None] = []
+        if decoded_items:
+            try:
+                predictions = self.model.predict_batch([decoded.image for _, decoded in decoded_items])
+                if len(predictions) != len(decoded_items):
+                    raise OcrInferenceError("PaddleOCR returned the wrong number of image results")
+            except OcrModelError:
+                predictions = [None] * len(decoded_items)
+            except Exception:
+                predictions = [None] * len(decoded_items)
+
+        for (item, decoded), prediction in zip(decoded_items, predictions, strict=True):
+            if prediction is None:
+                outcomes_by_identity[(item.sample_id, item.lease_id)] = _inference_failure(
+                    item,
+                    decoded.width,
+                    decoded.height,
+                    message=MODEL_INFERENCE_FAILURE_MESSAGE,
+                )
+            else:
+                outcomes_by_identity[(item.sample_id, item.lease_id)] = self._process_prediction(item, decoded, prediction)
+
         outcomes: list[dict[str, object]] = []
         for item in request.items:
-            outcome = self._process_item(item)
+            outcome = outcomes_by_identity[(item.sample_id, item.lease_id)]
             candidate = [*outcomes, outcome]
             try:
                 encoded = json.dumps(

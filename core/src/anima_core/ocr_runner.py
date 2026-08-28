@@ -31,6 +31,7 @@ from .ocr_protocol import (
     OcrWorkItemV1,
     parse_ocr_process_result,
     validate_hello_result,
+    validate_outcomes_for_items,
     validate_outcome_for_item,
 )
 from .ocr_sidecar import (
@@ -639,6 +640,38 @@ class OcrRunner:
         except OcrProtocolError as exc:
             raise self._fatal("ocr_protocol_violation", str(exc)) from exc
 
+    def _process_batch_with_worker(
+        self,
+        items: tuple[OcrWorkItemV1, ...],
+        *,
+        config_hash: str,
+        threshold: float,
+    ) -> tuple[OcrSidecar, ...]:
+        self.process_requests += 1
+        try:
+            request = OcrProcessRequestV1.from_dict(
+                {
+                    "schemaVersion": 1,
+                    "payloadType": "ocr_process_request",
+                    "items": [item.to_dict() for item in items],
+                }
+            )
+            outcomes = validate_outcomes_for_items(
+                parse_ocr_process_result(self._exchange("process_batch", request.to_dict(), config_hash)),
+                request.items,
+            )
+            return tuple(
+                _sidecar_from_outcome(
+                    outcome,
+                    threshold=threshold,
+                    resource_fingerprint=self.resource_fingerprint,
+                    inference_settings=self.inference_settings,
+                )
+                for outcome in outcomes
+            )
+        except OcrProtocolError as exc:
+            raise self._fatal("ocr_protocol_violation", str(exc)) from exc
+
     def run(self) -> OcrRunReport:
         if self._started:
             raise RuntimeError("an OCR runner instance can execute only once")
@@ -712,7 +745,7 @@ class OcrRunner:
                     return self._report(str(job["status"]))
                 if job["status"] != "running" or job["current_module_id"] != "ocr":
                     raise self._fatal("ocr_protocol_violation", "OCR job state changed")
-                active = self.scheduler.claim_batch(self.job_id, "ocr", self.worker_instance_id, config_hash, limit=1)
+                active = self.scheduler.claim_batch(self.job_id, "ocr", self.worker_instance_id, config_hash)
                 self.max_resident_leases = max(self.max_resident_leases, len(active))
                 if not active:
                     if self.database.count_module_unsettled(self.job_id, "ocr"):
@@ -721,7 +754,14 @@ class OcrRunner:
                     status = self.scheduler.finish_module(self.job_id, "ocr", with_issues=int(summary["issue_count"]) > 0)
                     self._publish(status)
                     return self._report(status)
+                pending: list[tuple[WorkLease, object, OcrWorkItemV1, str]] = []
                 for lease in active[:]:
+                    job = self.database.get_job(self.job_id)
+                    if job["status"] in {"cancelling", "paused"}:
+                        for pending_lease in active:
+                            self.scheduler.release_unstarted(pending_lease)
+                        active = []
+                        return self._report(str(job["status"]))
                     row = self.database.get_leased_sample(
                         self.job_id,
                         "ocr",
@@ -755,21 +795,37 @@ class OcrRunner:
                         image_size=image_size,
                         image_sha256=image_sha256,
                     )
-                    sidecar = self._process_with_worker(
-                        lease,
-                        row,
-                        item,
-                        hello=hello,
+                    pending.append((lease, row, item, relative_path))
+                if pending:
+                    job = self.database.get_job(self.job_id)
+                    if job["status"] in {"cancelling", "paused"}:
+                        for pending_lease in active:
+                            self.scheduler.release_unstarted(pending_lease)
+                        active = []
+                        return self._report(str(job["status"]))
+                    if job["status"] != "running" or job["current_module_id"] != "ocr":
+                        raise self._fatal("ocr_protocol_violation", "OCR job state changed before worker request")
+                    if not initialized:
+                        self._initialize_worker(hello, config_hash)
+                        initialized = True
+                    self.scheduler.heartbeat(
+                        self.job_id,
+                        self.worker_instance_id,
+                        [str(lease.leaseId) for lease in active if lease.leaseId],
+                    )
+                    sidecars = self._process_batch_with_worker(
+                        tuple(item for _, _, item, _ in pending),
                         config_hash=config_hash,
                         threshold=threshold,
                     )
-                    self._persist_sidecar(lease, relative_path, serialize_ocr_sidecar(sidecar))
-                    if sidecar.status == "failed":
-                        self._issue(lease, row, sidecar)
-                    else:
-                        self.scheduler.complete(lease)
-                    active.remove(lease)
-                    self._publish("running", lease.attempt)
+                    for (lease, row, _, relative_path), sidecar in zip(pending, sidecars, strict=True):
+                        self._persist_sidecar(lease, relative_path, serialize_ocr_sidecar(sidecar))
+                        if sidecar.status == "failed":
+                            self._issue(lease, row, sidecar)
+                        else:
+                            self.scheduler.complete(lease)
+                        active.remove(lease)
+                        self._publish("running", lease.attempt)
         except OcrRunnerFatalError as error:
             for lease in active:
                 self.scheduler.release_unstarted(lease)

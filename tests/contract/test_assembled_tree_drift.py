@@ -237,6 +237,14 @@ class OptionalGpuRuntimeDriftContractTests(unittest.TestCase):
                 _active_runtime_packages(project, install)
 
 
+class WorkerRuntimeSyncScriptContractTests(unittest.TestCase):
+    def test_worker_runtime_sync_script_covers_changed_non_core_workers(self) -> None:
+        script = (ROOT / "packaging" / "scripts" / "Sync-WorkerRuntimes.ps1").read_text(encoding="utf-8")
+        for runtime_id in ("caption-e621", "classify-e621", "replace-e621", "nl", "policy"):
+            self.assertIn(runtime_id, script)
+        self.assertIn("generate_runtime_manifests.py", script)
+
+
 @unittest.skipUnless((INSTALL_ROOT / "manifests" / "runtimes").is_dir(), "embedded release tree has not been built")
 @unittest.skipUnless((ROOT / "core" / "src" / "anima_core").is_dir(), "source tree is not present")
 class AssembledRuntimeDriftTests(unittest.TestCase):

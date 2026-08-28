@@ -114,7 +114,7 @@ class CountReviewFixture:
         root: Path,
         inputs: tuple[tuple[CountEvidenceV1, CountObservationV1], ...] = MATRIX,
         *,
-        schema_version: int = 3,
+        schema_version: int = 10,
         profile: str = "e621",
     ) -> None:
         self.database_path = root / "state.db"
@@ -126,13 +126,16 @@ class CountReviewFixture:
             (self.dataset / f"{key}.json").write_text(json.dumps(_projection()), encoding="utf-8")
         self.layout = OverlayLayout.create(self.dataset, "job-review")
         self.database = StateDatabase.open(self.database_path)
-        self.config = JobConfig(
-            profile=profile,  # type: ignore[arg-type]
-            workMode="in_place",
-            overwriteMode="incremental",
-            sourceRoot=str(self.dataset),
-            schemaVersion=schema_version,
-        )
+        config_kwargs = {
+            "workMode": "in_place",
+            "overwriteMode": "incremental",
+            "sourceRoot": str(self.dataset),
+            "schemaVersion": schema_version,
+        }
+        if schema_version != 10:
+            config_kwargs["profile"] = profile
+        self.config = JobConfig(**config_kwargs)  # type: ignore[arg-type]
+        self.config.nl["systemPrompt"] = "Describe the visible image."
         if profile == "danbooru":
             self.config.replace.clear()
             self.config.replace.update({"enabled": False, "indexMode": "bundled"})
@@ -183,7 +186,7 @@ class CountReviewFixture:
             }
             for sample_id in range(1, len(inputs) + 1)
         ])
-        for module_id in ("caption", "classify", "replace", "nl"):
+        for module_id in ("caption", "classify", "replace", "ocr", "nl"):
             self.database.initialize_module_summary(
                 "job-review", module_id, total=len(inputs), status="completed"
             )
@@ -275,8 +278,8 @@ class CountReviewTests(unittest.TestCase):
             fixture = CountReviewFixture(
                 Path(temporary),
                 ((_evidence("solo"), _observation("observed", "duo")),),
-                schema_version=4,
-                profile="danbooru",
+                schema_version=10,
+                profile="e621",
             )
             try:
                 self.assertEqual("reviewing", fixture.runner().run())

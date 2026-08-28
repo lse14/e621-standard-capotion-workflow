@@ -159,7 +159,7 @@ class CrashingNlTransport(FakeNlTransport):
 
 
 class NlFixture:
-    def __init__(self, root: Path, *, baseline_nl: str = "old caption", working_json: bool = True, sample_count: int = 1, schema_version: int = 9, profile: str = "e621") -> None:
+    def __init__(self, root: Path, *, baseline_nl: str = "old caption", working_json: bool = True, sample_count: int = 1, schema_version: int = 10, profile: str = "e621") -> None:
         self.dataset = root / "dataset"
         self.dataset.mkdir(parents=True)
         for sample_id in range(1, sample_count + 1):
@@ -186,13 +186,14 @@ class NlFixture:
         self.database.insert_job({"job_id": "job-nl", "config_schema_version": schema_version, "config_json": json.dumps(self.config.to_dict()), "config_hash": self.config.config_hash, "profile": profile, "work_mode": "in_place", "overwrite_mode": "incremental", "source_root": str(self.dataset), "output_root": None, "dataset_root": str(self.dataset), "dataset_root_key": windows_key(self.dataset), "manifest_schema_version": 1, "recursive": 0, "sample_count": sample_count, "manifest_generated_at": "2026-07-24T00:00:00Z", "status": "ready", "current_module_id": None, "last_event_id": 0, "pinned": 0, "api_budget_extra": 0, "api_budget_revision": 0, "overlay_root": str(self.layout.root), "commit_journal_path": None, "resume_status": None, "created_at": "2026-07-24T00:00:00Z", "started_at": None, "cancel_requested_at": None, "finished_at": None})
         self.database.insert_samples("job-nl", [{"sample_id": sample_id, "relative_image_path": ("sample" if sample_id == 1 else f"sample-{sample_id}") + ".png", "annotation_key": "sample" if sample_id == 1 else f"sample-{sample_id}", "source": profile, "in_processing_scope": True, "image_format": "png", "image_frame_count": 1, "original_txt_state": "missing_or_blank", "original_json_state": "nonblank" if working_json else "missing_or_blank", "image_file_id": f"volume:{sample_id}", "image_size": 15, "image_mtime_ns": sample_id} for sample_id in range(1, sample_count + 1)])
         self.scheduler = BoundedScheduler(self.database, lease_id_factory=lambda: "lease-nl")
+        self.writer = NlOverlayWriter(self.database, self.layout, WorkingAnnotationView(BaselineView(self.dataset), self.layout), "job-nl")
+        if schema_version != 10:
+            return
         for module in ("caption", "classify", "replace"):
             self.scheduler.start_module("job-nl", module, enabled=False, profile=profile)
-        if schema_version in {5, 6, 7, 8, 9}:
-            # These focused NL tests start after the separately-owned OCR stage is final.
-            self.scheduler.start_module("job-nl", "ocr", enabled=False, profile=profile)
+        # These focused NL tests start after the separately-owned OCR stage is final.
+        self.scheduler.start_module("job-nl", "ocr", enabled=False, profile=profile)
         self.scheduler.start_module("job-nl", "nl", enabled=True, profile=profile)
-        self.writer = NlOverlayWriter(self.database, self.layout, WorkingAnnotationView(BaselineView(self.dataset), self.layout), "job-nl")
 
     def runner(self, transport: FakeNlTransport, credentials: NlApiCredentials | None = None) -> NlRunner:
         return NlRunner(self.database, self.scheduler, transport, WorkingAnnotationView(BaselineView(self.dataset), self.layout), self.writer, job_id="job-nl", worker_instance_id="nl-worker-1", credentials=credentials)
@@ -222,7 +223,7 @@ class NlProtocolValidationTests(unittest.TestCase):
 class NlRunnerTests(unittest.TestCase):
     def test_api_enabled_json_only_is_rejected_before_worker_request(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
-            fixture = NlFixture(Path(temporary), baseline_nl="", schema_version=9)
+            fixture = NlFixture(Path(temporary), baseline_nl="", schema_version=10)
             try:
                 fixture.config.nl.update({
                     "enabled": True,
@@ -240,7 +241,7 @@ class NlRunnerTests(unittest.TestCase):
 
     def test_missing_local_image_is_issue_without_worker_request(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
-            fixture = NlFixture(Path(temporary), baseline_nl="", schema_version=9)
+            fixture = NlFixture(Path(temporary), baseline_nl="", schema_version=10)
             try:
                 (fixture.dataset / "sample.png").unlink()
                 fixture.config.nl.update({
@@ -260,9 +261,9 @@ class NlRunnerTests(unittest.TestCase):
             finally:
                 fixture.close()
 
-    def test_v9_profileless_missing_local_image_is_issue_without_worker_request(self) -> None:
+    def test_v10_profileless_missing_local_image_is_issue_without_worker_request(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
-            fixture = NlFixture(Path(temporary), baseline_nl="", schema_version=9)
+            fixture = NlFixture(Path(temporary), baseline_nl="", schema_version=10)
             try:
                 (fixture.dataset / "sample.png").unlink()
                 fixture.config.nl.update({
@@ -291,7 +292,7 @@ class NlRunnerTests(unittest.TestCase):
     def test_terminal_api_failures_are_nonblocking_and_leave_the_sample_for_review(self) -> None:
         for issue_code in ("nl_api_unavailable", "nl_response_invalid"):
             with self.subTest(issue_code=issue_code), tempfile.TemporaryDirectory() as temporary:
-                fixture = NlFixture(Path(temporary), baseline_nl="", sample_count=2, schema_version=9)
+                fixture = NlFixture(Path(temporary), baseline_nl="", sample_count=2, schema_version=10)
                 try:
                     fixture.config.nl.update({
                         "enabled": True,
@@ -325,15 +326,15 @@ class NlRunnerTests(unittest.TestCase):
                     fixture.close()
 
     def test_api_enabled_configuration_requires_use_image(self) -> None:
-        config = JobConfig(schemaVersion=9, profile="e621", workMode="in_place", overwriteMode="incremental", sourceRoot="E:\\dataset")
+        config = JobConfig(schemaVersion=10, workMode="in_place", overwriteMode="incremental", sourceRoot="E:\\dataset")
         config.nl.update({"apiEnabled": True, "useImage": False, "useFullJson": True})
         with self.assertRaisesRegex(ValueError, "image"):
             validate_job_config(config)
 
-    def test_v8_input_nl_completes_without_api_or_baseline_json(self) -> None:
+    def test_v10_input_nl_completes_without_api_or_baseline_json(self) -> None:
         for injected_nl in ("from TXT", ""):
             with self.subTest(injected_nl=injected_nl), tempfile.TemporaryDirectory() as temporary:
-                fixture = NlFixture(Path(temporary), baseline_nl="unrelated baseline", schema_version=9)
+                fixture = NlFixture(Path(temporary), baseline_nl="unrelated baseline", schema_version=10)
                 try:
                     fixture.config.caption["inputTxtMode"] = "nl"
                     fixture.config.nl.update({
@@ -496,9 +497,9 @@ class NlRunnerTests(unittest.TestCase):
         except NlRunnerError as exc:
             self.fail(f"v9 NL run must accept the frozen v4 prompt: {exc.code}: {exc}")
 
-    def test_v6_and_v7_items_use_structured_preset_length_character_and_untrusted_context_fields(self) -> None:
+    def test_v10_items_use_structured_preset_length_character_and_untrusted_context_fields(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
-            for schema_version in (9,):
+            for schema_version in (10,):
                 with self.subTest(schema_version=schema_version):
                     fixture = NlFixture(Path(temporary) / str(schema_version), baseline_nl="", schema_version=schema_version)
                     try:
@@ -543,12 +544,12 @@ class NlRunnerTests(unittest.TestCase):
                     finally:
                         fixture.close()
 
-    def test_v7_ocr_context_preserves_duplicates_and_disabled_ocr_is_null_without_warning(self) -> None:
+    def test_v10_ocr_context_preserves_duplicates_and_disabled_ocr_is_null_without_warning(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             for enabled in (True, False):
                 with self.subTest(ocr_enabled=enabled):
-                    fixture = NlFixture(root / str(enabled), baseline_nl="", schema_version=9)
+                    fixture = NlFixture(root / str(enabled), baseline_nl="", schema_version=10)
                     try:
                         fixture.config.nl.update({
                             "enabled": True,
@@ -582,9 +583,9 @@ class NlRunnerTests(unittest.TestCase):
                     finally:
                         fixture.close()
 
-    def test_v5_ocr_context_recomputes_threshold_and_preserves_order_and_duplicates(self) -> None:
+    def test_v10_ocr_context_recomputes_threshold_and_preserves_order_and_duplicates(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
-            fixture = NlFixture(Path(temporary), baseline_nl="", schema_version=9)
+            fixture = NlFixture(Path(temporary), baseline_nl="", schema_version=10)
             try:
                 self._configure_v5(fixture, threshold=0.5)
                 image_bytes = (fixture.dataset / "sample.png").read_bytes()
@@ -620,12 +621,12 @@ class NlRunnerTests(unittest.TestCase):
             finally:
                 fixture.close()
 
-    def test_v5_no_text_is_empty_and_disabled_ocr_is_null_without_warning(self) -> None:
+    def test_v10_no_text_is_empty_and_disabled_ocr_is_null_without_warning(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             for mode in ("no_text", "disabled"):
                 with self.subTest(mode=mode):
-                    fixture = NlFixture(root / mode, baseline_nl="", schema_version=9)
+                    fixture = NlFixture(root / mode, baseline_nl="", schema_version=10)
                     try:
                         self._configure_v5(fixture, ocr_enabled=mode != "disabled")
                         if mode == "no_text":
@@ -645,7 +646,7 @@ class NlRunnerTests(unittest.TestCase):
                     finally:
                         fixture.close()
 
-    def test_v5_missing_failed_and_invalid_ocr_sidecars_warn_without_blocking_nl(self) -> None:
+    def test_v10_missing_failed_and_invalid_ocr_sidecars_warn_without_blocking_nl(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             for state, expected_code in (
@@ -654,7 +655,7 @@ class NlRunnerTests(unittest.TestCase):
                 ("invalid", "nl_ocr_sidecar_invalid"),
             ):
                 with self.subTest(state=state):
-                    fixture = NlFixture(root / state, baseline_nl="", schema_version=9)
+                    fixture = NlFixture(root / state, baseline_nl="", schema_version=10)
                     try:
                         self._configure_v5(fixture)
                         if state == "failed":
@@ -680,12 +681,12 @@ class NlRunnerTests(unittest.TestCase):
                     finally:
                         fixture.close()
 
-    def test_v5_ocr_context_is_omitted_only_when_combined_canonical_utf8_exceeds_limit(self) -> None:
+    def test_v10_ocr_context_is_omitted_only_when_combined_canonical_utf8_exceeds_limit(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             for extra_byte, expected_context, expected_warning in ((0, True, False), (1, False, True)):
                 with self.subTest(extra_byte=extra_byte):
-                    fixture = NlFixture(root / str(extra_byte), baseline_nl="", schema_version=9)
+                    fixture = NlFixture(root / str(extra_byte), baseline_nl="", schema_version=10)
                     try:
                         self._configure_v5(fixture)
                         image_bytes = (fixture.dataset / "sample.png").read_bytes()
@@ -711,10 +712,10 @@ class NlRunnerTests(unittest.TestCase):
                     finally:
                         fixture.close()
 
-    def test_danbooru_v4_uses_the_existing_single_nl_count_request(self) -> None:
+    def test_danbooru_v10_uses_the_existing_single_nl_count_request(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             fixture = NlFixture(
-                Path(temporary), baseline_nl="", schema_version=9, profile="danbooru"
+                Path(temporary), baseline_nl="", schema_version=10, profile="danbooru"
             )
             try:
                 fixture.config.nl.update({
@@ -813,7 +814,7 @@ class NlRunnerTests(unittest.TestCase):
             finally:
                 fixture.close()
 
-    def test_v3_job_stages_nl_and_observation_from_one_process_call(self) -> None:
+    def test_v10_job_stages_nl_and_observation_from_one_process_call(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             fixture = NlFixture(Path(temporary), baseline_nl="")
             try:
@@ -999,7 +1000,7 @@ class NlRunnerTests(unittest.TestCase):
                     fixture.refresh_config()
                     transport = FakeNlTransport(issue_code=issue_code)
                     self.assertEqual("paused", fixture.runner(transport, NlApiCredentials("https://example.test", "main", "secret")).run())
-                    self.assertEqual(2, transport.process)
+                    self.assertEqual(4, transport.process)
                     diagnostics = {row["code"]: row["count"] for row in fixture.database.module_diagnostics("job-nl", "nl")}
                     self.assertEqual(10, diagnostics.get("nl_consecutive_failures", 0))
                     self.assertEqual(1, diagnostics.get("nl_circuit_breaker_paused", 0))
@@ -1015,7 +1016,7 @@ class NlRunnerTests(unittest.TestCase):
                 transport = FakeNlTransport(after_process=lambda process: fixture.database.set_job_status("job-nl", "cancelling", current_module_id="nl") if process == 1 else None)
                 self.assertEqual("cancelling", fixture.runner(transport, NlApiCredentials("https://example.test", "main", "secret")).run())
                 self.assertEqual(1, transport.process)
-                self.assertEqual(1, fixture.database.count_module_unsettled("job-nl", "nl"))
+                self.assertEqual(4, fixture.database.count_module_unsettled("job-nl", "nl"))
             finally:
                 fixture.close()
 
@@ -1033,7 +1034,7 @@ class NlRunnerTests(unittest.TestCase):
                 fixture.refresh_config()
                 transport = FakeNlTransport(http_attempts=2)
                 self.assertEqual("paused", fixture.runner(transport, NlApiCredentials("https://example.test", "main", "secret")).run())
-                self.assertEqual(1, transport.process)
+                self.assertEqual(2, transport.process)
                 diagnostics = {row["code"]: row["count"] for row in fixture.database.module_diagnostics("job-nl", "nl")}
                 self.assertEqual(12, diagnostics["nl_http_attempts"])
                 self.assertIn("nl_http_budget_paused", diagnostics)
@@ -1083,7 +1084,7 @@ class NlRunnerTests(unittest.TestCase):
                 fixture.refresh_config()
                 transport = FakeNlTransport(issue_code="nl_api_unavailable", issue_sample_ids=set(range(2, 21, 2)))
                 self.assertEqual("paused", fixture.runner(transport, NlApiCredentials("https://example.test", "main", "secret")).run())
-                self.assertEqual(4, transport.process)
+                self.assertEqual(7, transport.process)
                 diagnostics = {row["code"]: row["count"] for row in fixture.database.module_diagnostics("job-nl", "nl")}
                 self.assertEqual(1, diagnostics.get("nl_consecutive_failures", 0))
                 self.assertEqual(1, diagnostics.get("nl_circuit_breaker_paused", 0))

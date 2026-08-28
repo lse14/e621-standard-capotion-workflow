@@ -53,7 +53,7 @@ class NlManualReviewTests(unittest.TestCase):
             name = "image" if sample_id == 1 else f"image-{sample_id}"
             Image.new("RGB", (2, 2), "white").save(dataset / f"{name}.png")
             (dataset / f"{name}.json").write_bytes(serialize_annotation_json({"nl": "", "tags": []}))
-        config = JobConfig(workMode="in_place", overwriteMode="incremental", sourceRoot=str(dataset), schemaVersion=9)
+        config = JobConfig(workMode="in_place", overwriteMode="incremental", sourceRoot=str(dataset), schemaVersion=10)
         config.caption["enabled"] = config.classify["enabled"] = config.replace["enabled"] = config.ocr["enabled"] = False
         config.countReview["enabled"] = False  # type: ignore[index]
         assert config.tokenBudget is not None

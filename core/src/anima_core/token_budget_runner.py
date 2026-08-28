@@ -7,7 +7,7 @@ import uuid
 from pathlib import Path
 from typing import Mapping, Protocol
 
-from .contracts import SampleIssue, WorkLease, job_config_supports_token_budget, sha256_json
+from .contracts import CURRENT_JOB_CONFIG_SCHEMA_VERSION, SampleIssue, WorkLease, sha256_json
 from .db import StateDatabase
 from .overlay import WorkingAnnotationView
 from .scheduler import BoundedScheduler, SchedulerError
@@ -47,11 +47,26 @@ class TokenBudgetRunner:
             config = json.loads(str(job["config_json"]))
         except json.JSONDecodeError as exc:
             raise TokenBudgetRunnerError("frozen Token Budget configuration is invalid") from exc
-        if not isinstance(config, dict) or config.get("schemaVersion") != 9 or "profile" in config or not job_config_supports_token_budget(config.get("schemaVersion")) or sha256_json(config) != job["config_hash"]:
+        if (
+            not isinstance(config, dict)
+            or config.get("schemaVersion") != CURRENT_JOB_CONFIG_SCHEMA_VERSION
+            or int(job["config_schema_version"]) != CURRENT_JOB_CONFIG_SCHEMA_VERSION
+            or "profile" in config
+            or sha256_json(config) != job["config_hash"]
+        ):
             raise TokenBudgetRunnerError("frozen Token Budget configuration is invalid")
         section = config.get("tokenBudget")
         caption_format = config.get("captionFormat")
-        if not isinstance(section, dict) or section.get("enabled") is not True or not isinstance(caption_format, dict):
+        if (
+            not isinstance(section, dict)
+            or section.get("enabled") is not True
+            or not isinstance(caption_format, dict)
+            or set(caption_format) != {
+                "replaceUnderscoresWithSpaces", "preserveEscapes", "triggersEnabled",
+                "triggerTerms", "flatTxtLayout",
+            }
+            or caption_format.get("flatTxtLayout") not in {"single_line", "nl_newline"}
+        ):
             raise TokenBudgetRunnerError("Token Budget runner cannot execute a disabled module")
         required = {"enabled", "maxTokens", "resourceId", "resourceManifestRelativePath", "resourceFingerprint", "contextLimit"}
         if set(section) != required or type(section["maxTokens"]) is not int or type(section["contextLimit"]) is not int or not 1 <= section["maxTokens"] <= section["contextLimit"]:

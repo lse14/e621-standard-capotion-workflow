@@ -226,32 +226,32 @@ class JobPreflightTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "countReview requires classify to be enabled"):
                     validate_job_config(config)
 
-    def test_v9_config_has_no_task_profile_and_rejects_legacy_job_configs(self) -> None:
+    def test_v10_config_has_no_task_profile_and_rejects_legacy_job_configs(self) -> None:
         legacy = JobConfig(
             profile="e621", workMode="in_place", overwriteMode="incremental",
             sourceRoot="C:\\dataset", schemaVersion=8,
         ).to_dict()
         candidate = JobConfig(
-            workMode="in_place", overwriteMode="incremental", sourceRoot="C:\\dataset", schemaVersion=9,
+            workMode="in_place", overwriteMode="incremental", sourceRoot="C:\\dataset", schemaVersion=10,
         ).to_dict()
         candidate["nl"]["systemPrompt"] = "Describe the visible image."
 
         try:
             parsed = config_from_dict(candidate)
         except JobPreflightError as exc:
-            self.fail(f"JobConfig v9 without a task profile must be accepted: {exc}")
+            self.fail(f"JobConfig v10 without a task profile must be accepted: {exc}")
         self.assertNotIn("profile", parsed.to_dict())
         self.assertEqual("bundled", parsed.classify["indexMode"])
 
         with self.assertRaisesRegex(JobPreflightError, "incompatible|reinitialize|重新初始化"):
             config_from_dict(legacy)
         candidate["profile"] = "e621"
-        with self.assertRaisesRegex(JobPreflightError, "profile|shape"):
+        with self.assertRaisesRegex(JobPreflightError, r"profile|schema v10"):
             config_from_dict(candidate)
 
-    def test_v9_classify_mode_rejects_mixed_client_inputs_and_frozen_metadata(self) -> None:
+    def test_v10_classify_mode_rejects_mixed_client_inputs_and_frozen_metadata(self) -> None:
         base = JobConfig(
-            workMode="in_place", overwriteMode="incremental", sourceRoot="C:\\dataset", schemaVersion=9,
+            workMode="in_place", overwriteMode="incremental", sourceRoot="C:\\dataset", schemaVersion=10,
         ).to_dict()
         base["nl"]["systemPrompt"] = "Describe the visible image."
         base["classify"] = {
@@ -273,7 +273,7 @@ class JobPreflightTests(unittest.TestCase):
         with self.assertRaisesRegex(JobPreflightError, "assigned by preflight"):
             JobPreparationService._reject_client_frozen_resources(frozen)
 
-    def test_v9_preflight_derives_classify_wiki_data_source_id_in_frozen_config(self) -> None:
+    def test_v10_preflight_derives_classify_wiki_data_source_id_in_frozen_config(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             source = root / "dataset"
@@ -290,7 +290,7 @@ class JobPreflightTests(unittest.TestCase):
                 },
             }), encoding="utf-8")
             config = JobConfig(
-                workMode="in_place", overwriteMode="incremental", sourceRoot=str(source), schemaVersion=9,
+                workMode="in_place", overwriteMode="incremental", sourceRoot=str(source), schemaVersion=10,
             ).to_dict()
             config["nl"]["systemPrompt"] = "Describe the visible image."
             config["caption"]["resourceId"] = "tagger-default"
@@ -694,7 +694,7 @@ class JobPreflightTests(unittest.TestCase):
 
     def _ocr_config(self, source: Path, *, enabled: bool) -> dict[str, object]:
         config = JobConfig(
-            workMode="in_place", overwriteMode="incremental", sourceRoot=str(source), schemaVersion=9,
+            workMode="in_place", overwriteMode="incremental", sourceRoot=str(source), schemaVersion=10,
         )
         config.nl.update({"systemPrompt": "describe the visible image"})
         config.caption["resourceId"] = "tagger-default"
@@ -755,7 +755,7 @@ class JobPreflightTests(unittest.TestCase):
         max_tokens: int = 1,
     ) -> dict[str, object]:
         config = JobConfig(
-            workMode="in_place", overwriteMode="incremental", sourceRoot=str(source), schemaVersion=9,
+            workMode="in_place", overwriteMode="incremental", sourceRoot=str(source), schemaVersion=10,
         )
         config.caption["resourceId"] = "tagger-default"
         config.classify["resourceId"] = "classify-default"
@@ -768,7 +768,7 @@ class JobPreflightTests(unittest.TestCase):
 
     def _ocr_device_config(self, source: Path, *, enabled: bool) -> dict[str, object]:
         config = JobConfig(
-            workMode="in_place", overwriteMode="incremental", sourceRoot=str(source), schemaVersion=9,
+            workMode="in_place", overwriteMode="incremental", sourceRoot=str(source), schemaVersion=10,
         )
         config.caption["resourceId"] = "tagger-default"
         config.classify["resourceId"] = "classify-default"
@@ -781,7 +781,7 @@ class JobPreflightTests(unittest.TestCase):
 
     def _input_nl_config(self, source: Path, *, input_txt_mode: str = "tag") -> JobConfig:
         config = JobConfig(
-            workMode="in_place", overwriteMode="incremental", sourceRoot=str(source), schemaVersion=9,
+            workMode="in_place", overwriteMode="incremental", sourceRoot=str(source), schemaVersion=10,
         )
         config.caption["resourceId"] = "tagger-default"
         config.caption["inputTxtMode"] = input_txt_mode
@@ -792,7 +792,7 @@ class JobPreflightTests(unittest.TestCase):
         config.tokenBudget["enabled"] = False
         return config
 
-    def test_v9_input_nl_has_no_api_prompt_or_budget_requirement(self) -> None:
+    def test_v10_input_nl_has_no_api_prompt_or_budget_requirement(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             source = root / "dataset"
@@ -820,7 +820,7 @@ class JobPreflightTests(unittest.TestCase):
             finally:
                 service.close()
 
-    def test_v9_ocr_devices_freeze_an_execution_request(self) -> None:
+    def test_v10_ocr_devices_freeze_an_execution_request(self) -> None:
         binding = self._binding_api()
         self.assertIsNotNone(binding, "v9 OCR must use the current execution request contract")
         if binding is None:
@@ -843,7 +843,7 @@ class JobPreflightTests(unittest.TestCase):
                 finally:
                     service.close()
 
-    def test_v9_ocr_execution_request_survives_service_restart_before_workspace_confirmation(self) -> None:
+    def test_v10_ocr_execution_request_survives_service_restart_before_workspace_confirmation(self) -> None:
         binding = self._binding_api()
         self.assertIsNotNone(binding, "Task 3.4 requires a durable task-owned OCR execution request")
         if binding is None:
@@ -1056,7 +1056,7 @@ class JobPreflightTests(unittest.TestCase):
             finally:
                 service.close()
 
-    def test_v9_ocr_uses_the_existing_shared_resource_freeze_path(self) -> None:
+    def test_v10_ocr_uses_the_existing_shared_resource_freeze_path(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             source = root / "dataset"
@@ -1116,7 +1116,7 @@ class JobPreflightTests(unittest.TestCase):
             finally:
                 service.close()
 
-    def test_v9_user_supplement_is_bounded_before_a_job_is_created(self) -> None:
+    def test_v10_user_supplement_is_bounded_before_a_job_is_created(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             source = Path(temporary) / "dataset"
             source.mkdir()

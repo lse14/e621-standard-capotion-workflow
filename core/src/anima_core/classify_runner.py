@@ -20,14 +20,18 @@ from .classify_protocol import (
     ClassifyHelloRequestV1,
     ClassifyHelloResultV1,
     ClassifyIssueResultV1,
+    ClassifyProcessRequestV1,
+    ClassifyProcessResultV1,
     ClassifyProtocolError,
     ClassifyResultV1,
     ClassifyWorkItemV1,
     parse_classify_outcome,
     validate_outcome_for_item,
+    validate_outcomes_for_items,
 )
 from .classify_resource import ClassifyResourceError, load_classify_resource_from_install
 from .contracts import (
+    CURRENT_JOB_CONFIG_SCHEMA_VERSION,
     ProgressEvent,
     SampleIssue,
     WorkLease,
@@ -78,7 +82,7 @@ class ClassifyRunReport:
 
 
 class ClassifyRunner:
-    """Bounded core-owned classify orchestration; worker input/output stays per-sample."""
+    """Bounded core-owned classify orchestration with serial overlay commits."""
 
     def __init__(
         self,
@@ -144,7 +148,7 @@ class ClassifyRunner:
             "customResourcePath", "customResourceContentSha256",
         }
         if (
-            config_schema_version != 9
+            config_schema_version != CURRENT_JOB_CONFIG_SCHEMA_VERSION
             or "profile" in config
             or config_schema_version != int(job["config_schema_version"])
             or not isinstance(classify, dict) or not required_classify.issubset(classify)
@@ -191,7 +195,15 @@ class ClassifyRunner:
                 "resourceManifestRelativePath": self.resource_manifest_relative_path,
                 "resourceFingerprint": self.resource_fingerprint,
                 "wikiDataSourceId": classify["wikiDataSourceId"], "overwriteCount": classify["overwriteCount"],
-                "captionFormat": config.get("captionFormat"),
+                "captionFormat": {
+                    key: config["captionFormat"].get(key)
+                    for key in (
+                        "replaceUnderscoresWithSpaces",
+                        "preserveEscapes",
+                        "triggersEnabled",
+                        "triggerTerms",
+                    )
+                },
             })
         except ClassifyProtocolError as exc:
             raise self._fatal("classify_protocol_violation", f"classify hello is invalid: {exc}") from exc
@@ -337,6 +349,16 @@ class ClassifyRunner:
                     status = self.scheduler.finish_module(self.job_id, "classify", with_issues=int(summary["issue_count"]) > 0)
                     self._publish(status)
                     return self._report(status)
+                pending: list[
+                    tuple[
+                        WorkLease,
+                        object,
+                        ClassifyWorkItemV1,
+                        dict[str, object] | None,
+                        RawE621Annotation | None,
+                        str | None,
+                    ]
+                ] = []
                 for lease in active[:]:
                     job = self.database.get_job(self.job_id)
                     if job["status"] in {"cancelling", "paused"}:
@@ -357,37 +379,53 @@ class ClassifyRunner:
                         active.remove(lease)
                         self._publish("running", lease.attempt)
                         continue
+                    pending.append((lease, row, item, existing, raw_e621, nl_override))
+                if pending:
+                    job = self.database.get_job(self.job_id)
+                    if job["status"] in {"cancelling", "paused"}:
+                        for lease in active:
+                            self.scheduler.release_unstarted(lease)
+                        active = []
+                        return self._report(str(job["status"]))
+                    if job["status"] != "running" or job["current_module_id"] != "classify":
+                        raise self._fatal("classify_protocol_violation", "classify job state changed before a worker request")
                     if not initialized:
                         self._initialize(hello)
                         initialized = True
                     self.process_requests += 1
                     try:
-                        outcome = parse_classify_outcome(self._exchange("process_batch", {"schemaVersion": 1, "payloadType": "classify_process_request", "items": [item.to_dict()]}).payload)
-                        validate_outcome_for_item(outcome, item)
+                        request = ClassifyProcessRequestV1(tuple(item for _, _, item, _, _, _ in pending))
+                        result = ClassifyProcessResultV1.from_dict(
+                            self._exchange("process_batch", request.to_dict()).payload
+                        )
+                        outcomes = validate_outcomes_for_items(result.outcomes, request.items)
                     except ClassifyProtocolError as exc:
                         raise self._fatal("classify_protocol_violation", str(exc)) from exc
-                    if isinstance(outcome, ClassifyIssueResultV1):
-                        self._issue(lease, row, outcome.code, outcome.message, retriable=outcome.retriable)
-                    else:
-                        try:
-                            self.overlay_writer.write(
-                                item,
-                                serialize_annotation_json(compose_classify_json(
-                                    existing,
-                                    outcome,
-                                    overwrite_mode=overwrite_mode,
-                                    overwrite_json=overwrite_json,
-                                    raw_e621=raw_e621,
-                                    nl_override=nl_override,
-                                )),
-                                count_decision=outcome.countDecision.to_dict(),
-                            )
-                            self.scheduler.complete(lease)
-                        except Exception as exc:
-                            raise self._fatal("classify_result_persistence_failed", "classify overlay persistence failed") from exc
-                        self._record_count_diagnostics(outcome)
-                    active.remove(lease)
-                    self._publish("running", lease.attempt)
+                    for (lease, row, item, existing, raw_e621, nl_override), outcome in zip(
+                        pending, outcomes, strict=True
+                    ):
+                        if isinstance(outcome, ClassifyIssueResultV1):
+                            self._issue(lease, row, outcome.code, outcome.message, retriable=outcome.retriable)
+                        else:
+                            try:
+                                self.overlay_writer.write(
+                                    item,
+                                    serialize_annotation_json(compose_classify_json(
+                                        existing,
+                                        outcome,
+                                        overwrite_mode=overwrite_mode,
+                                        overwrite_json=overwrite_json,
+                                        raw_e621=raw_e621,
+                                        nl_override=nl_override,
+                                    )),
+                                    count_decision=outcome.countDecision.to_dict(),
+                                )
+                                self.scheduler.complete(lease)
+                            except Exception as exc:
+                                raise self._fatal("classify_result_persistence_failed", "classify overlay persistence failed") from exc
+                            self._record_count_diagnostics(outcome)
+                        active.remove(lease)
+                        self._publish("running", lease.attempt)
         except ClassifyRunnerFatalError:
             for lease in active:
                 self.scheduler.release_unstarted(lease)

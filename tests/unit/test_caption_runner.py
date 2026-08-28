@@ -70,18 +70,23 @@ def _job(
     overwrite_mode: str = "incremental",
     overwrite_txt: bool = False,
     profile: str = "e621",
-    schema_version: int = 9,
+    schema_version: int = 10,
     input_txt_mode: str | None = None,
     tagger_fallback_on_missing_txt: bool | None = None,
+    module_batch_size: int | None = None,
 ) -> dict[str, object]:
-    config = JobConfig(
-        profile=profile,  # type: ignore[arg-type]
-        workMode="in_place",
-        overwriteMode=overwrite_mode,  # type: ignore[arg-type]
-        sourceRoot=str(root),
-        schemaVersion=schema_version,
-    )
+    config_kwargs: dict[str, object] = {
+        "workMode": "in_place",
+        "overwriteMode": overwrite_mode,
+        "sourceRoot": str(root),
+        "schemaVersion": schema_version,
+    }
+    if schema_version != 10:
+        config_kwargs["profile"] = profile
+    config = JobConfig(**config_kwargs)  # type: ignore[arg-type]
     config.caption["overwriteTxt"] = overwrite_txt
+    if module_batch_size is not None:
+        config.moduleBatchSize["caption"] = module_batch_size
     if input_txt_mode is not None:
         config.caption["inputTxtMode"] = input_txt_mode
     if tagger_fallback_on_missing_txt is not None:
@@ -163,11 +168,13 @@ class FakeCaptionTransport:
         fatal_code: str | None = None,
         on_process: Callable[[CaptionWorkItemV1], None] | None = None,
         gpu_fallback: bool = False,
+        batch_outcomes: Callable[[list[CaptionWorkItemV1]], list[dict[str, object]]] | None = None,
     ) -> None:
         self.outcome = outcome
         self.fatal_code = fatal_code
         self.on_process = on_process
         self.gpu_fallback = gpu_fallback
+        self.batch_outcomes = batch_outcomes
         self.hello_requests = 0
         self.process_requests = 0
         self.item_counts: list[int] = []
@@ -208,12 +215,23 @@ class FakeCaptionTransport:
         if not isinstance(items, list):
             raise AssertionError("process request has no item list")
         self.item_counts.append(len(items))
-        item = CaptionWorkItemV1.from_dict(items[0])
-        if self.on_process is not None:
-            self.on_process(item)
+        parsed_items = [CaptionWorkItemV1.from_dict(item) for item in items]
         if self.fatal_code is not None:
             return self._response(request, self.process_requests, "error", {"code": self.fatal_code})
-        return self._response(request, self.process_requests, "result", self.outcome(item))
+        for item in parsed_items:
+            if self.on_process is not None:
+                self.on_process(item)
+        outcomes = (
+            self.batch_outcomes(parsed_items)
+            if self.batch_outcomes is not None
+            else [self.outcome(item) for item in parsed_items]
+        )
+        return self._response(
+            request,
+            self.process_requests,
+            "result",
+            {"schemaVersion": 1, "payloadType": "caption_process_result", "outcomes": outcomes},
+        )
 
 
 class CaptionRunnerTests(unittest.TestCase):
@@ -226,9 +244,10 @@ class CaptionRunnerTests(unittest.TestCase):
         overwrite_mode: str = "incremental",
         overwrite_txt: bool = False,
         profile: str = "e621",
-        schema_version: int = 9,
+        schema_version: int = 10,
         input_txt_mode: str | None = None,
         tagger_fallback_on_missing_txt: bool | None = None,
+        module_batch_size: int | None = None,
     ) -> tuple[StateDatabase, BoundedScheduler]:
         database = StateDatabase.open(root / "state.db")
         database.insert_job(
@@ -242,6 +261,7 @@ class CaptionRunnerTests(unittest.TestCase):
                 schema_version=schema_version,
                 input_txt_mode=input_txt_mode,
                 tagger_fallback_on_missing_txt=tagger_fallback_on_missing_txt,
+                module_batch_size=module_batch_size,
             )
         )
         database.insert_samples(
@@ -346,9 +366,9 @@ class CaptionRunnerTests(unittest.TestCase):
             finally:
                 database.close()
 
-    def test_runner_is_bounded_single_item_and_publishes_persisted_aggregate_progress(self) -> None:
+    def test_runner_batches_the_frozen_caption_window_and_publishes_persisted_aggregate_progress(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
-            database, scheduler = self._database(Path(temporary), 130)
+            database, scheduler = self._database(Path(temporary), 130, module_batch_size=64)
             transport = FakeCaptionTransport()
             consumed = 0
             observed: list[ProgressEvent] = []
@@ -380,10 +400,10 @@ class CaptionRunnerTests(unittest.TestCase):
                 self.assertEqual("completed", report.status)
                 self.assertEqual((130, 130, 0), (report.total, report.completed, report.failed))
                 self.assertEqual(64, report.maxResidentLeases)
-                self.assertEqual((1, 130, 130), (report.helloRequests, report.processRequests, consumed))
+                self.assertEqual((1, 3, 130), (report.helloRequests, report.processRequests, consumed))
                 self.assertEqual(1, transport.hello_requests)
                 self.assertTrue(transport.item_counts)
-                self.assertEqual({1}, set(transport.item_counts))
+                self.assertEqual({2, 64}, set(transport.item_counts))
                 self.assertEqual([0, 130], [event.completed for event in observed])
                 self.assertEqual(2, database.count("event_ring", "job-caption"))
                 source = (ROOT / "core" / "src" / "anima_core" / "caption_runner.py").read_text(encoding="utf-8")
@@ -410,6 +430,39 @@ class CaptionRunnerTests(unittest.TestCase):
                 self.assertEqual("failed", database.module_summary("job-caption", "caption")["status"])
                 self.assertEqual("pending", database.get_sample_state("job-caption", 1)["status"])
                 self.assertEqual("pending", database.get_sample_state("job-caption", 2)["status"])
+                self.assertEqual(0, database.count_in_flight("job-caption"))
+            finally:
+                database.close()
+
+    def test_runner_maps_shuffled_batch_outcomes_and_settles_an_individual_issue(self) -> None:
+        def outcomes(items: list[CaptionWorkItemV1]) -> list[dict[str, object]]:
+            self.assertEqual([1, 2, 3], [item.sampleId for item in items])
+            issue = CaptionIssueResultV1(
+                sampleId=items[1].sampleId,
+                leaseId=items[1].leaseId,
+                relativeImagePath=items[1].relativeImagePath,
+                code="caption_no_tags",
+                retriable=False,
+                message="No model tags matched the frozen thresholds.",
+                repairStartModule=None,
+            ).to_dict()
+            return [_result(items[2]), issue, _result(items[0])]
+
+        with tempfile.TemporaryDirectory() as temporary:
+            database, scheduler = self._database(Path(temporary), 3, module_batch_size=3)
+            consumed: list[int] = []
+            try:
+                report = self._runner(
+                    database,
+                    scheduler,
+                    FakeCaptionTransport(batch_outcomes=outcomes),
+                    result_consumer=lambda item, _outcome: consumed.append(item.sampleId),
+                ).run()
+                self.assertEqual("completed_with_issues", report.status)
+                self.assertEqual((2, 1, 1), (report.completed, report.failed, report.issueCount))
+                self.assertEqual([1, 3], consumed)
+                self.assertEqual((1, [3]), (report.processRequests, [3]))
+                self.assertEqual("failed", database.get_sample_state("job-caption", 2)["status"])
                 self.assertEqual(0, database.count_in_flight("job-caption"))
             finally:
                 database.close()
@@ -479,7 +532,7 @@ class CaptionRunnerTests(unittest.TestCase):
             finally:
                 database.close()
 
-    def test_cancellation_finishes_only_the_in_flight_item_and_starts_no_new_request(self) -> None:
+    def test_cancellation_settles_the_started_batch_and_starts_no_new_request(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             database, scheduler = self._database(Path(temporary), 70)
             cancellation_requested = False
@@ -499,13 +552,45 @@ class CaptionRunnerTests(unittest.TestCase):
                     result_consumer=lambda *_: None,
                 ).run()
                 self.assertEqual("cancelling", report.status)
-                self.assertEqual(1, report.completed)
+                self.assertEqual(4, report.completed)
                 self.assertEqual(1, transport.process_requests)
                 self.assertEqual("completed", database.get_sample_state("job-caption", 1)["status"])
-                self.assertEqual("pending", database.get_sample_state("job-caption", 2)["status"])
+                self.assertEqual("completed", database.get_sample_state("job-caption", 4)["status"])
+                self.assertEqual("pending", database.get_sample_state("job-caption", 5)["status"])
                 self.assertEqual(0, database.count_in_flight("job-caption"))
                 scheduler.settle_cancellation("job-caption")
                 self.assertEqual("cancelled_recoverable", database.get_job("job-caption")["status"])
+            finally:
+                database.close()
+
+    def test_cancellation_before_worker_exchange_releases_the_unstarted_batch(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            database, scheduler = self._database(Path(temporary), 5)
+            raw_reads = 0
+
+            def cancel_after_the_last_item_is_built(_annotation_key: str) -> object | None:
+                nonlocal raw_reads
+                raw_reads += 1
+                if raw_reads == 4:
+                    scheduler.begin_cancellation("job-caption")
+                return None
+
+            transport = FakeCaptionTransport()
+            try:
+                report = self._runner(
+                    database,
+                    scheduler,
+                    transport,
+                    result_consumer=lambda *_: self.fail("an unstarted batch must not be persisted"),
+                    raw_e621_reader=cancel_after_the_last_item_is_built,
+                ).run()
+                self.assertEqual("cancelling", report.status)
+                self.assertEqual((0, 0), (report.completed, transport.process_requests))
+                self.assertEqual(0, database.count_in_flight("job-caption"))
+                self.assertEqual(
+                    ["pending"] * 5,
+                    [database.get_sample_state("job-caption", sample_id)["status"] for sample_id in range(1, 6)],
+                )
             finally:
                 database.close()
 
@@ -564,7 +649,7 @@ class CaptionRunnerTests(unittest.TestCase):
                 finally:
                     database.close()
 
-    def test_v9_tag_nonblank_txt_skips_tagger_even_when_overwrite_is_requested(self) -> None:
+    def test_v10_tag_nonblank_txt_skips_tagger_even_when_overwrite_is_requested(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             database, scheduler = self._database(
                 Path(temporary),
@@ -572,7 +657,7 @@ class CaptionRunnerTests(unittest.TestCase):
                 original_txt_state="nonblank",
                 overwrite_mode="rebuild",
                 overwrite_txt=True,
-                schema_version=9,
+                schema_version=10,
                 input_txt_mode="tag",
             )
             transport = FakeCaptionTransport()
@@ -581,7 +666,7 @@ class CaptionRunnerTests(unittest.TestCase):
                     database,
                     scheduler,
                     transport,
-                    result_consumer=lambda *_: self.fail("v9 Tag TXT must skip inference"),
+                    result_consumer=lambda *_: self.fail("v10 Tag TXT must skip inference"),
                 ).run()
                 self.assertEqual(("completed", 0, 1), (report.status, report.completed, report.skipped))
                 self.assertEqual((0, 0), (transport.hello_requests, transport.process_requests))
@@ -590,13 +675,13 @@ class CaptionRunnerTests(unittest.TestCase):
             finally:
                 database.close()
 
-    def test_v9_tag_missing_or_blank_txt_uses_tagger_when_fallback_is_enabled(self) -> None:
+    def test_v10_tag_missing_or_blank_txt_uses_tagger_when_fallback_is_enabled(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             database, scheduler = self._database(
                 Path(temporary),
                 1,
                 original_txt_state="missing_or_blank",
-                schema_version=9,
+                schema_version=10,
                 input_txt_mode="tag",
                 tagger_fallback_on_missing_txt=True,
             )
@@ -610,13 +695,13 @@ class CaptionRunnerTests(unittest.TestCase):
             finally:
                 database.close()
 
-    def test_v9_tag_missing_or_blank_txt_without_fallback_warns_and_fails_sample(self) -> None:
+    def test_v10_tag_missing_or_blank_txt_without_fallback_warns_and_fails_sample(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             database, scheduler = self._database(
                 Path(temporary),
                 1,
                 original_txt_state="missing_or_blank",
-                schema_version=9,
+                schema_version=10,
                 input_txt_mode="tag",
                 tagger_fallback_on_missing_txt=False,
             )

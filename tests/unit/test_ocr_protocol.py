@@ -17,6 +17,7 @@ from anima_core.ocr_protocol import (  # noqa: E402
     OcrProtocolError,
     parse_ocr_process_result,
     validate_hello_result,
+    validate_outcomes_for_items,
     validate_outcome_for_item,
 )
 
@@ -145,6 +146,25 @@ def _failed_result(error: dict[str, object], *, width: int = 100, height: int = 
 
 
 class OcrProtocolTests(unittest.TestCase):
+    def test_batch_results_may_be_shuffled_but_must_match_the_exact_request_identities(self) -> None:
+        first = _request()["items"][0]
+        second = dict(first)
+        second.update({"sampleId": 8, "leaseId": "lease-8", "relativeImagePath": "nested\\second.png", "imageSha256": "d" * 64})
+        request = OcrProcessRequestV1.from_dict({"schemaVersion": 1, "payloadType": "ocr_process_request", "items": [first, second]})
+        first_outcome = _success()["items"][0]
+        second_outcome = copy.deepcopy(first_outcome)
+        second_outcome.update({"sampleId": 8, "leaseId": "lease-8", "relativeImagePath": "nested\\second.png"})
+        second_outcome["image"]["sha256"] = "d" * 64
+        shuffled = parse_ocr_process_result({"schemaVersion": 1, "payloadType": "ocr_process_result", "items": [second_outcome, first_outcome]})
+        ordered = validate_outcomes_for_items(shuffled, request.items)
+        self.assertEqual([7, 8], [outcome.sampleId for outcome in ordered])
+        for malformed in (
+            (shuffled[0], shuffled[0]),
+            (shuffled[0],),
+        ):
+            with self.subTest(malformed=malformed), self.assertRaises(OcrProtocolError):
+                validate_outcomes_for_items(tuple(malformed), request.items)
+
     def test_hello_execution_tuning_is_optional_complete_bounded_and_preserves_legacy_bytes(self) -> None:
         legacy = OcrHelloRequestV1.from_dict(_hello())
         self.assertEqual(_hello(), legacy.to_dict())

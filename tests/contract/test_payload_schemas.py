@@ -18,6 +18,8 @@ sys.path.insert(0, str(ROOT / "core" / "src"))
 from anima_core.caption_protocol import (
     CaptionHelloResultV1,
     CaptionIssueResultV1,
+    CaptionProcessRequestV1,
+    CaptionProcessResultV1,
     CaptionResultV1,
     CaptionTagV1,
     CaptionWorkItemV1,
@@ -26,8 +28,11 @@ from anima_core.classify_protocol import (
     ClassifyCountDecisionV1,
     ClassifyHelloResultV1,
     ClassifyIssueResultV1,
+    ClassifyProcessRequestV1,
+    ClassifyProcessResultV1,
     ClassifyProjectionV1,
     ClassifyResultV1,
+    ClassifyWorkItemV1,
 )
 from anima_core.contracts import (
     JobConfig,
@@ -258,6 +263,32 @@ REPLACE_RESULT = {  # workers/replace/src/anima_replace_worker/worker.py:62-66
         "appearance": ["fat"], "tags": ["blush"], "environment": [], "nl": "",
     },
 }
+REPLACE_PROCESS_REQUEST = {
+    "schemaVersion": 1,
+    "payloadType": "replace_process_request",
+    "items": [
+        {
+            "schemaVersion": 1, "sampleId": 1, "leaseId": "lease-1", "source": "e621",
+            "relativeImagePath": "a.png", "projection": REPLACE_RESULT["projection"],
+        },
+        {
+            "schemaVersion": 1, "sampleId": 2, "leaseId": "lease-2", "source": "e621",
+            "relativeImagePath": "b.png", "projection": REPLACE_RESULT["projection"],
+        },
+    ],
+}
+REPLACE_PROCESS_RESULT = {
+    "schemaVersion": 1,
+    "payloadType": "replace_process_result",
+    "outcomes": [
+        REPLACE_RESULT,
+        {
+            "schemaVersion": 1, "payloadType": "replace_issue", "sampleId": 2, "leaseId": "lease-2",
+            "source": "e621", "relativeImagePath": "b.png", "code": "replace_json_invalid",
+            "severity": "error", "blocking": True, "retriable": False, "message": "projection rejected",
+        },
+    ],
+}
 REPLACE_HELLO_RESULT = {  # workers/replace/src/anima_replace_worker/worker.py:39-45
     "schemaVersion": 1, "payloadType": "replace_hello_result", "ready": True, "indexLoads": 1,
     "ruleCount": 86922, "resourceFingerprint": "b" * 64, "keepNonCanonical": 269, "canonicalDirectionConflict": 0,
@@ -414,6 +445,24 @@ CAPTION_HELLO_REQUEST = {  # tests/unit/test_caption_protocol.py mirrors the sam
 
 def _payloads() -> list[tuple[str, str, dict]]:
     caption_item = _caption_item()
+    classify_item = ClassifyWorkItemV1(
+        sampleId=1,
+        leaseId="lease-1",
+        relativeImagePath="a.png",
+        annotationKey="a",
+        txtText="solo, blush",
+        txtProvenance="module1_written",
+        originalCount=None,
+    )
+    classify_second_item = ClassifyWorkItemV1(
+        sampleId=2,
+        leaseId="lease-2",
+        relativeImagePath="b.png",
+        annotationKey="b",
+        txtText="solo, blue eyes",
+        txtProvenance="module1_written",
+        originalCount=None,
+    )
     return [
         ("caption-worker-v1", "caption_hello_request", CAPTION_HELLO_REQUEST),
         ("caption-worker-v1", "caption_danbooru_hello_request", {
@@ -433,6 +482,14 @@ def _payloads() -> list[tuple[str, str, dict]]:
             executable="C:\\app\\runtimes\\caption-e621\\python.exe", provider="CPUExecutionProvider",
             resourceFingerprint="b" * 64, tagCount=106_536,
         ).to_dict()),
+        ("caption-worker-v1", "caption_process_request", CaptionProcessRequestV1((
+            caption_item,
+            CaptionWorkItemV1(
+                sampleId=8, leaseId="lease-8", relativeImagePath="nested\\image-8.png",
+                annotationKey="nested\\image-8", imageFormat="png", imageSize=124,
+                imageMtimeNs=457, imageFileId="1:3",
+            ),
+        )).to_dict()),
         ("caption-worker-v1", "caption_result", CaptionResultV1(
             sampleId=caption_item.sampleId, leaseId=caption_item.leaseId,
             relativeImagePath=caption_item.relativeImagePath, tags=(CaptionTagV1("blush", 0.87, "general"),),
@@ -449,6 +506,19 @@ def _payloads() -> list[tuple[str, str, dict]]:
             relativeImagePath=caption_item.relativeImagePath, code="caption_no_tags", retriable=False,
             message="No model tags matched the frozen thresholds.",
         ).to_dict()),
+        ("caption-worker-v1", "caption_process_result", CaptionProcessResultV1((
+            CaptionResultV1(
+                sampleId=caption_item.sampleId, leaseId=caption_item.leaseId,
+                relativeImagePath=caption_item.relativeImagePath,
+                tags=(CaptionTagV1("blush", 0.87, "general"),), formattedTxt="blush",
+                provider="CPUExecutionProvider",
+            ),
+            CaptionIssueResultV1(
+                sampleId=8, leaseId="lease-8", relativeImagePath="nested\\image-8.png",
+                code="caption_no_tags", retriable=False,
+                message="No model tags matched the frozen thresholds.",
+            ),
+        )).to_dict()),
         ("classify-worker-v1", "classify_hello_request", _hello("classify-e621")),
         ("classify-worker-v1", "classify_danbooru_hello_request", {
             **_hello("classify-e621"),
@@ -459,6 +529,10 @@ def _payloads() -> list[tuple[str, str, dict]]:
         ("classify-worker-v1", "classify_hello_result", ClassifyHelloResultV1(
             "C:\\app\\runtimes\\classify-e621\\python.exe", "b" * 64,
         ).to_dict()),
+        ("classify-worker-v1", "classify_process_request", ClassifyProcessRequestV1((
+            classify_item,
+            classify_second_item,
+        )).to_dict()),
         ("classify-worker-v1", "classify_result", ClassifyResultV1(
             sampleId=1, leaseId="lease-1", relativeImagePath="a.png", projection=_classify_projection(),
             countDecision=_classify_decision(), inputTagCount=4, outputTagCount=3, droppedTagCount=1,
@@ -485,10 +559,32 @@ def _payloads() -> list[tuple[str, str, dict]]:
             sampleId=1, leaseId="lease-1", relativeImagePath="a.png", code="classify_no_writable_tags",
             retriable=False, message="no writable tag survived the projection", repairStartModule=None,
         ).to_dict()),
+        ("classify-worker-v1", "classify_process_result", ClassifyProcessResultV1((
+            ClassifyResultV1(
+                sampleId=classify_item.sampleId,
+                leaseId=classify_item.leaseId,
+                relativeImagePath=classify_item.relativeImagePath,
+                projection=_classify_projection(),
+                countDecision=_classify_decision(),
+                inputTagCount=4,
+                outputTagCount=3,
+                droppedTagCount=1,
+            ),
+            ClassifyIssueResultV1(
+                sampleId=classify_second_item.sampleId,
+                leaseId=classify_second_item.leaseId,
+                relativeImagePath=classify_second_item.relativeImagePath,
+                code="classify_no_writable_tags",
+                retriable=False,
+                message="no writable tag survived the projection",
+                repairStartModule=None,
+            ),
+        )).to_dict()),
         ("replace-worker-v1", "replace_hello_request", _hello("replace-e621")),
         ("replace-worker-v1", "replace_hello_request_custom", REPLACE_CUSTOM_HELLO_REQUEST),
         ("replace-worker-v1", "replace_hello_result", REPLACE_HELLO_RESULT),
-        ("replace-worker-v1", "replace_result", REPLACE_RESULT),
+        ("replace-worker-v1", "replace_process_request", REPLACE_PROCESS_REQUEST),
+        ("replace-worker-v1", "replace_process_result", REPLACE_PROCESS_RESULT),
         ("ocr-worker-v1", "ocr_hello_request", OCR_HELLO_REQUEST),
         ("ocr-worker-v1", "ocr_hello_result", OCR_HELLO_RESULT),
         ("ocr-worker-v1", "ocr_process_request", OCR_PROCESS_REQUEST),
@@ -519,15 +615,46 @@ def _payloads() -> list[tuple[str, str, dict]]:
 
 
 class PayloadSchemaTests(unittest.TestCase):
-    def test_job_config_v9_removes_task_profile_and_separates_classify_input_modes(self) -> None:
-        schema_path = SCHEMAS / "job-config-v9.schema.json"
-        self.assertTrue(schema_path.is_file(), "JobConfig v9 schema must exist before v9 is accepted")
-        document = _schema("job-config-v9")
+    def test_job_config_v10_requires_complete_batch_map_and_flat_txt_layout(self) -> None:
+        schema_path = SCHEMAS / "job-config-v10.schema.json"
+        self.assertTrue(schema_path.is_file(), "JobConfig v10 schema must exist before v10 is accepted")
+        document = _schema("job-config-v10")
+        payload = _wire(JobConfig(
+            workMode="in_place", overwriteMode="incremental", sourceRoot="C:\\data",
+        ).to_dict())
+        self.assertEqual(10, payload["schemaVersion"])
+        self.assertEqual(
+            {
+                "caption": 4, "classify": 128, "replace": 128, "ocr": 4, "nl": 3,
+                "countReview": 100, "dropout": 4, "tokenBudget": 128, "export": 500,
+            },
+            payload["moduleBatchSize"],
+        )
+        self.assertEqual("nl_newline", payload["captionFormat"]["flatTxtLayout"])
+        self.assertEqual([], validate(payload, document, document))
+
+        for field in payload["moduleBatchSize"]:
+            incomplete = _wire(payload)
+            incomplete["moduleBatchSize"].pop(field)
+            self.assertNotEqual([], validate(incomplete, document, document), field)
+        invalid_layout = _wire(payload)
+        invalid_layout["captionFormat"]["flatTxtLayout"] = "paragraphs"
+        self.assertNotEqual([], validate(invalid_layout, document, document))
+
+        legacy = _wire(payload)
+        legacy["schemaVersion"] = 9
+        with self.assertRaisesRegex(ValueError, "legacy JobConfig is incompatible"):
+            config_from_dict(legacy)
+
+    def test_job_config_v10_removes_task_profile_and_separates_classify_input_modes(self) -> None:
+        schema_path = SCHEMAS / "job-config-v10.schema.json"
+        self.assertTrue(schema_path.is_file(), "JobConfig v10 schema must exist before v10 is accepted")
+        document = _schema("job-config-v10")
         payload = JobConfig(
             workMode="in_place", overwriteMode="incremental", sourceRoot="C:\\data",
         ).to_dict()
         self.assertNotIn("profile", payload)
-        self.assertEqual(9, payload["schemaVersion"])
+        self.assertEqual(10, payload["schemaVersion"])
         self.assertEqual([], validate(_wire(payload), document, document))
 
         with_profile = json.loads(json.dumps(payload))
@@ -545,7 +672,7 @@ class PayloadSchemaTests(unittest.TestCase):
             {
                 "caption-worker-v1", "classify-worker-v1", "replace-worker-v1", "ocr-worker-v1", "token-budget-worker-v1", "nl-worker-v1",
                 "policy-worker-v1", "export-worker-v1", "job-config-v2", "job-config-v3", "job-config-v4",
-                "job-config-v5", "job-config-v6", "job-config-v7", "job-config-v8", "job-config-v9",
+                "job-config-v5", "job-config-v6", "job-config-v7", "job-config-v8", "job-config-v9", "job-config-v10",
                 "sample-manifest-v1",
                 "worker-envelope-v1",
             },
@@ -658,8 +785,8 @@ class PayloadSchemaTests(unittest.TestCase):
                 mutate(payload["items"][3]["error"])
                 self.assertNotEqual([], validate(payload, document, document))
 
-    def test_current_job_config_matches_the_v9_schema(self) -> None:
-        document = _schema("job-config-v9")
+    def test_current_job_config_matches_the_v10_schema(self) -> None:
+        document = _schema("job-config-v10")
         configs = (
             JobConfig(workMode="in_place", overwriteMode="incremental", sourceRoot="C:\\data"),
             JobConfig(
@@ -670,7 +797,7 @@ class PayloadSchemaTests(unittest.TestCase):
         for config in configs:
             with self.subTest(workMode=config.workMode):
                 payload = _wire(config.to_dict())
-                self.assertEqual(9, payload["schemaVersion"])
+                self.assertEqual(10, payload["schemaVersion"])
                 self.assertNotIn("profile", payload)
                 self.assertEqual([], validate(payload, document, document))
                 validate_job_config(config)
@@ -683,7 +810,7 @@ class PayloadSchemaTests(unittest.TestCase):
         current = _wire(JobConfig(
             workMode="in_place", overwriteMode="incremental", sourceRoot="C:\\data",
         ).to_dict())
-        for schema_version in range(2, 9):
+        for schema_version in range(2, 10):
             with self.subTest(schema_version=schema_version):
                 legacy = _wire(current)
                 legacy["schemaVersion"] = schema_version

@@ -12,7 +12,7 @@ from PIL import Image, ImageOps, UnidentifiedImageError
 
 from .model import AestheticScorer, load_lse14_scorer
 from .policy import PolicyError, apply_policy
-from .protocol import PolicyHelloV1, PolicyWorkItemV1, parse_hello
+from .protocol import MAX_BATCH_SIZE, PolicyHelloV1, PolicyWorkItemV1, parse_hello
 from .resource import PolicyResourceError, load_policy_resource
 
 
@@ -196,8 +196,8 @@ class PolicyWorker:
     def process(self, items: Sequence[PolicyWorkItemV1]) -> dict[str, object]:
         if self.hello is None or self.dataset_root is None or self.overlay_root is None:
             raise PolicyWorkerError("policy_protocol_violation", "policy worker is not initialized")
-        if not items or len(items) > self.hello.quality.batchSize:
-            raise PolicyWorkerError("policy_protocol_violation", "policy batch exceeds the configured batch size")
+        if not items or len(items) > MAX_BATCH_SIZE:
+            raise PolicyWorkerError("policy_protocol_violation", "policy batch exceeds the protocol limit")
 
         payloads: dict[int, dict[str, object]] = {}
         images: dict[int, Image.Image] = {}
@@ -215,15 +215,19 @@ class PolicyWorker:
         if score_items:
             if self.scorer is None:
                 raise PolicyWorkerError("policy_protocol_violation", "quality scorer is unavailable")
+            micro_batch_size = self.hello.quality.batchSize
             try:
-                values = self.scorer.score([images[item.sampleId] for item in score_items])
-                if len(values) != len(score_items):
-                    raise RuntimeError("policy scorer returned the wrong result count")
-                scores.update((item.sampleId, score) for item, score in zip(score_items, values, strict=True))
-            except Exception as exc:
-                error = PolicyWorkerError("policy_inference_failed", f"aesthetic inference failed: {exc}")
-                for item in score_items:
-                    outcomes[item.sampleId] = self._issue(item, error)
+                for start in range(0, len(score_items), micro_batch_size):
+                    micro_items = score_items[start : start + micro_batch_size]
+                    try:
+                        values = self.scorer.score([images[item.sampleId] for item in micro_items])
+                        if len(values) != len(micro_items):
+                            raise RuntimeError("policy scorer returned the wrong result count")
+                        scores.update((item.sampleId, score) for item, score in zip(micro_items, values, strict=True))
+                    except Exception as exc:
+                        error = PolicyWorkerError("policy_inference_failed", f"aesthetic inference failed: {exc}")
+                        for item in micro_items:
+                            outcomes[item.sampleId] = self._issue(item, error)
             finally:
                 for image in images.values():
                     image.close()

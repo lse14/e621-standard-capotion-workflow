@@ -64,3 +64,16 @@ class ReplaceWorker:
             "replaced": summary.replaced, "dropped": summary.dropped, "passthrough": summary.passthrough,
             "keepRewritten": summary.keep_rewritten,
         }
+
+    def process_batch(self, items: object) -> list[dict[str, object]]:
+        if not isinstance(items, list) or not 1 <= len(items) <= 500:
+            raise ReplaceWorkerError("replace_protocol_violation", "replace batch is invalid")
+        identities: set[tuple[int, str]] = set()
+        for item in items:
+            if not isinstance(item, dict) or type(item.get("sampleId")) is not int or not isinstance(item.get("leaseId"), str):
+                raise ReplaceWorkerError("replace_protocol_violation", "replace work item identity is invalid")
+            identity = (item["sampleId"], item["leaseId"])
+            if identity in identities:
+                raise ReplaceWorkerError("replace_protocol_violation", "replace batch has duplicate sample/lease identities")
+            identities.add(identity)
+        return [self.process(item) for item in items]

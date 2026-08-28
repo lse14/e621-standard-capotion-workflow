@@ -61,6 +61,18 @@ h3 { margin-bottom: 8px; font-size: 14px; }
 .module-guide dl div { display: grid; grid-template-columns: 54px minmax(0, 1fr); gap: 10px; padding: 6px 0; border-top: 1px solid #ddebe5; font-size: 12px; }
 dt { color: #5d6d77; } dd { margin: 0; color: #25343d; font-weight: 600; overflow-wrap: anywhere; }
 .step-content { padding: 22px 0; }
+.batch-recommendation { display: grid; gap: 9px; margin-bottom: 16px; padding: 12px; border: 1px solid #c9ded6; border-radius: 6px; background: #f4faf7; }
+.batch-recommendation-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
+.batch-recommendation-heading strong { color: #285c4d; font-size: 13px; }
+.batch-recommendation p { margin: 0; color: #536a72; font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; }
+.batch-recommendation details { border-top: 1px solid #d9e8e1; }
+.batch-recommendation summary { padding-top: 8px; color: #315c68; font-size: 12px; cursor: pointer; }
+.batch-recommendation ul { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 7px 12px; margin: 8px 0 0; padding: 0; list-style: none; }
+.batch-recommendation li { display: grid; grid-template-columns: minmax(0, auto) auto; gap: 2px 8px; min-width: 0; padding: 6px 0; border-top: 1px solid #e1ece7; font-size: 12px; }
+.batch-recommendation li strong { color: #155a47; }
+.batch-recommendation li small { grid-column: 1 / -1; color: #667781; overflow-wrap: anywhere; }
+.module-batch-field { display: grid; gap: 4px; min-width: 0; }
+.module-batch-risk { display: block; line-height: 1.4; }
 .step-intro { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 18px; }
 .step-intro p, .hint { color: #63747e; font-size: 13px; }
 .profile-selector { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; margin-bottom: 18px; }
@@ -109,6 +121,7 @@ dt { color: #5d6d77; } dd { margin: 0; color: #25343d; font-weight: 600; overflo
 .ocr-tuning-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 13px; }
 .ocr-tuning { min-width: 0; margin: 0; padding: 12px; border: 1px solid #d7dfe4; border-radius: 6px; }
 .ocr-tuning legend { position: relative; padding: 0 5px; color: #586d77; font-size: 12px; font-weight: 700; }
+.ocr-tuning .field-tooltip { inset-block-start: auto; inset-block-end: calc(100% + 6px); }
 .ocr-tuning-choice { display: grid; gap: 7px; margin-bottom: 10px; }
 .ocr-tuning-choice label { display: flex; align-items: center; gap: 7px; font-size: 13px; }
 .ocr-tuning-choice input { width: 16px; min-height: 16px; margin: 0; }

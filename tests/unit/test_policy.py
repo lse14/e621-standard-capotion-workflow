@@ -225,7 +225,6 @@ class PolicyTests(unittest.TestCase):
 
     def test_job_config_freezes_valid_policy_defaults_and_rejects_double_dropout_probability(self) -> None:
         config = JobConfig(
-            profile="e621",
             workMode="in_place",
             overwriteMode="incremental",
             sourceRoot=r"E:\dataset",

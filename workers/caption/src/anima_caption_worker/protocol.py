@@ -12,6 +12,7 @@ MAX_PATH_BYTES = 16_384
 MAX_CATEGORIES = 64
 MAX_TRIGGER_TERMS = 64
 MAX_TRIGGER_TERM_BYTES = 512
+MAX_PROCESS_ITEMS = 64
 IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 RESERVED = {"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)), *(f"LPT{i}" for i in range(1, 10))}
@@ -241,6 +242,15 @@ def validate_process_payload(value: object) -> dict[str, object]:
     item = _object(value, "caption process payload")
     _schema(item)
     _keys(item, {"schemaVersion", "payloadType", "items"})
-    if item["payloadType"] != "caption_process_request" or not isinstance(item["items"], list) or len(item["items"]) != 1:
-        raise CaptionPayloadError("caption process v1 requires exactly one item")
-    return {"schemaVersion": 1, "payloadType": "caption_process_request", "items": [validate_work_item(item["items"][0])]}
+    values = item["items"]
+    if (
+        item["payloadType"] != "caption_process_request"
+        or not isinstance(values, list)
+        or not 1 <= len(values) <= MAX_PROCESS_ITEMS
+    ):
+        raise CaptionPayloadError(f"caption process v1 requires 1..{MAX_PROCESS_ITEMS} items")
+    items = [validate_work_item(value) for value in values]
+    identities = {(int(value["sampleId"]), str(value["leaseId"])) for value in items}
+    if len(identities) != len(items):
+        raise CaptionPayloadError("caption process items contain duplicate sampleId and leaseId")
+    return {"schemaVersion": 1, "payloadType": "caption_process_request", "items": items}

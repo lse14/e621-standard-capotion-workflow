@@ -27,6 +27,15 @@ def build_application_router(context: ControlPlaneContext) -> APIRouter:
         except ResourceCatalogError as exc:
             raise bad_request(exc) from exc
 
+    @router.get("/api/application/device-recommendations")
+    def device_recommendations(rpm: int = 60) -> dict[str, object]:
+        if type(rpm) is not int or not 1 <= rpm <= 100_000:
+            raise bad_request(ValueError("rpm must be between 1 and 100000"))
+        try:
+            return context.device_recommendation_service.recommend(rpm=rpm)
+        except (OSError, UnicodeError, ValueError, TypeError) as exc:
+            raise bad_request(exc) from exc
+
     def policy_control(job_id: str, action: str) -> dict[str, str]:
         try:
             status = (

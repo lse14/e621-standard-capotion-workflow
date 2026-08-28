@@ -2,12 +2,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   addNlBudget, cancelJob, confirmNlOutcomes, confirmWorkspace, deleteNlSecret, discardJob, listNlProfiles, manualNlRetry, manualNlRetryBatch, manualNlWrite,
   pauseJob, preflightJob, recoverJob, restoreOriginalAnnotations, resumeJob, saveNlProfile,
-  repairJob, saveNlSecret, startPipeline, type NlProfile, type OcrExecutionRequest, type PreflightSummary,
+  repairJob, saveNlSecret, startPipeline, getDeviceRecommendations, type DeviceRecommendationResponse, type NlProfile, type OcrExecutionRequest, type PreflightSummary,
   type PipelineModuleId, type ResourceCatalogResponse, type ResourceKind,
 } from "./api";
 import { CountReviewPanel } from "./CountReviewPanel";
 import { IssuePanel } from "./components/IssuePanel";
 import { makeFieldGuidanceCopy, ToggleField } from "./components/FormField";
+import { ModuleBatchField } from "./components/ModuleBatchField";
 import { resourceSelectable } from "./components/ResourcePicker";
 import { TaskMonitor } from "./components/TaskMonitor";
 import { RepairTasksPanel } from "./components/RepairTasksPanel";
@@ -59,6 +60,8 @@ export function App() {
   const [budget, setBudget] = useState("100");
   const [triggerInput, setTriggerInput] = useState("");
   const [attemptBudget, setAttemptBudget] = useState("");
+  const [deviceRecommendation, setDeviceRecommendation] = useState<DeviceRecommendationResponse | null>(null);
+  const [recommendationPending, setRecommendationPending] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [pendingActions, setPendingActions] = useState<ReadonlySet<ActionName>>(() => new Set<ActionName>());
   const pendingActionRef = useRef<Set<ActionName>>(new Set<ActionName>());
@@ -121,6 +124,26 @@ export function App() {
   const updateSection = <K extends DraftSectionKey>(name: K, patch: Partial<Draft[K]>) => {
     setPreflight(null);
     setDraft((current) => patchDraftSection(current, name, patch));
+  };
+  const updateModuleBatchSize = (module: keyof Draft["moduleBatchSize"], value: number) => {
+    setPreflight(null);
+    setDraft((current) => ({ ...current, moduleBatchSize: { ...current.moduleBatchSize, [module]: value } }));
+  };
+  const recommendModuleBatches = async () => {
+    if (configurationLocked || recommendationPending) return;
+    setRecommendationPending(true);
+    setActionError(null);
+    try {
+      const rpm = draft.nl.apiPolicy.maxRequestsPerMinute === "unlimited" ? 100_000 : draft.nl.apiPolicy.maxRequestsPerMinute;
+      const result = await getDeviceRecommendations(Number(rpm));
+      setDeviceRecommendation(result);
+      setDraft((current) => ({ ...current, moduleBatchSize: { ...current.moduleBatchSize, ...result.moduleBatchSize } }));
+      setPreflight(null);
+    } catch (cause) {
+      setActionError(cause instanceof Error ? cause.message : t("recommendationUnavailable"));
+    } finally {
+      setRecommendationPending(false);
+    }
   };
   const updateInputTxtMode = (inputTxtMode: Draft["caption"]["inputTxtMode"]) => {
     setPreflight(null);
@@ -533,7 +556,25 @@ export function App() {
     isCurrent: module.module_id === snapshot?.job.currentModuleId,
   }));
 
-  const guide = <details className="module-guide" open={openGuide} onToggle={(event) => setOpenGuide((event.target as HTMLDetailsElement).open)}>
+  const guide = <>
+    <section className="batch-recommendation" aria-busy={recommendationPending}>
+      <div className="batch-recommendation-heading">
+        <strong>{t("recommendFromDevice")}</strong>
+        <button className="secondary" type="button" disabled={configurationLocked || recommendationPending} onClick={() => void recommendModuleBatches()}>{recommendationPending ? t("recommendationLoading") : t("recommendFromDevice")}</button>
+      </div>
+      {deviceRecommendation && <>
+        <p>{t("deviceRecommendationSummary", {
+          cpu: deviceRecommendation.cpuPhysicalCores,
+          gpu: deviceRecommendation.gpu.available ? (deviceRecommendation.gpu.name ?? "available") : "CPU-only",
+          free: deviceRecommendation.gpu.freeVramBytes == null ? "-" : `${(deviceRecommendation.gpu.freeVramBytes / 1024 ** 3).toFixed(1)} GB`,
+          total: deviceRecommendation.gpu.totalVramBytes == null ? "-" : `${(deviceRecommendation.gpu.totalVramBytes / 1024 ** 3).toFixed(1)} GB`,
+          baseline: deviceRecommendation.baselineVersion,
+        })}</p>
+        <details><summary>{t("batchSize")}</summary><ul>{Object.entries(deviceRecommendation.moduleBatchSize).map(([module, value]) => <li key={module}><span>{moduleLabel(language, module === "countReview" ? "count_review" : module)}</span><strong>{value}</strong><small>{deviceRecommendation.reasons[module] ?? ""}</small></li>)}</ul></details>
+        {deviceRecommendation.probeErrors.length > 0 && <small className="resource-warning">{deviceRecommendation.probeErrors.join(", ")}</small>}
+      </>}
+    </section>
+    <details className="module-guide" open={openGuide} onToggle={(event) => setOpenGuide((event.target as HTMLDetailsElement).open)}>
     <summary>{copy.details}</summary>
     <p>{currentStep.guide[0]}</p>
     <dl>
@@ -541,11 +582,13 @@ export function App() {
       <div><dt>{copy.output}</dt><dd>{currentStep.guide[2]}</dd></div>
       <div><dt>{copy.effect}</dt><dd>{currentStep.guide[3]}</dd></div>
     </dl>
-  </details>;
+    </details>
+  </>;
 
   const countReviewContent = <>
     <div className="option-stack count-review-config">
       <ToggleField id="count-review-enabled" label={t("enableCountReview")} checked={draft.countReview.enabled} disabled={configurationLocked} onChange={(enabled) => updateSection("countReview", { enabled })} copy={guidanceCopy} guidance={{ description: t("fieldHelp_countReviewEnabled"), defaultValue: draftDefaults.countReview.enabled ? t("fieldEnabled") : t("fieldDisabled") }} />
+      <ModuleBatchField id="count-review-batch-size" label={t("batchSize")} value={draft.moduleBatchSize.countReview} defaultValue={draftDefaults.moduleBatchSize.countReview} recommended={deviceRecommendation?.moduleBatchSize.countReview} recommendationReason={deviceRecommendation?.reasons.countReview} minimum={1} maximum={500} disabled={configurationLocked || !draft.countReview.enabled} t={t} guidanceCopy={guidanceCopy} onChange={(value) => updateModuleBatchSize("countReview", value)} />
       <p className="hint">{t("countReviewConfigHelp")}</p>
     </div>
     {snapshot?.moduleOrder.includes("count_review")
@@ -567,6 +610,10 @@ export function App() {
       guidanceCopy={guidanceCopy}
       onTokenBudgetChange={(patch) => updateSection("tokenBudget", patch)}
       onRefreshResources={() => void refreshResources()}
+      batchSize={draft.moduleBatchSize.tokenBudget}
+      batchRecommended={deviceRecommendation?.moduleBatchSize.tokenBudget}
+      batchReason={deviceRecommendation?.reasons.tokenBudget}
+      onBatchSizeChange={(value) => updateModuleBatchSize("tokenBudget", value)}
     />
     {snapshot?.moduleOrder.includes("token_budget") && <TokenBudgetReviewPanel
       jobId={jobId}
@@ -629,6 +676,10 @@ export function App() {
     onThresholdModeChange={updateThresholdMode}
     onCategoryThresholdChange={updateCategoryThreshold}
     onTriggerInputChange={updateTriggerTerms}
+    batchSize={draft.moduleBatchSize.caption}
+    batchRecommended={deviceRecommendation?.moduleBatchSize.caption}
+    batchReason={deviceRecommendation?.reasons.caption}
+    onBatchSizeChange={(value) => updateModuleBatchSize("caption", value)}
   /> : currentStep.id === "classify" ? <ClassifyStep
     draft={draft}
     taskLocked={configurationLocked}
@@ -647,6 +698,10 @@ export function App() {
     copy={{ classificationIndex: copy.classificationIndex, classificationIndexHelp: copy.classificationIndexHelp, bundledResource: copy.bundledResource, customResource: copy.customResource, classificationResourceJson: copy.classificationResourceJson, anthroReplacementNote: copy.anthroReplacementNote }}
     onClassifyChange={(patch) => updateSection("classify", patch)}
     onRefreshResources={() => void refreshResources()}
+    batchSize={draft.moduleBatchSize.classify}
+    batchRecommended={deviceRecommendation?.moduleBatchSize.classify}
+    batchReason={deviceRecommendation?.reasons.classify}
+    onBatchSizeChange={(value) => updateModuleBatchSize("classify", value)}
   /> : currentStep.id === "replace" ? <ReplaceStep
     draft={draft}
     taskLocked={configurationLocked}
@@ -678,6 +733,10 @@ export function App() {
         : { enabled: current.replace.enabled, indexMode, customIndexPath: current.replace.customIndexPath ?? "" }));
     }}
     onRefreshResources={() => void refreshResources()}
+    batchSize={draft.moduleBatchSize.replace}
+    batchRecommended={deviceRecommendation?.moduleBatchSize.replace}
+    batchReason={deviceRecommendation?.reasons.replace}
+    onBatchSizeChange={(value) => updateModuleBatchSize("replace", value)}
   /> : currentStep.id === "ocr" ? <OcrStep
     draft={draft}
     defaults={draftDefaults}
@@ -695,6 +754,10 @@ export function App() {
     onOcrChange={(patch) => updateSection("ocr", patch)}
     onOcrExecutionChange={(next) => { setPreflight(null); setOcrExecution(next); }}
     onRefreshResources={() => void refreshResources()}
+    batchSize={draft.moduleBatchSize.ocr}
+    batchRecommended={deviceRecommendation?.moduleBatchSize.ocr}
+    batchReason={deviceRecommendation?.reasons.ocr}
+    onBatchSizeChange={(value) => updateModuleBatchSize("ocr", value)}
   /> : currentStep.id === "nl" ? <NlStep
     draft={draft}
     defaults={draftDefaults}
@@ -711,7 +774,6 @@ export function App() {
     profileHelp={copy.profileHelp}
     onNlChange={(patch) => updateSection("nl", patch)}
     onApiPolicyChange={updateApiPolicy}
-    onConcurrencyChange={(value) => updateApiPolicy({ concurrency: clamp(value, 1, 16, 3) })}
     onRequestsPerMinuteChange={(value) => updateApiPolicy({ maxRequestsPerMinute: clamp(value, 1, 100_000, 60) })}
     onUnlimitedRpmChange={(enabled) => {
       if (!enabled) { updateApiPolicy({ maxRequestsPerMinute: 60 }); return; }
@@ -736,6 +798,10 @@ export function App() {
       setSecret("");
       setDiagnosticResetToken((value) => value + 1);
     })}
+    batchSize={draft.moduleBatchSize.nl}
+    batchRecommended={deviceRecommendation?.moduleBatchSize.nl}
+    batchReason={deviceRecommendation?.reasons.nl}
+    onBatchSizeChange={(value) => updateModuleBatchSize("nl", value)}
   /> : currentStep.id === "count_review" ? countReviewContent : currentStep.id === "dropout" ? <PolicyStep
     draft={draft}
     defaults={draftDefaults}
@@ -755,6 +821,10 @@ export function App() {
     onAppearanceNlChange={(patch) => updateDropoutNested("appearanceNl", patch)}
     onAppearanceProbabilityChange={updateAppearanceProbability}
     onRefreshResources={() => void refreshResources()}
+    batchSize={draft.moduleBatchSize.dropout}
+    batchRecommended={deviceRecommendation?.moduleBatchSize.dropout}
+    batchReason={deviceRecommendation?.reasons.dropout}
+    onBatchSizeChange={(value) => updateModuleBatchSize("dropout", value)}
   /> : currentStep.id === "token_budget" ? tokenBudgetContent : <ExportStep
     draft={draft}
     defaults={draftDefaults}
@@ -766,7 +836,12 @@ export function App() {
     automatic={copy.automatic}
     guidanceCopy={guidanceCopy}
     onExportChange={(patch) => updateSection("export", patch)}
+    onCaptionFormatChange={(patch) => updateSection("captionFormat", patch)}
     onStartPipeline={() => void control("start", () => startPipeline(jobId))}
+    batchSize={draft.moduleBatchSize.export}
+    batchRecommended={deviceRecommendation?.moduleBatchSize.export}
+    batchReason={deviceRecommendation?.reasons.export}
+    onBatchSizeChange={(value) => updateModuleBatchSize("export", value)}
   />;
 
   return <main className="app-shell">

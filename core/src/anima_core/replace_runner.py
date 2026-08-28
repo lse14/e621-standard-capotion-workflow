@@ -6,12 +6,17 @@ import uuid
 from typing import Protocol
 
 from .classify_overlay import ClassifyJsonError, parse_annotation_json
-from .contracts import SampleIssue, WorkLease, sha256_json
+from .contracts import CURRENT_JOB_CONFIG_SCHEMA_VERSION, SampleIssue, WorkLease, sha256_json
 from .db import StateDatabase
 from .overlay import WorkingAnnotationView
 from .replace_overlay import ReplaceOverlayWriter
 from .replace_provenance import DatasetReplaceProvenance, ReplaceProvenanceError
-from .replace_protocol import ReplaceProtocolError, validate_replace_outcome
+from .replace_protocol import (
+    ReplaceProcessRequestV1,
+    ReplaceProcessResultV1,
+    ReplaceProtocolError,
+    validate_replace_outcomes,
+)
 from .replace_resource import ReplaceResourceError, load_replace_resource_from_install
 from .custom_replace_index import CustomReplaceIndexError, verify_frozen_custom_replace_index
 from .scheduler import BoundedScheduler, SchedulerError
@@ -76,8 +81,9 @@ class ReplaceRunner:
             raise self._fatal("replace_protocol_violation", "frozen JobConfig is invalid JSON") from exc
         if (
             not isinstance(config, dict) or sha256_json(config) != job["config_hash"]
-            or config.get("schemaVersion") != 9 or "profile" in config
-            or not isinstance(config.get("replace"), dict)
+            or config.get("schemaVersion") != CURRENT_JOB_CONFIG_SCHEMA_VERSION
+            or job["config_schema_version"] != CURRENT_JOB_CONFIG_SCHEMA_VERSION
+            or "profile" in config or not isinstance(config.get("replace"), dict)
         ):
             raise self._fatal("replace_protocol_violation", "frozen replace configuration is invalid")
         replace = config["replace"]
@@ -177,6 +183,7 @@ class ReplaceRunner:
                         raise self._fatal("replace_protocol_violation", "replace has unsettled but unclaimable work")
                     summary = self.database.module_summary(self.job_id, "replace")
                     return self.scheduler.finish_module(self.job_id, "replace", with_issues=int(summary["issue_count"]) > 0)
+                pending: list[tuple[WorkLease, object, dict[str, object]]] = []
                 for lease in active[:]:
                     job = self.database.get_job(self.job_id)
                     if job["status"] in {"cancelling", "paused"}:
@@ -184,10 +191,6 @@ class ReplaceRunner:
                             self.scheduler.release_unstarted(pending)
                         active = []
                         return str(job["status"])
-                    self.scheduler.heartbeat(
-                        self.job_id, self.worker_instance_id,
-                        [str(pending.leaseId) for pending in active if pending.leaseId],
-                    )
                     row = self.database.get_leased_sample(self.job_id, "replace", lease.sampleId, lease_id=str(lease.leaseId), worker_instance_id=self.worker_instance_id)
                     if self.writer.provenance(str(row["annotation_key"])) == fingerprint:
                         self._diagnostic("replace_already_applied", 1)
@@ -215,23 +218,48 @@ class ReplaceRunner:
                         self.scheduler.complete(lease)
                         active.remove(lease)
                         continue
-                    if not self._hello_done:
-                        self._hello(config_hash, replace)
-                    payload = self._exchange("process_batch", {
-                        "schemaVersion": 1, "payloadType": "replace_process_request", "items": [{
-                            "schemaVersion": 1, "sampleId": lease.sampleId, "leaseId": lease.leaseId, "source": "e621",
-                            "relativeImagePath": row["relative_image_path"], "projection": projection,
-                        }],
-                    }, config_hash)
-                    outcome, projection, counts, message = validate_replace_outcome(
-                        payload, sample_id=lease.sampleId, lease_id=str(lease.leaseId),
-                        relative_image_path=str(row["relative_image_path"]), original_projection=projection,
-                    )
+                    pending.append((lease, row, projection))
+                if not pending:
+                    continue
+                job = self.database.get_job(self.job_id)
+                if job["status"] in {"cancelling", "paused"}:
+                    for lease in active:
+                        self.scheduler.release_unstarted(lease)
+                    active = []
+                    return str(job["status"])
+                if job["status"] != "running" or job["current_module_id"] != "replace":
+                    raise self._fatal("replace_protocol_violation", "replace module state changed before worker request")
+                self.scheduler.heartbeat(
+                    self.job_id,
+                    self.worker_instance_id,
+                    [str(lease.leaseId) for lease in active if lease.leaseId],
+                )
+                if not self._hello_done:
+                    self._hello(config_hash, replace)
+                request = ReplaceProcessRequestV1.from_dict({
+                    "schemaVersion": 1,
+                    "payloadType": "replace_process_request",
+                    "items": [{
+                        "schemaVersion": 1,
+                        "sampleId": lease.sampleId,
+                        "leaseId": lease.leaseId,
+                        "source": "e621",
+                        "relativeImagePath": row["relative_image_path"],
+                        "projection": projection,
+                    } for lease, row, projection in pending],
+                })
+                outcomes = validate_replace_outcomes(
+                    ReplaceProcessResultV1.from_dict(self._exchange("process_batch", request.to_dict(), config_hash)),
+                    request.items,
+                )
+                for (lease, row, _), (outcome, output_projection, counts, message) in zip(
+                    pending, outcomes, strict=True
+                ):
                     if outcome == "issue":
                         self._fail_input(lease, row, str(message))
                     else:
                         try:
-                            self.writer.write(sample_id=lease.sampleId, lease_id=str(lease.leaseId), annotation_key=str(row["annotation_key"]), projection=projection or {}, provenance=fingerprint)
+                            self.writer.write(sample_id=lease.sampleId, lease_id=str(lease.leaseId), annotation_key=str(row["annotation_key"]), projection=output_projection or {}, provenance=fingerprint)
                             for key, code in (
                                 ("passthrough", "replace_passthrough"), ("replaced", "replace_replaced"),
                                 ("dropped", "replace_dropped"), ("keepRewritten", "replace_keep_rewritten"),

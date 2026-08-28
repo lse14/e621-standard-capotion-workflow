@@ -1,5 +1,6 @@
 import { ResourcePicker, resourceSelectable, type ResourcePickerProps } from "../ResourcePicker";
 import { FormField, ToggleField, type FieldGuidanceCopy } from "../FormField";
+import { ModuleBatchField } from "../ModuleBatchField";
 import type { Draft } from "../../draft";
 import type { UiLanguage } from "../../i18n";
 
@@ -36,12 +37,17 @@ export type CaptionStepProps = {
   onThresholdModeChange: (value: Draft["caption"]["thresholdMode"]) => void;
   onCategoryThresholdChange: (category: string, value: string) => void;
   onTriggerInputChange: (value: string) => void;
+  batchSize: number;
+  batchRecommended?: number;
+  batchReason?: string;
+  onBatchSizeChange: (value: number) => void;
 };
 
 export function CaptionStep({
   draft, defaults, taskLocked, rebuild, language, resources, resourcesLoading, resourceError, invalidResourceCount,
   resourcePickerCopy, selectedTagger, triggerInput, t, guidanceCopy, copy, onCaptionChange, onInputTxtModeChange, onCaptionFormatChange, onSelectTagger,
   onRefreshResources, onThresholdModeChange, onCategoryThresholdChange, onTriggerInputChange,
+  batchSize, batchRecommended, batchReason, onBatchSizeChange,
 }: CaptionStepProps) {
   const inputTxtNl = draft.caption.inputTxtMode === "nl";
   const captionOff = taskLocked || !draft.caption.enabled;
@@ -55,6 +61,7 @@ export function CaptionStep({
       </select>
     </FormField>
     <ToggleField id="caption-enabled" label={t("enableCaption")} checked={draft.caption.enabled} disabled={taskLocked || inputTxtNl} onChange={(enabled) => onCaptionChange({ enabled })} copy={guidanceCopy} guidance={{ description: t("fieldHelp_enableCaption"), defaultValue: defaults.caption.enabled ? t("fieldEnabled") : t("fieldDisabled") }} />
+    <ModuleBatchField id="caption-batch-size" label={t("batchSize")} value={batchSize} defaultValue={4} recommended={batchRecommended} recommendationReason={batchReason} minimum={1} maximum={64} disabled={taskLocked || !draft.caption.enabled} t={t} guidanceCopy={guidanceCopy} onChange={onBatchSizeChange} />
     {!inputTxtNl && <ToggleField id="caption-tagger-fallback" label={t("taggerFallbackOnMissingTxt")} checked={draft.caption.taggerFallbackOnMissingTxt} disabled={captionOff} onChange={(taggerFallbackOnMissingTxt) => onCaptionChange({ taggerFallbackOnMissingTxt })} copy={guidanceCopy} guidance={{ description: t("fieldHelp_taggerFallbackOnMissingTxt"), defaultValue: defaults.caption.taggerFallbackOnMissingTxt ? t("fieldEnabled") : t("fieldDisabled") }} />}
     <ResourcePicker
       id="caption-tagging-model"

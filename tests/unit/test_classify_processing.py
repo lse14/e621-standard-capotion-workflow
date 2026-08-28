@@ -62,6 +62,19 @@ def _work_item(text: str, provenance: str = "original_preserved") -> dict[str, o
 
 
 class ClassifyProcessingTests(unittest.TestCase):
+    def test_worker_process_batch_isolates_one_item_failure(self) -> None:
+        worker = _offline_worker({"solo": DictionaryEntry("solo", "count", "solo")})
+        good = _work_item("solo")
+        bad = {**_work_item("unknown_tag"), "sampleId": 4, "leaseId": "lease-4"}
+
+        process_batch = getattr(worker, "process_batch", None)
+        self.assertIsNotNone(process_batch, "ClassifyWorker must expose a multi-item process_batch API")
+        assert process_batch is not None
+        outcomes = process_batch([good, bad])
+
+        self.assertEqual(("classify_result", "classify_issue"), tuple(outcome["payloadType"] for outcome in outcomes))
+        self.assertEqual("classify_no_writable_tags", outcomes[1]["code"])
+
     def test_danbooru_temporary_fallback_uses_the_e621_classification_resource(self) -> None:
         manifest = json.loads((RESOURCE_ROOT / Path(RESOURCE_MANIFEST.replace("\\", "/"))).read_text(encoding="utf-8"))
         worker = ClassifyWorker()
@@ -158,6 +171,19 @@ class ClassifyProcessingTests(unittest.TestCase):
             parse_tag_text("project\\), anima style, white hair", format_policy, "module1_written"),
         )
         self.assertEqual(["white_hair", "red_eyes"], parse_tag_text("white hair, red eyes", format_policy, "missing"))
+
+    def test_module1_shared_serializer_terminal_period_is_not_part_of_the_last_tag(self) -> None:
+        format_policy = {
+            "replaceUnderscoresWithSpaces": True,
+            "preserveEscapes": True,
+            "triggersEnabled": True,
+            "triggerTerms": ["anima_style"],
+        }
+
+        self.assertEqual(
+            ["blue_eyes", "long_hair"],
+            parse_tag_text("anima style, blue eyes, long hair.", format_policy, "module1_written"),
+        )
 
     def test_dictionary_canonicalizes_aliases_without_changing_count_evidence(self) -> None:
         dictionary = _dictionary({

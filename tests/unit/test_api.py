@@ -42,18 +42,20 @@ from anima_core.annotation_backup import write_backup
 from anima_core.overlay import OverlayLayout
 from anima_core.ocr_runtime_binding import OcrRuntimeBindingV1, write_runtime_binding
 from anima_core.worker_protocol import ProtocolEnvelopeV1
+from anima_core.device_recommendation import DeviceRecommendationService, GpuFacts
 
 
 EXPECTED_BUILD_PARAMETERS = (
     "database_path", "profile_store", "credential_store", "prompt_preset_store", "nl_diagnostic_client", "preparation_service",
     "pipeline_service", "repair_service", "resource_catalog", "static_root",
-    "shutdown_token", "shutdown_callback", "native_path_picker",
+    "shutdown_token", "shutdown_callback", "native_path_picker", "device_recommendation_service",
 )
 
 EXPECTED_CONTROL_ROUTES = {
     ("GET", "/health"),
     ("GET", "/api/health"),
     ("GET", "/api/resources"),
+    ("GET", "/api/application/device-recommendations"),
     ("GET", "/api/jobs"),
     ("GET", "/api/jobs/{job_id}"),
     ("POST", "/api/jobs/preflight"),
@@ -157,9 +159,19 @@ class ControlPlaneApiTests(unittest.TestCase):
         database.insert_samples("job-api", [{"sample_id": 1, "relative_image_path": "image.png", "annotation_key": "image", "source": "e621", "in_processing_scope": True, "image_format": "png", "image_frame_count": 1, "original_txt_state": "missing_or_blank", "original_json_state": "missing_or_blank", "image_file_id": "volume:1", "image_size": 1, "image_mtime_ns": 1}])
         database.close()
         self.preparation = JobPreparationService(self.database_path)
+        self.pipeline = PipelineService(
+            self.database_path,
+            install_root=Path(r"E:\Desktop\Anima idg标准标注处理\.runtime-build"),
+            profile_store=self.profiles,
+            credential_store=self.credentials,
+            resource_catalog=self.preparation.resource_catalog,
+        )
         # Startup recovery freezes every job an earlier process left mid-flight, so the app is
         # built while the fixture job is still `ready` and only then started.
-        self.app = build_control_app(database_path=self.database_path, profile_store=self.profiles, credential_store=self.credentials, preparation_service=self.preparation)
+        self.app = build_control_app(
+            database_path=self.database_path, profile_store=self.profiles, credential_store=self.credentials,
+            preparation_service=self.preparation, pipeline_service=self.pipeline,
+        )
         database = StateDatabase.open(self.database_path)
         scheduler = BoundedScheduler(database)
         for module in ("caption", "classify", "replace"):
@@ -178,6 +190,28 @@ class ControlPlaneApiTests(unittest.TestCase):
             issueAfterIssueId=None, limit=200,
         )
         self.assertNotIn("profile", current["job"])
+
+    def test_device_recommendation_endpoint_reports_injected_facts_without_mutating_tasks(self) -> None:
+        service = DeviceRecommendationService(
+            baseline_path=Path(self.temporary.name) / "missing-baseline.json",
+            cpu_probe=lambda: (6, 12),
+            cuda_probe=lambda: GpuFacts(True, "fixture-gpu", 24 * 1024**3, 12 * 1024**3, "cuda-runtime"),
+            nvidia_smi_probe=lambda: None,
+        )
+        app = build_control_app(
+            database_path=self.database_path,
+            profile_store=self.profiles,
+            credential_store=self.credentials,
+            preparation_service=self.preparation,
+            pipeline_service=self.pipeline,
+            device_recommendation_service=service,
+        )
+        endpoint = _endpoint(app, "/api/application/device-recommendations", "GET")
+        result = endpoint(rpm=2)
+        self.assertEqual((6, 12), (result["cpuPhysicalCores"], result["cpuLogicalCores"]))
+        self.assertEqual("cuda-runtime", result["gpu"]["probeSource"])
+        self.assertEqual(2, result["moduleBatchSize"]["nl"])
+        self.assertTrue(all(value == 1 for key, value in result["moduleBatchSize"].items() if key != "nl"))
 
     def tearDown(self) -> None:
         self.preparation.close()
@@ -642,7 +676,8 @@ class ControlPlaneApiTests(unittest.TestCase):
         database = StateDatabase.open(self.database_path)
         try:
             dataset = Path(self.temporary.name) / "dataset"
-            config = JobConfig(workMode="in_place", overwriteMode="incremental", sourceRoot=str(dataset), schemaVersion=9)
+            config = JobConfig(workMode="in_place", overwriteMode="incremental", sourceRoot=str(dataset), schemaVersion=10)
+            config.nl["systemPrompt"] = "Describe the visible image."
             config.caption["enabled"] = config.classify["enabled"] = config.replace["enabled"] = False
             config.countReview["enabled"] = False  # type: ignore[index]
             config.tokenBudget.update({  # type: ignore[union-attr]
@@ -683,7 +718,7 @@ class ControlPlaneApiTests(unittest.TestCase):
             "limit": 200,
         }
         current = snapshot("job-api", **arguments)
-        self.assertEqual(9, current["job"]["configSchemaVersion"])
+        self.assertEqual(10, current["job"]["configSchemaVersion"])
         self.assertNotIn("profile", current["job"])
         self.assertEqual(
             [

@@ -105,14 +105,14 @@ def config_from_dict(value: object) -> JobConfig:
         if not isinstance(caption_format, dict) or not isinstance(image_decode, dict):
             raise TypeError("nested policy is invalid")
         schema_version = value.get("schemaVersion")
-        if schema_version != 9:
+        if schema_version != 10:
             raise JobPreflightError(
                 "legacy JobConfig is incompatible; reinitialize the state database and create a new task"
             )
         allowed_fields = {
             "schemaVersion", "workMode", "overwriteMode", "sourceRoot", "outputRoot",
             "annotationBackup", "recursive", "captionFormat", "imageDecode", "caption",
-            "classify", "replace", "ocr", "nl", "countReview", "dropout", "tokenBudget", "export",
+            "classify", "replace", "ocr", "nl", "countReview", "dropout", "tokenBudget", "export", "moduleBatchSize",
         }
         if set(value) - allowed_fields:
             raise JobPreflightError("JobConfig shape is invalid; task profile is not supported by schema v9")
@@ -129,6 +129,7 @@ def config_from_dict(value: object) -> JobConfig:
             countReview=dict(count_review) if count_review is not None else None,
             dropout=dict(value["dropout"]), export=dict(value["export"]), schemaVersion=schema_version,
             tokenBudget=dict(value["tokenBudget"]) if value.get("tokenBudget") is not None else None,
+            moduleBatchSize=dict(value["moduleBatchSize"]),
         )
     except (KeyError, TypeError) as exc:
         raise JobPreflightError("JobConfig shape is invalid") from exc
@@ -218,8 +219,8 @@ class JobPreparationService:
         return value
 
     def _restore_missing_bundled_resource_ids(self, raw_config: object) -> object:
-        """Restore resource IDs from the catalog before reading older ready jobs."""
-        if not isinstance(raw_config, dict) or raw_config.get("schemaVersion") != 9:
+        """Restore catalog defaults only for a current v10 ready task."""
+        if not isinstance(raw_config, dict) or raw_config.get("schemaVersion") != 10:
             return raw_config
         token_budget = raw_config.get("tokenBudget")
         include_tokenizers = isinstance(token_budget, dict) and token_budget.get("enabled") is True

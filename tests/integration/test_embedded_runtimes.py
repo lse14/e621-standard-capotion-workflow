@@ -14,7 +14,7 @@ from PIL import Image
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "core" / "src"))
 
-from anima_core.caption_protocol import CaptionResultV1, parse_caption_outcome
+from anima_core.caption_protocol import CaptionProcessResultV1, CaptionResultV1
 from anima_core.launcher import WorkerLauncher
 from anima_core.ocr_protocol import parse_ocr_process_result
 from anima_core.runtime_manifest import RuntimeBundleManifestV1, runtime_lifecycle, validate_runtime_isolation
@@ -287,7 +287,7 @@ class EmbeddedRuntimeTests(unittest.TestCase):
                 "datasetRoot": str(dataset_root),
                 "resourceManifestRelativePath": CAPTION_RESOURCE_MANIFEST,
                 "resourceFingerprint": CAPTION_RESOURCE_FINGERPRINT,
-                "thresholdPolicy": {"mode": "uniform", "uniformThreshold": 0},
+                "thresholdPolicy": {"mode": "model_default"},
                 "captionFormat": {
                     "replaceUnderscoresWithSpaces": True,
                     "preserveEscapes": True,
@@ -312,36 +312,33 @@ class EmbeddedRuntimeTests(unittest.TestCase):
                 jobId="job-real-caption",
                 configHash="a" * 64,
             )
-            process_requests: list[ProtocolEnvelopeV1] = []
+            caption_items: list[dict[str, object]] = []
             for sample_id, image_path, image_format in image_specs:
                 information = image_path.stat()
-                process_requests.append(ProtocolEnvelopeV1(
-                    "1.0",
-                    "request",
-                    f"process-caption-real-{sample_id}",
-                    "caption-e621",
-                    "caption",
-                    "process_batch",
-                    {
-                        "schemaVersion": 1,
-                        "payloadType": "caption_process_request",
-                        "items": [{
-                            "schemaVersion": 1,
-                            "sampleId": sample_id,
-                            "leaseId": f"lease-caption-real-{sample_id}",
-                            "source": "e621",
-                            "relativeImagePath": image_path.name,
-                            "annotationKey": image_path.stem,
-                            "imageFormat": image_format,
-                            "imageFrameCount": 1,
-                            "imageFileId": f"{getattr(information, 'st_dev', 0)}:{getattr(information, 'st_ino', 0)}",
-                            "imageSize": information.st_size,
-                            "imageMtimeNs": information.st_mtime_ns,
-                        }],
-                    },
-                    jobId="job-real-caption",
-                    configHash="a" * 64,
-                ))
+                caption_items.append({
+                    "schemaVersion": 1,
+                    "sampleId": sample_id,
+                    "leaseId": f"lease-caption-real-{sample_id}",
+                    "source": "e621",
+                    "relativeImagePath": image_path.name,
+                    "annotationKey": image_path.stem,
+                    "imageFormat": image_format,
+                    "imageFrameCount": 1,
+                    "imageFileId": f"{getattr(information, 'st_dev', 0)}:{getattr(information, 'st_ino', 0)}",
+                    "imageSize": information.st_size,
+                    "imageMtimeNs": information.st_mtime_ns,
+                })
+            process_request = ProtocolEnvelopeV1(
+                "1.0",
+                "request",
+                "process-caption-real-batch",
+                "caption-e621",
+                "caption",
+                "process_batch",
+                {"schemaVersion": 1, "payloadType": "caption_process_request", "items": caption_items},
+                jobId="job-real-caption",
+                configHash="a" * 64,
+            )
             shutdown = ProtocolEnvelopeV1(
                 "1.0",
                 "request",
@@ -357,7 +354,7 @@ class EmbeddedRuntimeTests(unittest.TestCase):
             )
             completed = subprocess.run(
                 launch.command,
-                input=encode_frame(hello) + b"".join(encode_frame(request) for request in process_requests) + encode_frame(shutdown),
+                input=encode_frame(hello) + encode_frame(process_request) + encode_frame(shutdown),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 env=launch.environment,
@@ -367,7 +364,7 @@ class EmbeddedRuntimeTests(unittest.TestCase):
             )
         self.assertEqual(0, completed.returncode, completed.stderr.decode("utf-8", errors="replace"))
         responses = completed.stdout.splitlines()
-        self.assertEqual(5, len(responses), completed.stdout.decode("utf-8", errors="replace"))
+        self.assertEqual(3, len(responses), completed.stdout.decode("utf-8", errors="replace"))
         initialized = decode_frame(responses[0], runtime_id="caption-e621", owner="caption")
         self.assertEqual("hello", initialized.method)
         self.assertTrue(initialized.payload["ready"])
@@ -375,10 +372,11 @@ class EmbeddedRuntimeTests(unittest.TestCase):
         self.assertEqual(8_783, initialized.payload["tagCount"])
         self.assertEqual(CAPTION_RESOURCE_FINGERPRINT, initialized.payload["resourceFingerprint"])
         self.assertIn(initialized.payload["provider"], {"CUDAExecutionProvider", "CPUExecutionProvider"})
-        for expected_sample_id, response in enumerate(responses[1:4], start=1):
-            processed = decode_frame(response, runtime_id="caption-e621", owner="caption")
-            self.assertEqual("result", processed.method)
-            outcome = parse_caption_outcome(processed.payload)
+        processed = decode_frame(responses[1], runtime_id="caption-e621", owner="caption")
+        self.assertEqual("result", processed.method)
+        batch_result = CaptionProcessResultV1.from_dict(processed.payload)
+        self.assertEqual(len(image_specs), len(batch_result.outcomes))
+        for expected_sample_id, outcome in enumerate(batch_result.outcomes, start=1):
             self.assertIsInstance(outcome, CaptionResultV1)
             self.assertEqual(expected_sample_id, outcome.sampleId)
             self.assertGreater(len(outcome.tags), 0)
@@ -390,10 +388,10 @@ class EmbeddedRuntimeTests(unittest.TestCase):
                 left.score >= right.score
                 for left, right in zip(outcome.tags, outcome.tags[1:], strict=False)
             ))
-            self.assertLessEqual(len(response), 1_048_576)
+        self.assertLessEqual(len(responses[1]), 1_048_576)
         self.assertEqual(
             "result",
-            decode_frame(responses[4], runtime_id="caption-e621", owner="caption").method,
+            decode_frame(responses[2], runtime_id="caption-e621", owner="caption").method,
         )
 
 

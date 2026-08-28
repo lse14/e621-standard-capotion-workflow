@@ -37,6 +37,20 @@ from anima_core.token_budget_protocol import validate_token_budget_outcome
 
 class PipelineTests(unittest.TestCase):
     @staticmethod
+    def _control_job_config(root: Path) -> dict[str, object]:
+        config = JobConfig(
+            workMode="in_place",
+            overwriteMode="incremental",
+            sourceRoot=str(root),
+        )
+        config.nl["systemPrompt"] = "Describe the visible image."
+        return {
+            "config_schema_version": config.schemaVersion,
+            "config_json": json.dumps(config.to_dict()),
+            "config_hash": config.config_hash,
+        }
+
+    @staticmethod
     def _v7_cpu_ocr_binding() -> OcrRuntimeBindingV1:
         return OcrRuntimeBindingV1.from_dict({
             "schemaVersion": 1,
@@ -302,7 +316,7 @@ class PipelineTests(unittest.TestCase):
         image = dataset / "image.png"
         Image.new("RGB", (3, 3), "white").save(image)
         config = JobConfig(
-            schemaVersion=9, profile="e621", workMode="in_place",
+            schemaVersion=10, workMode="in_place",
             overwriteMode="incremental", sourceRoot=str(dataset),
         )
         config.nl["promptVersion"] = "nl-default-prompt-v4"
@@ -313,7 +327,7 @@ class PipelineTests(unittest.TestCase):
         database = StateDatabase.open(root / "state.db")
         try:
             database.insert_job({
-                "job_id": job_id, "config_schema_version": 9, "config_json": json.dumps(config.to_dict()),
+                "job_id": job_id, "config_schema_version": 10, "config_json": json.dumps(config.to_dict()),
                 "config_hash": config.config_hash, "profile": "e621", "work_mode": "in_place",
                 "overwrite_mode": "incremental", "source_root": str(dataset), "output_root": None,
                 "dataset_root": str(dataset), "dataset_root_key": windows_key(dataset),
@@ -370,7 +384,7 @@ class PipelineTests(unittest.TestCase):
     def _prepared_ocr_job(
         root: Path,
         *,
-        schema_version: int = 9,
+        schema_version: int = 10,
         enabled: bool = True,
         device: str = "cuda",
     ) -> tuple[JobPreparationService, str]:
@@ -379,7 +393,6 @@ class PipelineTests(unittest.TestCase):
         Image.new("RGB", (3, 3), "white").save(dataset / "image.png")
         config = JobConfig(
             schemaVersion=schema_version,
-            profile="e621",
             workMode="in_place",
             overwriteMode="incremental",
             sourceRoot=str(dataset),
@@ -388,7 +401,7 @@ class PipelineTests(unittest.TestCase):
         config.nl["enabled"] = config.dropout["enabled"] = False
         config.countReview["enabled"] = False  # type: ignore[index]
         config.ocr["enabled"] = enabled
-        if schema_version in {7, 8, 9}:
+        if schema_version in {7, 8, 9, 10}:
             config.ocr["device"] = device
         preparation = JobPreparationService(root / "state.db")
         job_id = preparation.preflight(config.to_dict()).jobId
@@ -492,8 +505,8 @@ class PipelineTests(unittest.TestCase):
 
     def test_start_gate_skips_auto_and_disabled_ocr_configurations(self) -> None:
         cases = (
-            ("auto", 9, True, "auto"),
-            ("disabled", 9, False, "cuda"),
+            ("auto", 10, True, "auto"),
+            ("disabled", 10, False, "cuda"),
         )
         for label, schema_version, enabled, device in cases:
             with self.subTest(label=label), tempfile.TemporaryDirectory() as temporary:
@@ -925,8 +938,8 @@ class PipelineTests(unittest.TestCase):
                 Image.new("RGB", (10, 8), "white").save(image)
                 image_bytes = image.read_bytes()
                 config = JobConfig(
-                    profile="e621", workMode="in_place", overwriteMode="incremental",
-                    sourceRoot=str(dataset), schemaVersion=9,
+                    workMode="in_place", overwriteMode="incremental",
+                    sourceRoot=str(dataset), schemaVersion=10,
                 )
                 config.nl["promptVersion"] = "nl-default-prompt-v4"
                 config.caption["enabled"] = config.classify["enabled"] = config.replace["enabled"] = False
@@ -990,8 +1003,8 @@ class PipelineTests(unittest.TestCase):
             Image.new("RGB", (10, 8), "white").save(image)
             image_bytes = image.read_bytes()
             config = JobConfig(
-                profile="e621", workMode="in_place", overwriteMode="incremental",
-                sourceRoot=str(dataset), schemaVersion=9,
+                workMode="in_place", overwriteMode="incremental",
+                sourceRoot=str(dataset), schemaVersion=10,
             )
             config.nl["promptVersion"] = "nl-default-prompt-v4"
             config.caption["enabled"] = config.classify["enabled"] = config.replace["enabled"] = False
@@ -1311,7 +1324,7 @@ class PipelineTests(unittest.TestCase):
             database = StateDatabase.open(root / "state.db")
             try:
                 database.insert_job({
-                    "job_id": job_id, "config_schema_version": 5, "config_json": "{}", "config_hash": "a" * 64,
+                    "job_id": job_id, **self._control_job_config(root),
                     "profile": "e621", "work_mode": "in_place", "overwrite_mode": "incremental", "source_root": str(root),
                     "output_root": None, "dataset_root": str(root), "dataset_root_key": str(root), "manifest_schema_version": 1,
                     "recursive": 0, "sample_count": 1, "manifest_generated_at": "now", "status": "running",
@@ -1357,7 +1370,7 @@ class PipelineTests(unittest.TestCase):
             database = StateDatabase.open(root / "state.db")
             try:
                 database.insert_job({
-                    "job_id": job_id, "config_schema_version": 5, "config_json": "{}", "config_hash": "a" * 64,
+                    "job_id": job_id, **self._control_job_config(root),
                     "profile": "e621", "work_mode": "in_place", "overwrite_mode": "incremental", "source_root": str(root),
                     "output_root": None, "dataset_root": str(root), "dataset_root_key": str(root), "manifest_schema_version": 1,
                     "recursive": 0, "sample_count": 0, "manifest_generated_at": "now", "status": "running",
@@ -1493,7 +1506,7 @@ class PipelineTests(unittest.TestCase):
             database = StateDatabase.open(root / "state.db")
             try:
                 database.insert_job({
-                    "job_id": job_id, "config_schema_version": 5, "config_json": "{}", "config_hash": "a" * 64,
+                    "job_id": job_id, **self._control_job_config(root),
                     "profile": "e621", "work_mode": "in_place", "overwrite_mode": "incremental", "source_root": str(root),
                     "output_root": None, "dataset_root": str(root), "dataset_root_key": str(root), "manifest_schema_version": 1,
                     "recursive": 0, "sample_count": 0, "manifest_generated_at": "now", "status": "running",
@@ -1584,6 +1597,7 @@ class PipelineTests(unittest.TestCase):
             config = JobConfig(profile="e621", workMode="in_place", overwriteMode="incremental", sourceRoot=str(root))
             config.caption["enabled"] = True
             config.nl["enabled"] = True
+            config.nl["systemPrompt"] = "Describe the visible image."
             frozen = config.to_dict()
             database = StateDatabase.open(root / "state.db")
             try:
@@ -1666,7 +1680,7 @@ class PipelineTests(unittest.TestCase):
                 database = StateDatabase.open(root / "state.db")
                 try:
                     database.insert_job({
-                        "job_id": job_id, "config_schema_version": 5, "config_json": "{}", "config_hash": "a" * 64,
+                        "job_id": job_id, **self._control_job_config(root),
                         "profile": "e621", "work_mode": "in_place", "overwrite_mode": "incremental", "source_root": str(root),
                         "output_root": None, "dataset_root": str(root), "dataset_root_key": str(root), "manifest_schema_version": 1,
                         "recursive": 0, "sample_count": 1, "manifest_generated_at": "now", "status": active_status,
@@ -1708,7 +1722,7 @@ class PipelineTests(unittest.TestCase):
             database = StateDatabase.open(root / "state.db")
             try:
                 database.insert_job({
-                    "job_id": job_id, "config_schema_version": 5, "config_json": "{}", "config_hash": "a" * 64,
+                    "job_id": job_id, **self._control_job_config(root),
                     "profile": "e621", "work_mode": "in_place", "overwrite_mode": "incremental", "source_root": str(root),
                     "output_root": None, "dataset_root": str(root), "dataset_root_key": str(root), "manifest_schema_version": 1,
                     "recursive": 0, "sample_count": 0, "manifest_generated_at": "now", "status": "paused",
@@ -1755,7 +1769,7 @@ class PipelineTests(unittest.TestCase):
             database = StateDatabase.open(root / "state.db")
             try:
                 database.insert_job({
-                    "job_id": job_id, "config_schema_version": 5, "config_json": "{}", "config_hash": "a" * 64,
+                    "job_id": job_id, **self._control_job_config(root),
                     "profile": "e621", "work_mode": "in_place", "overwrite_mode": "incremental", "source_root": str(root),
                     "output_root": None, "dataset_root": str(root), "dataset_root_key": str(root), "manifest_schema_version": 1,
                     "recursive": 0, "sample_count": 0, "manifest_generated_at": "now", "status": "paused",
@@ -1798,7 +1812,7 @@ class PipelineTests(unittest.TestCase):
             database = StateDatabase.open(root / "state.db")
             try:
                 database.insert_job({
-                    "job_id": job_id, "config_schema_version": 6, "config_json": json.dumps({"schemaVersion": 6}), "config_hash": "a" * 64,
+                    "job_id": job_id, **self._control_job_config(root),
                     "profile": "e621", "work_mode": "in_place", "overwrite_mode": "incremental", "source_root": str(root),
                     "output_root": None, "dataset_root": str(root), "dataset_root_key": str(root), "manifest_schema_version": 1,
                     "recursive": 0, "sample_count": 0, "manifest_generated_at": "now", "status": "reviewing",
@@ -1841,7 +1855,7 @@ class PipelineTests(unittest.TestCase):
             database = StateDatabase.open(root / "state.db")
             try:
                 database.insert_job({
-                    "job_id": job_id, "config_schema_version": 6, "config_json": json.dumps({"schemaVersion": 6}), "config_hash": "a" * 64,
+                    "job_id": job_id, **self._control_job_config(root),
                     "profile": "e621", "work_mode": "in_place", "overwrite_mode": "incremental", "source_root": str(root),
                     "output_root": None, "dataset_root": str(root), "dataset_root_key": str(root), "manifest_schema_version": 1,
                     "recursive": 0, "sample_count": 0, "manifest_generated_at": "now", "status": "reviewing",
@@ -1954,9 +1968,9 @@ class PipelineTests(unittest.TestCase):
                 pipeline.close()
                 preparation.close()
 
-    def test_versioned_pipeline_traverses_six_or_seven_module_order(self) -> None:
+    def test_v10_pipeline_traverses_the_fixed_module_order(self) -> None:
         cases = (
-            (9, ("caption", "classify", "replace", "ocr", "nl", "count_review", "dropout", "token_budget", "export")),
+            (10, ("caption", "classify", "replace", "ocr", "nl", "count_review", "dropout", "token_budget", "export")),
         )
         for schema_version, expected_order in cases:
             with self.subTest(schema_version=schema_version), tempfile.TemporaryDirectory() as temporary:
@@ -1970,7 +1984,6 @@ class PipelineTests(unittest.TestCase):
                     "nl": "A person smiles.",
                 }))
                 config = JobConfig(
-                    profile="e621",
                     workMode="in_place",
                     overwriteMode="incremental",
                     sourceRoot=str(dataset),
@@ -2022,15 +2035,14 @@ class PipelineTests(unittest.TestCase):
                     pipeline.close()
                     preparation.close()
 
-    def test_v9_input_nl_dispatches_without_resolving_credentials(self) -> None:
+    def test_v10_input_nl_dispatches_without_resolving_credentials(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             dataset = root / "dataset"
             dataset.mkdir()
             Image.new("RGB", (3, 3), "white").save(dataset / "image.png")
             config = JobConfig(
-                schemaVersion=9,
-                profile="e621",
+                schemaVersion=10,
                 workMode="in_place",
                 overwriteMode="incremental",
                 sourceRoot=str(dataset),
@@ -2115,7 +2127,7 @@ class PipelineTests(unittest.TestCase):
                 database.close()
                 preparation.close()
 
-    def test_v9_enabled_missing_token_budget_record_blocks_before_export_transport(self) -> None:
+    def test_v10_enabled_missing_token_budget_record_blocks_before_export_transport(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             dataset = root / "dataset"
@@ -2125,7 +2137,7 @@ class PipelineTests(unittest.TestCase):
                 "quality": [], "count": "solo", "character": "", "series": "", "artist": "",
                 "appearance": [], "tags": ["smile"], "environment": [], "nl": "",
             }))
-            config = JobConfig(schemaVersion=9, profile="e621", workMode="in_place", overwriteMode="incremental", sourceRoot=str(dataset))
+            config = JobConfig(schemaVersion=10, workMode="in_place", overwriteMode="incremental", sourceRoot=str(dataset))
             config.caption["enabled"] = config.classify["enabled"] = config.replace["enabled"] = config.ocr["enabled"] = config.nl["enabled"] = config.dropout["enabled"] = False
             config.countReview["enabled"] = False  # type: ignore[index]
             preparation = JobPreparationService(root / "state.db")
@@ -2142,7 +2154,7 @@ class PipelineTests(unittest.TestCase):
                 database.close()
                 preparation.close()
 
-    def test_v9_enabled_missing_token_budget_record_blocks_before_export_transport(self) -> None:
+    def test_v10_missing_token_budget_record_moves_the_job_to_reviewing(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             dataset = root / "dataset"
@@ -2152,7 +2164,7 @@ class PipelineTests(unittest.TestCase):
                 "quality": [], "count": "solo", "character": "", "series": "", "artist": "",
                 "appearance": [], "tags": ["smile"], "environment": [], "nl": "",
             }))
-            config = JobConfig(schemaVersion=9, profile="e621", workMode="in_place", overwriteMode="incremental", sourceRoot=str(dataset))
+            config = JobConfig(schemaVersion=10, workMode="in_place", overwriteMode="incremental", sourceRoot=str(dataset))
             config.caption["enabled"] = config.classify["enabled"] = config.replace["enabled"] = config.ocr["enabled"] = config.nl["enabled"] = config.dropout["enabled"] = False
             config.countReview["enabled"] = False  # type: ignore[index]
             preparation = JobPreparationService(root / "state.db")
@@ -2178,7 +2190,7 @@ class PipelineTests(unittest.TestCase):
                 "quality": [], "count": "solo", "character": "", "series": "", "artist": "",
                 "appearance": [], "tags": ["smile"], "environment": [], "nl": "",
             }))
-            config = JobConfig(schemaVersion=9, profile="e621", workMode="in_place", overwriteMode="incremental", sourceRoot=str(dataset))
+            config = JobConfig(schemaVersion=10, workMode="in_place", overwriteMode="incremental", sourceRoot=str(dataset))
             config.caption["enabled"] = config.classify["enabled"] = config.replace["enabled"] = config.ocr["enabled"] = config.nl["enabled"] = config.dropout["enabled"] = False
             config.countReview["enabled"] = False  # type: ignore[index]
             preparation = JobPreparationService(root / "state.db")
@@ -2211,7 +2223,7 @@ class PipelineTests(unittest.TestCase):
                     pipeline.close()
                 preparation.close()
 
-    def test_v9_overflow_blocker_does_not_create_a_second_export_gate_issue(self) -> None:
+    def test_v10_overflow_blocker_does_not_create_a_second_export_gate_issue(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             dataset = root / "dataset"
@@ -2221,7 +2233,7 @@ class PipelineTests(unittest.TestCase):
                 "quality": [], "count": "solo", "character": "", "series": "", "artist": "",
                 "appearance": [], "tags": ["smile"], "environment": [], "nl": "",
             }))
-            config = JobConfig(schemaVersion=9, profile="e621", workMode="in_place", overwriteMode="incremental", sourceRoot=str(dataset))
+            config = JobConfig(schemaVersion=10, workMode="in_place", overwriteMode="incremental", sourceRoot=str(dataset))
             config.caption["enabled"] = config.classify["enabled"] = config.replace["enabled"] = config.ocr["enabled"] = config.nl["enabled"] = config.dropout["enabled"] = False
             config.countReview["enabled"] = False  # type: ignore[index]
             preparation = JobPreparationService(root / "state.db")
@@ -2242,7 +2254,7 @@ class PipelineTests(unittest.TestCase):
                 database.close()
                 preparation.close()
 
-    def test_v9_disabled_token_budget_skips_runtime_and_overlay_before_export(self) -> None:
+    def test_v10_disabled_token_budget_skips_runtime_and_overlay_before_export(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             dataset = root / "dataset"
@@ -2252,7 +2264,7 @@ class PipelineTests(unittest.TestCase):
                 "quality": [], "count": "solo", "character": "", "series": "", "artist": "",
                 "appearance": [], "tags": ["smile"], "environment": [], "nl": "",
             }))
-            config = JobConfig(schemaVersion=9, profile="e621", workMode="in_place", overwriteMode="incremental", sourceRoot=str(dataset))
+            config = JobConfig(schemaVersion=10, workMode="in_place", overwriteMode="incremental", sourceRoot=str(dataset))
             config.caption["enabled"] = config.classify["enabled"] = config.replace["enabled"] = config.ocr["enabled"] = config.nl["enabled"] = config.dropout["enabled"] = False
             config.countReview["enabled"] = False  # type: ignore[index]
             config.tokenBudget["enabled"] = False  # type: ignore[index]
@@ -2276,7 +2288,7 @@ class PipelineTests(unittest.TestCase):
                 pipeline.close()
                 preparation.close()
 
-    def test_v9_token_budget_export_gate_accepts_json_and_both_with_the_same_flat_text_record(self) -> None:
+    def test_v10_token_budget_export_gate_accepts_json_and_both_with_the_same_flat_text_record(self) -> None:
         for export_format in ("json", "both"):
             with self.subTest(export_format=export_format), tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary)
@@ -2285,7 +2297,7 @@ class PipelineTests(unittest.TestCase):
                 Image.new("RGB", (3, 3), "white").save(dataset / "image.png")
                 annotation = {"quality": [], "count": "solo", "character": "", "series": "", "artist": "", "appearance": [], "tags": ["smile"], "environment": [], "nl": ""}
                 (dataset / "image.json").write_bytes(serialize_annotation_json(annotation))
-                config = JobConfig(schemaVersion=9, profile="e621", workMode="in_place", overwriteMode="incremental", sourceRoot=str(dataset))
+                config = JobConfig(schemaVersion=10, workMode="in_place", overwriteMode="incremental", sourceRoot=str(dataset))
                 config.caption["enabled"] = config.classify["enabled"] = config.replace["enabled"] = config.ocr["enabled"] = config.nl["enabled"] = config.dropout["enabled"] = False
                 config.countReview["enabled"] = False  # type: ignore[index]
                 config.export["format"] = export_format
@@ -2313,7 +2325,7 @@ class PipelineTests(unittest.TestCase):
                     database.close()
                     preparation.close()
 
-    def test_v9_token_budget_export_gate_rejects_over_limit_record_before_export(self) -> None:
+    def test_v10_token_budget_export_gate_rejects_over_limit_record_before_export(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             dataset = root / "dataset"
@@ -2321,7 +2333,7 @@ class PipelineTests(unittest.TestCase):
             Image.new("RGB", (3, 3), "white").save(dataset / "image.png")
             annotation = {"quality": [], "count": "solo", "character": "", "series": "", "artist": "", "appearance": [], "tags": ["smile"], "environment": [], "nl": ""}
             (dataset / "image.json").write_bytes(serialize_annotation_json(annotation))
-            config = JobConfig(schemaVersion=9, profile="e621", workMode="in_place", overwriteMode="incremental", sourceRoot=str(dataset))
+            config = JobConfig(schemaVersion=10, workMode="in_place", overwriteMode="incremental", sourceRoot=str(dataset))
             config.caption["enabled"] = config.classify["enabled"] = config.replace["enabled"] = config.ocr["enabled"] = config.nl["enabled"] = config.dropout["enabled"] = False
             config.countReview["enabled"] = False  # type: ignore[index]
             preparation = JobPreparationService(root / "state.db")
@@ -2364,7 +2376,7 @@ class PipelineTests(unittest.TestCase):
                 "appearance": [], "tags": ["smile"], "environment": [], "nl": "",
             }
             (dataset / "image.json").write_bytes(serialize_annotation_json(annotation))
-            config = JobConfig(schemaVersion=9, profile="e621", workMode="in_place", overwriteMode="incremental", sourceRoot=str(dataset))
+            config = JobConfig(schemaVersion=10, workMode="in_place", overwriteMode="incremental", sourceRoot=str(dataset))
             config.caption["enabled"] = config.classify["enabled"] = config.replace["enabled"] = config.ocr["enabled"] = config.nl["enabled"] = config.dropout["enabled"] = False
             config.countReview["enabled"] = False  # type: ignore[index]
             preparation = JobPreparationService(root / "state.db")
@@ -2457,7 +2469,7 @@ class PipelineTests(unittest.TestCase):
                 "quality": [], "count": "solo", "character": "", "series": "", "artist": "",
                 "appearance": [], "tags": ["smile"], "environment": [], "nl": "",
             }))
-            config = JobConfig(schemaVersion=9, profile="e621", workMode="in_place", overwriteMode="incremental", sourceRoot=str(dataset))
+            config = JobConfig(schemaVersion=10, workMode="in_place", overwriteMode="incremental", sourceRoot=str(dataset))
             config.caption["enabled"] = config.classify["enabled"] = config.replace["enabled"] = config.ocr["enabled"] = config.nl["enabled"] = config.dropout["enabled"] = False
             config.countReview["enabled"] = False  # type: ignore[index]
             preparation = JobPreparationService(root / "state.db")

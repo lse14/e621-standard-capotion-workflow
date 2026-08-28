@@ -8,7 +8,7 @@ from __future__ import annotations
 import hashlib, json, uuid
 from typing import Protocol
 
-from .contracts import SampleIssue, WorkLease, job_config_supports_token_budget, sha256_json
+from .contracts import CURRENT_JOB_CONFIG_SCHEMA_VERSION, MODULE_BATCH_SIZE_BOUNDS, SampleIssue, WorkLease, sha256_json
 from .db import MAX_PAGE_SIZE, StateDatabase
 from .export_summary import CONVERSION_CODES, CONVERTED_SAMPLES_CODE
 from .overlay import WorkingAnnotationView
@@ -34,7 +34,22 @@ class ExportRunner:
     def _config(self)->tuple[str,dict[str,object]]:
         job=self.database.get_job(self.job_id); config=json.loads(str(job["config_json"]))
         schema_version=config.get("schemaVersion") if isinstance(config,dict) else None
-        if not isinstance(config,dict) or sha256_json(config)!=job["config_hash"] or schema_version != 9 or "profile" in config or schema_version!=int(job["config_schema_version"]) or config.get("export",{}).get("format") not in {"json","flat_txt","both"}: raise ExportRunnerError("frozen export configuration is invalid")
+        caption_format = config.get("captionFormat") if isinstance(config, dict) else None
+        batches = config.get("moduleBatchSize") if isinstance(config, dict) else None
+        if (
+            not isinstance(config, dict)
+            or sha256_json(config) != job["config_hash"]
+            or schema_version != CURRENT_JOB_CONFIG_SCHEMA_VERSION
+            or int(job["config_schema_version"]) != CURRENT_JOB_CONFIG_SCHEMA_VERSION
+            or "profile" in config
+            or not isinstance(batches, dict)
+            or set(batches) != set(MODULE_BATCH_SIZE_BOUNDS)
+            or any(type(batches[key]) is not int or not MODULE_BATCH_SIZE_BOUNDS[key][0] <= batches[key] <= MODULE_BATCH_SIZE_BOUNDS[key][1] for key in MODULE_BATCH_SIZE_BOUNDS)
+            or not isinstance(caption_format, dict)
+            or set(caption_format) != {"replaceUnderscoresWithSpaces", "preserveEscapes", "triggersEnabled", "triggerTerms", "flatTxtLayout"}
+            or caption_format.get("flatTxtLayout") not in {"single_line", "nl_newline"}
+            or config.get("export",{}).get("format") not in {"json","flat_txt","both"}
+        ): raise ExportRunnerError("frozen export configuration is invalid")
         return str(job["config_hash"]),config
     def _exchange(self,method:str,payload:dict[str,object],config_hash:str)->dict[str,object]:
         request=ProtocolEnvelopeV1("1.0","request",f"export-{uuid.uuid4().hex}",RUNTIME_ID,OWNER,method,payload,jobId=self.job_id,configHash=config_hash)
@@ -97,14 +112,14 @@ class ExportRunner:
             for start in range(0,total,MAX_PAGE_SIZE): self.database.increment_module_diagnostic(self.job_id,"export",code,severity="info",amount=min(MAX_PAGE_SIZE,total-start))
     def run(self)->str:
         config_hash,config=self._config(); active:list[WorkLease]=[]
-        token_budget = config.get("tokenBudget") if job_config_supports_token_budget(config.get("schemaVersion")) else None
+        token_budget = config.get("tokenBudget")
         token_budget_writer = TokenBudgetOverlayWriter(self.database, self.view.overlay, self.view, self.job_id) if isinstance(token_budget, dict) and token_budget.get("enabled") is True else None
         try:
             while True:
                 job=self.database.get_job(self.job_id)
                 if job["status"] in {"cancelling","paused"}: return str(job["status"])
                 if job["status"]!="exporting" or job["current_module_id"]!="export": raise ExportRunnerError("export module is not active")
-                active=self.scheduler.claim_batch(self.job_id,"export",self.worker_instance_id,config_hash,limit=500)
+                active=self.scheduler.claim_batch(self.job_id,"export",self.worker_instance_id,config_hash)
                 if not active:
                     if self.database.count_module_unsettled(self.job_id,"export"): raise ExportRunnerError("export has unclaimable work")
                     summary=self.database.module_summary(self.job_id,"export"); return self.scheduler.finish_module(self.job_id,"export",with_issues=int(summary["issue_count"])>0)

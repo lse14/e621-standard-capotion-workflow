@@ -755,3 +755,24 @@ def validate_outcome_for_item(
         raise OcrProtocolError("OCR outcome width does not match the original image")
     if expected_height is not None and outcome.image.height != _integer(expected_height, "expected_height", minimum=1):
         raise OcrProtocolError("OCR outcome height does not match the original image")
+
+
+def validate_outcomes_for_items(
+    outcomes: tuple[OcrOutcomeV1, ...],
+    items: tuple[OcrWorkItemV1, ...],
+) -> tuple[OcrOutcomeV1, ...]:
+    """Require one exact `(sampleId, leaseId)` result for every requested image."""
+    if len(outcomes) != len(items):
+        raise OcrProtocolError("OCR process result count does not match the request")
+    expected = {(item.sampleId, item.leaseId): item for item in items}
+    mapped: dict[tuple[int, str], OcrOutcomeV1] = {}
+    for outcome in outcomes:
+        identity = (outcome.sampleId, outcome.leaseId)
+        item = expected.get(identity)
+        if item is None or identity in mapped:
+            raise OcrProtocolError("OCR process result identities do not match the request")
+        validate_outcome_for_item(outcome, item)
+        mapped[identity] = outcome
+    if set(mapped) != set(expected):
+        raise OcrProtocolError("OCR process result identities do not match the request")
+    return tuple(mapped[(item.sampleId, item.leaseId)] for item in items)

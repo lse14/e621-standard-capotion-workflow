@@ -41,7 +41,7 @@ class TokenBudgetOverlayContractTests(unittest.TestCase):
         Image.new("RGB", (2, 2), "white").save(dataset / "image.png")
         annotation = {"quality": [], "count": "solo", "character": "", "series": "", "artist": "", "appearance": ["white hair"], "tags": ["smile"], "environment": [], "nl": ""}
         (dataset / "image.json").write_bytes(serialize_annotation_json(annotation))
-        config = JobConfig(schemaVersion=9, workMode="in_place", overwriteMode="incremental", sourceRoot=str(dataset))
+        config = JobConfig(schemaVersion=10, workMode="in_place", overwriteMode="incremental", sourceRoot=str(dataset))
         config.caption["enabled"] = config.classify["enabled"] = config.replace["enabled"] = config.ocr["enabled"] = config.nl["enabled"] = config.dropout["enabled"] = False
         config.countReview["enabled"] = False  # type: ignore[index]
         config.export["format"] = "json"

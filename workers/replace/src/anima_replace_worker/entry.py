@@ -89,11 +89,15 @@ def main() -> int:
             continue
         payload = request.get("payload")
         try:
-            if not isinstance(payload, dict) or set(payload) != {"schemaVersion", "payloadType", "items"} or payload["schemaVersion"] != 1 or payload["payloadType"] != "replace_process_request" or not isinstance(payload["items"], list) or len(payload["items"]) != 1:
+            if not isinstance(payload, dict) or set(payload) != {"schemaVersion", "payloadType", "items"} or payload["schemaVersion"] != 1 or payload["payloadType"] != "replace_process_request" or not isinstance(payload["items"], list) or not 1 <= len(payload["items"]) <= 500:
                 raise ReplaceWorkerError("replace_protocol_violation", "replace process payload is invalid")
             if worker.hello is None or request.get("jobId") != worker.hello["jobId"] or request.get("configHash") != worker.hello["configHash"]:
                 raise ReplaceWorkerError("replace_protocol_violation", "process envelope does not match initialized job")
-            _reply(request, "result", worker.process(payload["items"][0]))
+            _reply(request, "result", {
+                "schemaVersion": 1,
+                "payloadType": "replace_process_result",
+                "outcomes": worker.process_batch(payload["items"]),
+            })
         except ReplaceWorkerError as exc:
             _reply(request, "error", {"code": exc.code})
             print(f"replace process failed: {exc}", file=sys.stderr)

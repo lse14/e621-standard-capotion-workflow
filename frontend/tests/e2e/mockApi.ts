@@ -25,7 +25,7 @@ import type {
 
 const LOCAL_ORIGIN = `http://127.0.0.1:${process.env.ANIMA_E2E_PORT ?? "4173"}`;
 const TIMESTAMP = "2026-07-30T00:00:00Z";
-const V9_MODULE_ORDER = ["caption", "classify", "replace", "ocr", "nl", "count_review", "dropout", "token_budget", "export"] as const;
+const V10_MODULE_ORDER = ["caption", "classify", "replace", "ocr", "nl", "count_review", "dropout", "token_budget", "export"] as const;
 const TRANSPARENT_PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScL4wQAAAABJRU5ErkJggg==",
   "base64",
@@ -60,6 +60,7 @@ export type ApiScenario = {
   preflight: PreflightSummary;
   countReview: CountReviewPage;
   countReviewRequests: number[];
+  recommendationRequests: number;
   tokenBudgetReviews: TokenBudgetReviewPage;
   selectedPaths: Record<PathPickerPurpose, string | null>;
   failures: Map<string, RouteFailure>;
@@ -152,7 +153,7 @@ export function makeSnapshot({
   status = "ready",
   currentModuleId,
   parentJobId = null,
-  schemaVersion = 9,
+  schemaVersion = 10,
   ocrRuntime = null,
   captionDiagnostics = [],
 }: {
@@ -164,8 +165,8 @@ export function makeSnapshot({
   ocrRuntime?: OcrRuntimeStatus | null;
   captionDiagnostics?: JobSnapshot["captionDiagnostics"];
 } = {}): JobSnapshot {
-  if (schemaVersion !== 9) throw new Error("mockApi snapshots only supports JobConfig schema v9");
-  const moduleOrder = V9_MODULE_ORDER;
+  if (schemaVersion !== 10) throw new Error("mockApi snapshots only supports JobConfig schema v10");
+  const moduleOrder = V10_MODULE_ORDER;
   return {
     job: {
       jobId,
@@ -380,6 +381,7 @@ export function createApiScenario(): ApiScenario {
     preflight: makePreflight(),
     countReview: makeCountReview(),
     countReviewRequests: [],
+    recommendationRequests: 0,
     tokenBudgetReviews: makeTokenBudgetReviews(),
     selectedPaths: {
       source_dataset: "E:\\picked\\source",
@@ -526,6 +528,19 @@ async function handleApiRequest(scenario: ApiScenario, route: Route, pathname: s
 
   if (method === "GET" && pathname === "/health") return fulfillJson(route, { status: "ok" });
   if (method === "GET" && pathname === "/api/resources") return fulfillJson(route, scenario.resources);
+  if (method === "GET" && pathname === "/api/application/device-recommendations") {
+    scenario.recommendationRequests += 1;
+    return fulfillJson(route, {
+      schemaVersion: 1,
+      baselineVersion: "module-batching-v1-test",
+      cpuPhysicalCores: 8,
+      cpuLogicalCores: 16,
+      gpu: { available: true, name: "Test GPU", totalVramBytes: 24 * 1024 ** 3, freeVramBytes: 20 * 1024 ** 3, probeSource: "test" },
+      moduleBatchSize: { caption: 4, classify: 128, replace: 128, ocr: 8, nl: 3, countReview: 100, dropout: 8, tokenBudget: 128, export: 500 },
+      reasons: { caption: "validated caption", classify: "validated classify", replace: "validated replace", ocr: "validated OCR", nl: "API RPM limit", countReview: "validated count review", dropout: "validated dropout", tokenBudget: "validated token budget", export: "validated export" },
+      probeErrors: [],
+    });
+  }
   if (method === "POST" && pathname === "/api/application/select-path") {
     const request = body as { purpose: PathPickerPurpose };
     const path = scenario.selectedPaths[request.purpose];
@@ -624,7 +639,7 @@ async function handleApiRequest(scenario: ApiScenario, route: Route, pathname: s
       return fulfillJson(route, { detail: "ocr_resource_install_required: selected OCR resource is unavailable" }, 400);
     }
     const schemaVersion = config && (config as { schemaVersion?: unknown }).schemaVersion;
-    const snapshot = schemaVersion === 9
+    const snapshot = schemaVersion === 10
       ? makeSnapshot({
         jobId: scenario.preflight.jobId,
         schemaVersion,

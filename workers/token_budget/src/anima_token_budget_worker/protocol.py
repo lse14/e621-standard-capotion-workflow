@@ -128,7 +128,11 @@ def parse_process(value: object) -> TokenBudgetProcessRequest:
     if item["schemaVersion"] != SCHEMA_VERSION or item["payloadType"] != "token_budget_process_request" or not isinstance(values, list) or not 1 <= len(values) <= MAX_PROCESS_ITEMS:
         raise TokenBudgetPayloadError("Token Budget process request is invalid")
     caption_format = _object(item["captionFormat"], "captionFormat")
-    _keys(caption_format, {"replaceUnderscoresWithSpaces", "preserveEscapes", "triggersEnabled", "triggerTerms"}, "captionFormat")
+    caption_fields = {"replaceUnderscoresWithSpaces", "preserveEscapes", "triggersEnabled", "triggerTerms"}
+    if set(caption_format) not in (caption_fields, caption_fields | {"flatTxtLayout"}):
+        raise TokenBudgetPayloadError("captionFormat fields are invalid")
+    if "flatTxtLayout" in caption_format and caption_format["flatTxtLayout"] not in {"single_line", "nl_newline"}:
+        raise TokenBudgetPayloadError("captionFormat.flatTxtLayout is invalid")
     if any(type(caption_format[name]) is not bool for name in ("replaceUnderscoresWithSpaces", "preserveEscapes", "triggersEnabled")) or not isinstance(caption_format["triggerTerms"], list) or not all(isinstance(term, str) for term in caption_format["triggerTerms"]):
         raise TokenBudgetPayloadError("captionFormat is invalid")
     parsed: list[TokenBudgetWorkItem] = []

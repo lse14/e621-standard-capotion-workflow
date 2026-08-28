@@ -50,15 +50,21 @@ def serialize_flat_txt(payload: Mapping[str, object], caption_policy: CaptionDis
             tag_sections.insert(0, ", ".join(triggers))
         else:
             tag_sections[first] = ", ".join([*triggers, tag_sections[first]])
-    sections = [section for section in tag_sections if section]
+    tags = [section for section in tag_sections if section]
     nl = payload["nl"]
     if not isinstance(nl, str):
         raise FlatTextSerializationError("nl is not a normalized string")
-    if nl:
-        sections.append(nl)
-    if not sections:
+    if "\r" in nl or "\n" in nl:
+        raise FlatTextSerializationError("nl must not contain a line separator")
+    if not tags and not nl:
         raise FlatTextSerializationError("flat TXT cannot serialize an empty payload")
-    result = ", \n\n".join(sections).rstrip()
+    tag_text = ", ".join(tags)
+    if caption_policy.flat_txt_layout == "single_line":
+        result = ", ".join(section for section in (tag_text, nl) if section)
+    elif caption_policy.flat_txt_layout == "nl_newline":
+        result = f"{tag_text}\n{nl}" if tag_text and nl else tag_text or nl
+    else:
+        raise FlatTextSerializationError("flat TXT layout is invalid")
     if not result.endswith("."):
         result += "."
     return result.encode("utf-8")

@@ -308,7 +308,7 @@ class OcrFixture:
         threshold: float = 0.5,
         force_reprocess: bool = False,
         resource_fingerprint: str = OCR_RESOURCE_FINGERPRINT,
-        schema_version: int = 5,
+        schema_version: int = 10,
         ocr_device: str = "auto",
     ) -> None:
         self.root = root
@@ -327,15 +327,18 @@ class OcrFixture:
             self.relative_paths[sample_id] = relative
 
         self.layout = OverlayLayout.create(self.dataset, "job-ocr-runner")
+        if schema_version == 10:
+            write_execution_request(
+                self.layout.resource_path("ocr-execution-request-v1.json"),
+                normalize_ocr_execution(None),
+            )
         self.database = StateDatabase.open(root / "state.db")
         self.config = JobConfig(
-            profile="e621",
             workMode="in_place",
             overwriteMode="incremental",
             sourceRoot=str(self.dataset),
             schemaVersion=schema_version,
         )
-        self.config.nl["promptVersion"] = "nl-default-prompt-v3"
         self.config.ocr.update(
             {
                 "enabled": enabled,
@@ -430,6 +433,8 @@ class OcrFixture:
             worker_instance_id="ocr-worker-1",
             resource_manifest_relative_path=OCR_RESOURCE_MANIFEST,
             resource_fingerprint=str(self.config.ocr["resourceFingerprint"]),
+            runtime_fingerprint="a" * 64,
+            binding_path=self.layout.resource_path("ocr-runtime-binding-v1.json"),
         )
 
     def close(self) -> None:
@@ -456,6 +461,41 @@ class OcrRunnerTests(unittest.TestCase):
                 with self.assertRaises(module.OcrRunnerFatalError) as raised:
                     runner._exchange("hello", {}, fixture.config_hash)
                 self.assertIn("Choose Auto or CPU", str(raised.exception))
+            finally:
+                fixture.close()
+
+    def test_v10_runner_sends_the_frozen_image_batch_in_one_worker_request(self) -> None:
+        module = self._api()
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = OcrFixture(Path(temporary), sample_count=3, schema_version=10, force_reprocess=True)
+            fixture.config.moduleBatchSize["ocr"] = 3
+            fixture.database.connection.execute(
+                "UPDATE jobs SET config_json=?, config_hash=?, config_schema_version=? WHERE job_id=?",
+                (json.dumps(fixture.config.to_dict()), fixture.config.config_hash, 10, "job-ocr-runner"),
+            )
+            try:
+                binding_path = fixture.layout.resource_path("ocr-runtime-binding-v1.json")
+                write_execution_request(
+                    fixture.layout.resource_path("ocr-execution-request-v1.json"),
+                    normalize_ocr_execution(None),
+                )
+                transport = FakeOcrTransport()
+                report = module.OcrRunner(
+                    fixture.database,
+                    fixture.scheduler,
+                    transport,
+                    fixture.view,
+                    job_id="job-ocr-runner",
+                    worker_instance_id="ocr-worker-1",
+                    resource_manifest_relative_path=OCR_RESOURCE_MANIFEST,
+                    resource_fingerprint=OCR_RESOURCE_FINGERPRINT,
+                    runtime_fingerprint="a" * 64,
+                    binding_path=binding_path,
+                ).run()
+                self.assertEqual("completed", report.status)
+                self.assertEqual([3], transport.batch_sizes)
+                self.assertEqual(1, transport.process_calls)
+                self.assertEqual(0, fixture.database.count_in_flight("job-ocr-runner"))
             finally:
                 fixture.close()
 
@@ -502,10 +542,10 @@ class OcrRunnerTests(unittest.TestCase):
             finally:
                 fixture.close()
 
-    def test_v9_ocr_configuration_is_accepted_by_the_runner(self) -> None:
+    def test_v10_ocr_configuration_is_accepted_by_the_runner(self) -> None:
         module = self._api()
         with tempfile.TemporaryDirectory() as temporary:
-            fixture = OcrFixture(Path(temporary), schema_version=9)
+            fixture = OcrFixture(Path(temporary), schema_version=10)
             try:
                 write_execution_request(
                     fixture.layout.resource_path("ocr-execution-request-v1.json"),
@@ -530,7 +570,7 @@ class OcrRunnerTests(unittest.TestCase):
             finally:
                 fixture.close()
 
-    def test_v7_binds_runtime_before_the_first_single_sample_lease(self) -> None:
+    def test_v10_binds_runtime_before_the_first_batch_lease(self) -> None:
         module = self._api()
         required = {"runtime_id", "runtime_fingerprint", "binding_path"}
         supported = required <= set(inspect.signature(module.OcrRunner).parameters)
@@ -538,7 +578,7 @@ class OcrRunnerTests(unittest.TestCase):
         if not supported:
             return
         with tempfile.TemporaryDirectory() as temporary:
-            fixture = OcrFixture(Path(temporary), schema_version=7)
+            fixture = OcrFixture(Path(temporary), schema_version=10)
             try:
                 binding_path = fixture.layout.resource_path("ocr-runtime-binding-v1.json")
                 write_execution_request(
@@ -572,14 +612,14 @@ class OcrRunnerTests(unittest.TestCase):
             finally:
                 fixture.close()
 
-    def test_v7_sends_frozen_effective_tuning_with_the_first_hello(self) -> None:
+    def test_v10_sends_frozen_effective_tuning_with_the_first_hello(self) -> None:
         module = self._api()
         required = {"runtime_id", "runtime_fingerprint", "binding_path", "total_vram_bytes"}
         self.assertTrue(required <= set(inspect.signature(module.OcrRunner).parameters))
         if not required <= set(inspect.signature(module.OcrRunner).parameters):
             return
         with tempfile.TemporaryDirectory() as temporary:
-            fixture = OcrFixture(Path(temporary), schema_version=7, ocr_device="cuda")
+            fixture = OcrFixture(Path(temporary), schema_version=10, ocr_device="cuda")
             try:
                 binding_path = fixture.layout.resource_path("ocr-runtime-binding-v1.json")
                 write_execution_request(
@@ -612,10 +652,10 @@ class OcrRunnerTests(unittest.TestCase):
             finally:
                 fixture.close()
 
-    def test_v8_reuses_the_v7_device_aware_runtime_binding(self) -> None:
+    def test_v10_reuses_the_device_aware_runtime_binding(self) -> None:
         module = self._api()
         with tempfile.TemporaryDirectory() as temporary:
-            fixture = OcrFixture(Path(temporary), schema_version=8, ocr_device="cuda")
+            fixture = OcrFixture(Path(temporary), schema_version=10, ocr_device="cuda")
             try:
                 binding_path = fixture.layout.resource_path("ocr-runtime-binding-v1.json")
                 write_execution_request(
@@ -715,7 +755,7 @@ class OcrRunnerTests(unittest.TestCase):
                 )
 
                 self.assertEqual("completed", report.status)
-                self.assertEqual((0, 0), (transport.hello_calls, transport.process_calls))
+                self.assertEqual((1, 0), (transport.hello_calls, transport.process_calls))
                 self.assertEqual((0.95, False), (rewritten.settings.llmMinConfidence, rewritten.items[0].includedForLlm))
                 self.assertEqual("completed", fixture.database.get_sample_state("job-ocr-runner", 1)["status"])
             finally:
@@ -773,9 +813,9 @@ class OcrRunnerTests(unittest.TestCase):
                 transport = FakeOcrTransport(lambda item: _success_outcome(item, duplicate=True))
                 report = fixture.runner(module, transport).run()
 
-                self.assertEqual(("completed", 1), (report.status, report.maxResidentLeases))
-                self.assertEqual((1, 2), (transport.hello_calls, transport.process_calls))
-                self.assertEqual([1, 1], transport.batch_sizes)
+                self.assertEqual(("completed", 2), (report.status, report.maxResidentLeases))
+                self.assertEqual((1, 1), (transport.hello_calls, transport.process_calls))
+                self.assertEqual([2], transport.batch_sizes)
                 self.assertEqual([fixture.relative_paths[1], fixture.relative_paths[2]], transport.process_paths)
                 for sample_id in (1, 2):
                     sidecar = parse_ocr_sidecar(

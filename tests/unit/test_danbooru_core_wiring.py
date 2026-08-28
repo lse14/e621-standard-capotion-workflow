@@ -130,7 +130,7 @@ def _config(
         workMode="in_place",
         overwriteMode="incremental",
         sourceRoot=str(dataset),
-        schemaVersion=9,
+        schemaVersion=10,
     )
     config.caption.clear()
     config.caption.update({
@@ -233,7 +233,11 @@ class _DanbooruClassifyTransport:
             droppedTagCount=0,
             source="danbooru",
         )
-        return self._response(request, "result", result.to_dict())
+        return self._response(request, "result", {
+            "schemaVersion": 1,
+            "payloadType": "classify_process_result",
+            "outcomes": [result.to_dict()],
+        })
 
 
 class DanbooruCoreWiringTests(unittest.TestCase):
@@ -254,7 +258,7 @@ class DanbooruCoreWiringTests(unittest.TestCase):
                 try:
                     job = database.get_job(summary.jobId)
                     frozen = json.loads(str(job["config_json"]))
-                    self.assertEqual(9, job["config_schema_version"])
+                    self.assertEqual(10, job["config_schema_version"])
                     self.assertNotIn("profile", job.keys())
                     self.assertNotIn("profile", frozen)
                     self.assertEqual("fixture-replacement", frozen["replace"]["resourceId"])
@@ -328,7 +332,7 @@ class DanbooruCoreWiringTests(unittest.TestCase):
                 workMode="in_place",
                 overwriteMode="incremental",
                 sourceRoot=str(dataset),
-                schemaVersion=9,
+                schemaVersion=10,
             )
             config.caption["resourceId"] = "caption-danbooru-cl-tagger-v2-00"
             config.classify["resourceId"] = "danbooru-classify-20260727-v1"
@@ -454,7 +458,7 @@ class DanbooruCoreWiringTests(unittest.TestCase):
             finally:
                 preparation.close()
 
-    def test_repair_copies_the_exact_v9_resources_and_thresholds(self) -> None:
+    def test_repair_copies_the_exact_v10_resources_and_thresholds(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             dataset = root / "dataset"
@@ -500,7 +504,7 @@ class DanbooruCoreWiringTests(unittest.TestCase):
                     child = database.get_job(result.repairJobId)
                     self.assertEqual(
                         (
-                            9,
+                            10,
                             parent["config_json"],
                             parent["config_hash"],
                         ),

@@ -10,8 +10,11 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "shared" / "anima_caption_format"))
 sys.path.insert(0, str(ROOT / "core" / "src"))
 
+from anima_caption_format import serialize_flat_txt
+from anima_caption_format.normalizer import CaptionDisplayPolicy
 from anima_core.caption_overlay import CaptionOverlayWriter
 from anima_core.caption_protocol import CaptionResultV1, CaptionTagV1, CaptionWorkItemV1
 from anima_core.contracts import JobConfig, WorkLease
@@ -171,6 +174,29 @@ class CaptionOverlayFixture:
 
 
 class CaptionOverlayTests(unittest.TestCase):
+    def test_writer_serializes_caption_tags_with_the_shared_v10_serializer(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = CaptionOverlayFixture(Path(temporary))
+            try:
+                fixture.result = CaptionResultV1(
+                    sampleId=1,
+                    leaseId=fixture.item.leaseId,
+                    relativeImagePath=fixture.item.relativeImagePath,
+                    tags=(CaptionTagV1("blue_eyes", 0.9, "general"), CaptionTagV1("long_hair", 0.8, "general")),
+                    formattedTxt="legacy worker preview",
+                    provider="CPUExecutionProvider",
+                )
+                fixture.writer(fixture.item, fixture.result)
+
+                policy = CaptionDisplayPolicy.from_mapping(fixture.config.to_dict()["captionFormat"])
+                expected = serialize_flat_txt({
+                    "quality": [], "count": "", "character": "", "series": "", "artist": "",
+                    "appearance": [], "tags": ["blue_eyes", "long_hair"], "environment": [], "nl": "",
+                }, policy)
+                self.assertEqual(expected, fixture.layout.annotation_path("sample", ".txt").read_bytes())
+            finally:
+                fixture.close()
+
     def test_writer_stages_then_commits_overlay_without_mutating_the_dataset(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             fixture = CaptionOverlayFixture(Path(temporary))
@@ -182,14 +208,14 @@ class CaptionOverlayTests(unittest.TestCase):
                 self.assertFalse(
                     fixture.layout.resolve_prepared(prepared_state["prepared_artifact_relative_path"]).exists()
                 )
-                self.assertEqual(b"test_tag", fixture.layout.annotation_path("sample", ".txt").read_bytes())
+                self.assertEqual(b"test tag.", fixture.layout.annotation_path("sample", ".txt").read_bytes())
                 fixture.scheduler.complete(fixture.lease, txt_provenance="module1_written")
                 completed = fixture.database.get_sample_state("job-caption-overlay", 1)
                 self.assertEqual(("completed", "module1_written"), (completed["status"], completed["txt_provenance"]))
                 self.assertEqual(before, _tree_hashes(fixture.dataset))
                 self.assertEqual(b"baseline caption", BaselineView(fixture.dataset).read("sample", ".txt"))
                 self.assertEqual(
-                    b"test_tag",
+                    b"test tag.",
                     WorkingAnnotationView(BaselineView(fixture.dataset), fixture.layout).read("sample", ".txt"),
                 )
                 annotation_files = [path.name for path in fixture.layout.root.joinpath("annotations").rglob("*") if path.is_file()]

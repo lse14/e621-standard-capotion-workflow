@@ -9,6 +9,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "core" / "src"))
+sys.path.insert(0, str(ROOT / "tests" / "unit"))
 
 from PIL import Image
 
@@ -21,6 +22,7 @@ from anima_core.path_safety import sha256_file
 from anima_core.policy_runner import PolicyRunner, PolicyRunnerError
 from anima_core.scheduler import BoundedScheduler
 from anima_core.worker_protocol import ProtocolEnvelopeV1
+from test_job_preflight import _write_test_resource_library
 
 
 def _business() -> dict[str, object]:
@@ -100,13 +102,14 @@ class PolicyRunnerTests(unittest.TestCase):
         config.caption["enabled"] = config.classify["enabled"] = config.replace["enabled"] = config.nl["enabled"] = False
         config.countReview["enabled"] = False  # type: ignore[index]
         config.dropout["enabled"] = True
+        config.tokenBudget["enabled"] = False  # type: ignore[index]
         config.dropout["quality"]["enabled"] = quality_device is not None
-        if quality_device is not None:
-            config.dropout["quality"]["resourceId"] = "lse14-scorer-5k-v1"
-            manifest = root / "dropout-models" / "lse14-scorer-5k-v1" / "resource.json"
-            manifest.parent.mkdir(parents=True)
-            manifest.write_text(json.dumps({"schemaVersion": 1, "owner": "policy", "resourceId": "lse14-scorer-5k-v1", "fingerprint": "a" * 64}), encoding="utf-8")
-        preparation = JobPreparationService(root / "state.db")
+        catalog, _ = _write_test_resource_library(root, include_ocr=False)
+        config.caption["resourceId"] = "tagger-default"
+        config.classify["resourceId"] = "classify-default"
+        config.replace["resourceId"] = "replace-default"
+        config.dropout["quality"]["resourceId"] = "dropout-default"
+        preparation = JobPreparationService(root / "state.db", resource_catalog=catalog)
         job_id = preparation.preflight(config.to_dict()).jobId
         preparation.confirm_workspace(job_id, confirmed=True, confirmed_rebuild=False)
         database = StateDatabase.open(root / "state.db")
@@ -121,7 +124,7 @@ class PolicyRunnerTests(unittest.TestCase):
         runner = PolicyRunner(database, scheduler, _PolicyTransport(layout, mutate_count=mutate_count, quality_device=quality_device),
             WorkingAnnotationView(BaselineView(working_dataset), layout), job_id=job_id,
             worker_instance_id="policy-test", install_root=root,
-            resource_manifest_relative_path=r"dropout-models\lse14-scorer-5k-v1\resource.json" if quality_device is not None else None,
+            resource_manifest_relative_path=r"resource-library\dropout-models\dropout-default\resource.json" if quality_device is not None else None,
             resource_fingerprint="a" * 64 if quality_device is not None else None)
         return database, preparation, job_id, layout, runner
 

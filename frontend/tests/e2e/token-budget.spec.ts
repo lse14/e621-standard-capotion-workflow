@@ -1,7 +1,7 @@
 import { clearRouteFailure, expect, failRoute, holdRoute, makeSnapshot, mutationsFor, openApp, setJobSnapshot, test } from "./mockApi";
 
-test.describe("v9 Token Budget configuration", () => {
-  test("starts a v9 draft with the default tokenizer budget and prompt route", async ({ page, api }) => {
+test.describe("v10 Token Budget configuration", () => {
+  test("starts a v10 draft with the default tokenizer budget and prompt route", async ({ page, api }) => {
     await openApp(page, { language: "en" });
 
     await page.locator(".workflow-rail").getByRole("button", { name: /Token Budget/ }).click();
@@ -10,7 +10,7 @@ test.describe("v9 Token Budget configuration", () => {
     expect(api.promptRequests).toEqual([]);
   });
 
-  test("sends the selected NL preset and exact length distribution in the v9 preflight body", async ({ page, api }) => {
+  test("sends the selected NL preset and exact length distribution in the v10 preflight body", async ({ page, api }) => {
     await openApp(page, { language: "en" });
     await page.locator(".workflow-rail").getByRole("button", { name: /NL/ }).click();
     const presets = page.locator("[data-nl-preset-card]");
@@ -23,12 +23,12 @@ test.describe("v9 Token Budget configuration", () => {
     await page.getByLabel("Medium (%)", { exact: true }).fill("30");
     await page.getByLabel("Long (%)", { exact: true }).fill("50");
     await page.locator(".workflow-rail").getByRole("button", { name: /Dataset and preflight/ }).click();
-    await page.getByRole("textbox", { name: "Source dataset", exact: true }).fill("E:\\datasets\\v9-budget");
+    await page.getByRole("textbox", { name: "Source dataset", exact: true }).fill("E:\\datasets\\v10-budget");
     await page.getByRole("button", { name: "Preflight", exact: true }).click();
 
     await expect.poll(() => mutationsFor(api, "POST", "/api/jobs/preflight").length).toBe(1);
     const config = (mutationsFor(api, "POST", "/api/jobs/preflight")[0].body as { config: Record<string, unknown> }).config;
-    expect(config.schemaVersion).toBe(9);
+    expect(config.schemaVersion).toBe(10);
     expect(config.nl).toMatchObject({ promptVersion: "nl-default-prompt-v4", captionPreset: "style", lengthDistribution: { short: 20, medium: 30, long: 50 }, lengthSeed: "anima-nl-length-v1" });
     expect(config.tokenBudget).toEqual({ enabled: true, maxTokens: 512, resourceId: "tokenizer-qwen3-0.6b-anima-v1" });
     expect(config).not.toHaveProperty("resourceManifestRelativePath");
@@ -67,7 +67,7 @@ test.describe("v9 Token Budget configuration", () => {
   });
 
   test("edits with a debounced recount and applies only the saved proposal", async ({ page, api }) => {
-    setJobSnapshot(api, makeSnapshot({ schemaVersion: 9, status: "reviewing", currentModuleId: "token_budget" }));
+    setJobSnapshot(api, makeSnapshot({ schemaVersion: 10, status: "reviewing", currentModuleId: "token_budget" }));
     await openApp(page, { jobId: "job-e621-characterization", language: "en" });
     await page.locator(".workflow-rail").getByRole("button", { name: /Token Budget/ }).click();
     const first = page.locator(".token-budget-review-item").first();
@@ -86,7 +86,7 @@ test.describe("v9 Token Budget configuration", () => {
   });
 
   test("runs one explicit short rewrite for the selected samples", async ({ page, api }) => {
-    setJobSnapshot(api, makeSnapshot({ schemaVersion: 9, status: "reviewing", currentModuleId: "token_budget" }));
+    setJobSnapshot(api, makeSnapshot({ schemaVersion: 10, status: "reviewing", currentModuleId: "token_budget" }));
     await openApp(page, { jobId: "job-e621-characterization", language: "en" });
     await page.locator(".workflow-rail").getByRole("button", { name: /Token Budget/ }).click();
     await page.getByRole("checkbox", { name: "#1" }).check();
@@ -108,7 +108,7 @@ test.describe("v9 Token Budget configuration", () => {
       rewriteProposal: null,
     }));
     api.tokenBudgetReviews.targetCount = 51;
-    setJobSnapshot(api, makeSnapshot({ schemaVersion: 9, status: "reviewing", currentModuleId: "token_budget" }));
+    setJobSnapshot(api, makeSnapshot({ schemaVersion: 10, status: "reviewing", currentModuleId: "token_budget" }));
     await openApp(page, { jobId: "job-e621-characterization", language: "en" });
     await page.locator(".workflow-rail").getByRole("button", { name: /Token Budget/ }).click();
     await expect(page.getByRole("checkbox", { name: "#1", exact: true })).toBeVisible();
@@ -125,7 +125,7 @@ test.describe("v9 Token Budget configuration", () => {
     page.on("requestfailed", (request) => {
       if (new URL(request.url()).pathname === recountPath) aborted.push(request.failure()?.errorText ?? "aborted");
     });
-    setJobSnapshot(api, makeSnapshot({ schemaVersion: 9, status: "reviewing", currentModuleId: "token_budget" }));
+    setJobSnapshot(api, makeSnapshot({ schemaVersion: 10, status: "reviewing", currentModuleId: "token_budget" }));
     const release = holdRoute(api, `POST ${recountPath}`);
     await openApp(page, { jobId: "job-e621-characterization", language: "en" });
     await page.locator(".workflow-rail").getByRole("button", { name: /Token Budget/ }).click();
@@ -140,7 +140,7 @@ test.describe("v9 Token Budget configuration", () => {
   });
 
   test("refreshes on a recount version conflict and does not repeat a held rewrite", async ({ page, api }) => {
-    setJobSnapshot(api, makeSnapshot({ schemaVersion: 9, status: "reviewing", currentModuleId: "token_budget" }));
+    setJobSnapshot(api, makeSnapshot({ schemaVersion: 10, status: "reviewing", currentModuleId: "token_budget" }));
     failRoute(api, "POST /api/jobs/job-e621-characterization/token-budget/recount", "Token Budget review version conflict", 409);
     await openApp(page, { jobId: "job-e621-characterization", language: "en" });
     await page.locator(".workflow-rail").getByRole("button", { name: /Token Budget/ }).click();

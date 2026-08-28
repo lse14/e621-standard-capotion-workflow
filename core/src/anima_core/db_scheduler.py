@@ -23,6 +23,11 @@ from .db_schema import MAX_PAGE_SIZE, NON_INTERRUPTIBLE_JOB_STATUSES
 from .state_machine import transition_job, transition_module
 
 
+# Public list endpoints remain capped by MAX_PAGE_SIZE (1000). OCR's v10
+# worker protocol permits a distinct internal lease batch of 1024 items.
+MAX_LEASE_BOUND = 1024
+
+
 def _complete_leased_sample_with_issue(
     database: Any,
     job_id: str,
@@ -122,12 +127,15 @@ class SchedulerDatabaseMixin:
         limit: int,
         max_in_flight: int,
         single_worker: bool = False,
+        lease_bound: int = MAX_PAGE_SIZE,
         lease_id_factory: Callable[[], str],
         expires_at: str,
     ) -> list[sqlite3.Row]:
-        if not 1 <= limit <= MAX_PAGE_SIZE:
+        if not 1 <= lease_bound <= MAX_LEASE_BOUND:
+            raise ValueError("lease bound out of bounds")
+        if not 1 <= limit <= lease_bound:
             raise ValueError("lease limit out of bounds")
-        if not 1 <= max_in_flight <= MAX_PAGE_SIZE:
+        if not 1 <= max_in_flight <= lease_bound:
             raise ValueError("in-flight lease limit out of bounds")
         if not worker_instance_id or len(worker_instance_id) > 128:
             raise ValueError("worker instance id must be a non-empty bounded string")

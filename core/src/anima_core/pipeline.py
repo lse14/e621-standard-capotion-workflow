@@ -19,6 +19,7 @@ from .count_review_service import CountReviewService
 from .credentials import DpapiCredentialStore
 from .db import StateDatabase
 from .export_commit import ExportCommitCoordinator
+from .job_preflight import JobPreflightError, config_from_dict
 from .launcher import WorkerLaunchError, WorkerLauncher
 from .nl_profiles import NlApiProfileStore
 from .overlay import BaselineView, OverlayLayout, WorkingAnnotationView
@@ -42,14 +43,28 @@ def default_install_root() -> Path:
     raise PipelineError("distributed embedded runtime manifests are unavailable")
 
 
-def _forced_cuda_start_gate(service: "PipelineService", job_id: str, job: object) -> None:
+def _frozen_v10_config(job: object) -> dict[str, object]:
     try:
-        config = json.loads(str(job["config_json"]))  # type: ignore[index]
+        raw_config = json.loads(str(job["config_json"]))  # type: ignore[index]
         config_hash = job["config_hash"]  # type: ignore[index]
+        schema_version = job["config_schema_version"]  # type: ignore[index]
     except (KeyError, TypeError, json.JSONDecodeError) as exc:
         raise PipelineError("frozen JobConfig is invalid JSON") from exc
-    if not isinstance(config, dict) or not isinstance(config_hash, str) or sha256_json(config) != config_hash:
+    if not isinstance(raw_config, dict) or not isinstance(config_hash, str) or sha256_json(raw_config) != config_hash:
         raise PipelineError("frozen JobConfig hash does not match task record")
+    try:
+        config = config_from_dict(raw_config)
+    except (JobPreflightError, TypeError, ValueError) as exc:
+        raise PipelineError(str(exc)) from exc
+    if config.config_hash != config_hash:
+        raise PipelineError("frozen JobConfig hash does not match task record")
+    if config.schemaVersion != schema_version:
+        raise PipelineError("frozen JobConfig schema version does not match the task record")
+    return raw_config
+
+
+def _forced_cuda_start_gate(service: "PipelineService", job_id: str, job: object) -> None:
+    config = _frozen_v10_config(job)
     if not job_config_supports_ocr_device(config.get("schemaVersion")):
         return
     ocr = config.get("ocr")
@@ -248,14 +263,12 @@ class PipelineService(PipelineRecoveryMixin, PipelineDispatchMixin):
             database = StateDatabase.open(self.database_path)
             try:
                 job = database.get_job(job_id)
+                _frozen_v10_config(job)
                 module_id = job["current_module_id"]
                 if job["status"] == "reviewing" and module_id == "token_budget":
                     resuming_token_budget_review = True
-                    try:
-                        config = json.loads(str(job["config_json"]))
-                    except json.JSONDecodeError as exc:
-                        raise PipelineError("frozen JobConfig is invalid JSON") from exc
-                    if not isinstance(config, dict) or not job_config_supports_token_budget(config.get("schemaVersion")):
+                    config = _frozen_v10_config(job)
+                    if not job_config_supports_token_budget(config.get("schemaVersion")):
                         raise PipelineError("only a Token Budget-capable review can continue to Export")
                     if database.count_unresolved_blocking_issues(job_id):
                         return False
@@ -342,6 +355,7 @@ class PipelineService(PipelineRecoveryMixin, PipelineDispatchMixin):
             thread: threading.Thread | None = None
             try:
                 job = database.get_job(job_id)
+                _frozen_v10_config(job)
                 if job_id in self._threads:
                     if job["status"] == "running" and job["current_module_id"] == "count_review":
                         return False
@@ -499,18 +513,7 @@ class PipelineService(PipelineRecoveryMixin, PipelineDispatchMixin):
         database = StateDatabase.open(self.database_path)
         try:
             job = database.get_job(job_id)
-            try:
-                config = json.loads(str(job["config_json"]))
-            except json.JSONDecodeError as exc:
-                raise PipelineError("frozen JobConfig is invalid JSON") from exc
-            if (
-                not isinstance(config, dict)
-                or config.get("schemaVersion") != 9
-                or "profile" in config
-            ):
-                raise PipelineError("frozen JobConfig schema version cannot run")
-            if config.get("schemaVersion") != job["config_schema_version"]:
-                raise PipelineError("frozen JobConfig schema version does not match the task record")
+            config = _frozen_v10_config(job)
             scheduler = BoundedScheduler(database)
             try:
                 modules = pipeline_module_ids(int(job["config_schema_version"]))

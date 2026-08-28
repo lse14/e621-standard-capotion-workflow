@@ -1,5 +1,6 @@
 import type { Draft } from "../../draft";
 import { FieldHelp, FormField, ToggleField, type FieldGuidanceCopy } from "../FormField";
+import { ModuleBatchField } from "../ModuleBatchField";
 
 type OcrExecutionTuning = { mode: "auto"; value: null } | { mode: "manual"; value: number };
 type OcrExecutionRequest = {
@@ -57,6 +58,10 @@ export type OcrStepProps = {
   onOcrChange: (patch: Partial<Draft["ocr"]>) => void;
   onOcrExecutionChange: (value: OcrExecutionRequest) => void;
   onRefreshResources: () => void;
+  batchSize: number;
+  batchRecommended?: number;
+  batchReason?: string;
+  onBatchSizeChange: (value: number) => void;
 };
 
 const FIXED_RESOURCE_ID = "ocr-ppocrv5-server-paddle-v1";
@@ -101,6 +106,7 @@ function TuningControl({
 
 export function OcrStep({
   draft, defaults, taskLocked, ocrExecution, runtime, resource, resourcesLoading, resourceError, diagnostics, failureMessage, guidanceCopy, t, copy, onOcrChange, onOcrExecutionChange, onRefreshResources,
+  batchSize, batchRecommended, batchReason, onBatchSizeChange,
 }: OcrStepProps) {
   const controlsDisabled = taskLocked || !draft.ocr.enabled;
   const resourceReady = Boolean(resource?.available && !["incompatible", "unavailable"].includes(resource.compatibility.status));
@@ -121,6 +127,7 @@ export function OcrStep({
 
   return <div className="option-stack ocr-step" data-config-surface="ocr">
     <ToggleField id="ocr-enabled" label={copy.enableOcr} checked={draft.ocr.enabled} disabled={taskLocked} onChange={(enabled) => onOcrChange({ enabled })} copy={guidanceCopy} guidance={{ description: t("fieldHelp_enableOcr"), defaultValue: defaults.ocr.enabled ? t("fieldEnabled") : t("fieldDisabled") }} />
+    <ModuleBatchField id="ocr-batch-size" label={t("batchSize")} value={batchSize} defaultValue={4} recommended={batchRecommended} recommendationReason={batchReason} minimum={1} maximum={1024} disabled={taskLocked || !draft.ocr.enabled} t={t} guidanceCopy={guidanceCopy} onChange={onBatchSizeChange} />
     <div className="form-grid">
       <FormField id="ocr-llm-confidence" label={copy.llmMinConfidence} copy={guidanceCopy} guidance={{ description: t("fieldHelp_ocrConfidence"), defaultValue: String(defaults.ocr.llmMinConfidence), range: "0-1, step 0.01" }}>
         <input id="ocr-llm-confidence" disabled={controlsDisabled} type="number" min="0" max="1" step="0.01" value={draft.ocr.llmMinConfidence} onChange={(event) => updateConfidence(event.target.value)} />

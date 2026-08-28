@@ -10,6 +10,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "core" / "src"))
+sys.path.insert(0, str(ROOT / "tests" / "unit"))
 
 from PIL import Image
 
@@ -23,6 +24,7 @@ from anima_core.overlay import BaselineView, OverlayLayout, WorkingAnnotationVie
 from anima_core.scheduler import BoundedScheduler
 from anima_core.token_budget_runner import TokenBudgetRunner, TokenBudgetRunnerError
 from anima_core.worker_protocol import ProtocolEnvelopeV1
+import test_job_preflight as _preflight_support
 
 
 class TokenBudgetRunnerContractTests(unittest.TestCase):
@@ -33,17 +35,23 @@ class TokenBudgetRunnerContractTests(unittest.TestCase):
         )
 
     def _runner(
-        self, root: Path, status: str, *, schema_version: int = 9,
+        self, root: Path, status: str, *, schema_version: int = 10,
     ) -> tuple[StateDatabase, JobPreparationService, str, TokenBudgetRunner]:
         dataset = root / "dataset"
         dataset.mkdir()
         Image.new("RGB", (2, 2), "white").save(dataset / "image.png")
         annotation = {"quality": [], "count": "solo", "character": "", "series": "", "artist": "", "appearance": [], "tags": ["ok"], "environment": [], "nl": ""}
         (dataset / "image.json").write_bytes(serialize_annotation_json(annotation))
-        config = JobConfig(schemaVersion=schema_version, profile="e621", workMode="in_place", overwriteMode="incremental", sourceRoot=str(dataset))
+        config = JobConfig(schemaVersion=schema_version, workMode="in_place", overwriteMode="incremental", sourceRoot=str(dataset))
         config.caption["enabled"] = config.classify["enabled"] = config.replace["enabled"] = config.ocr["enabled"] = config.nl["enabled"] = config.dropout["enabled"] = False
         config.countReview["enabled"] = False  # type: ignore[index]
-        preparation = JobPreparationService(root / "state.db")
+        catalog, _ = _preflight_support._write_test_resource_library(root, include_ocr=False)
+        _preflight_support.JobPreflightTests._write_tokenizer_resource(catalog.root, context_limit=512)
+        config.caption["resourceId"] = "tagger-default"
+        config.classify["resourceId"] = "classify-default"
+        config.replace["resourceId"] = "replace-default"
+        config.dropout["quality"]["resourceId"] = "dropout-default"
+        preparation = JobPreparationService(root / "state.db", resource_catalog=catalog)
         job_id = preparation.preflight(config.to_dict()).jobId
         preparation.confirm_workspace(job_id, confirmed=True, confirmed_rebuild=False)
         database = StateDatabase.open(root / "state.db")
@@ -81,8 +89,8 @@ class TokenBudgetRunnerContractTests(unittest.TestCase):
         runner = TokenBudgetRunner(database, scheduler, Transport(), WorkingAnnotationView(BaselineView(dataset), layout), job_id=job_id, worker_instance_id="worker")
         return database, preparation, job_id, runner
 
-    def test_v6_and_v7_overflow_are_settled_once_as_a_blocking_issue_without_annotation(self) -> None:
-        for schema_version in (9,):
+    def test_v10_overflow_is_settled_once_as_a_blocking_issue_without_annotation(self) -> None:
+        for schema_version in (10,):
             with self.subTest(schema_version=schema_version), tempfile.TemporaryDirectory() as temporary:
                 database, preparation, job_id, runner = self._runner(
                     Path(temporary), "overflow", schema_version=schema_version,
@@ -104,8 +112,8 @@ class TokenBudgetRunnerContractTests(unittest.TestCase):
                     database.close()
                     preparation.close()
 
-    def test_v6_and_v7_runner_send_hello_and_process_a_within_budget_sample(self) -> None:
-        for schema_version in (9,):
+    def test_v10_runner_sends_hello_and_processes_a_within_budget_sample(self) -> None:
+        for schema_version in (10,):
             with self.subTest(schema_version=schema_version), tempfile.TemporaryDirectory() as temporary:
                 database, preparation, _job_id, runner = self._runner(
                     Path(temporary), "within_budget", schema_version=schema_version,

@@ -16,6 +16,7 @@ from anima_core.classify_overlay import ClassifyOverlayWriter
 from anima_core.classify_protocol import (
     ClassifyCountDecisionV1,
     ClassifyHelloResultV1,
+    ClassifyIssueResultV1,
     ClassifyProjectionV1,
     ClassifyResultV1,
     ClassifyWorkItemV1,
@@ -73,9 +74,12 @@ class FakeClassifyTransport:
                 executable=r"C:\Anima\runtimes\classify-e621\python.exe", resourceFingerprint=FINGERPRINT,
             ).to_dict())
         self.process_requests += 1
-        item = ClassifyWorkItemV1.from_dict(request.payload["items"][0])
-        self.items.append(item)
-        result = ClassifyResultV1(
+        raw_items = request.payload.get("items")
+        if not isinstance(raw_items, list):
+            raise AssertionError("classify batch request has no items")
+        items = [ClassifyWorkItemV1.from_dict(raw) for raw in raw_items]
+        self.items.extend(items)
+        outcomes = [ClassifyResultV1(
             sampleId=item.sampleId, leaseId=item.leaseId, relativeImagePath=item.relativeImagePath,
             projection=ClassifyProjectionV1(
                 quality=(), count="solo", character="named_character", series="", artist="",
@@ -83,8 +87,56 @@ class FakeClassifyTransport:
             ),
             countDecision=self.decision,
             inputTagCount=4, outputTagCount=4, droppedTagCount=0,
-        )
-        return self._response(request, "result", result.to_dict())
+        ).to_dict() for item in items]
+        return self._response(request, "result", {
+            "schemaVersion": 1,
+            "payloadType": "classify_process_result",
+            "outcomes": outcomes,
+        })
+
+
+class FakeBatchClassifyTransport(FakeClassifyTransport):
+    def __init__(self, *, issue_sample_id: int) -> None:
+        super().__init__()
+        self.issue_sample_id = issue_sample_id
+        self.batch_sizes: list[int] = []
+
+    def exchange(self, request: ProtocolEnvelopeV1) -> ProtocolEnvelopeV1:
+        if request.method == "hello":
+            return super().exchange(request)
+        self.process_requests += 1
+        raw_items = request.payload.get("items")
+        if not isinstance(raw_items, list):
+            raise AssertionError("classify batch request has no items")
+        items = [ClassifyWorkItemV1.from_dict(raw) for raw in raw_items]
+        self.batch_sizes.append(len(items))
+        self.items.extend(items)
+        outcomes: list[dict[str, object]] = []
+        for item in items:
+            if item.sampleId == self.issue_sample_id:
+                outcomes.append(ClassifyIssueResultV1(
+                    item.sampleId,
+                    item.leaseId,
+                    item.relativeImagePath,
+                    "classify_no_writable_tags",
+                    False,
+                    "caption produced no writable classification tag",
+                ).to_dict())
+                continue
+            outcomes.append(ClassifyResultV1(
+                sampleId=item.sampleId, leaseId=item.leaseId, relativeImagePath=item.relativeImagePath,
+                projection=ClassifyProjectionV1(
+                    quality=(), count="solo", character="named_character", series="", artist="",
+                    appearance=("blue_fur",), tags=("solo",), environment=("forest",), nl="",
+                ),
+                countDecision=self.decision,
+                inputTagCount=4, outputTagCount=4, droppedTagCount=0,
+            ).to_dict())
+        return self._response(request, "result", {
+            "schemaVersion": 1,
+            "payloadType": "classify_process_result",
+            "outcomes": list(reversed(outcomes)),
+        })
 
 
 class ClassifyRecoveryFixture:
@@ -92,7 +144,6 @@ class ClassifyRecoveryFixture:
         self,
         root: Path,
         *,
-        schema_version: int = 9,
         input_txt_mode: str | None = None,
         baseline_txt: bytes | None = b"solo, blue eyes",
         baseline_json: bytes | None = None,
@@ -110,11 +161,9 @@ class ClassifyRecoveryFixture:
             self.layout.write_annotation("sample", ".txt", overlay_txt)
         self.database = StateDatabase.open(root / "state.db")
         self.config = JobConfig(
-            profile="e621",
             workMode="in_place",
             overwriteMode="incremental",
             sourceRoot=str(self.dataset),
-            schemaVersion=schema_version,
         )
         self.config.caption["enabled"] = False
         if input_txt_mode is not None:
@@ -190,6 +239,92 @@ class ClassifyRunnerTests(unittest.TestCase):
             resource_manifest_relative_path=RESOURCE_MANIFEST,
             resource_fingerprint=FINGERPRINT,
         )
+
+    def test_v10_runner_sends_the_frozen_batch_and_settles_shuffled_item_outcomes(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            dataset = root / "dataset"
+            dataset.mkdir()
+            layout = OverlayLayout.create(dataset, "job-classify-batch")
+            database = StateDatabase.open(root / "state.db")
+            try:
+                config = JobConfig(
+                    workMode="in_place",
+                    overwriteMode="incremental",
+                    sourceRoot=str(dataset),
+                )
+                config.caption["enabled"] = False
+                config.moduleBatchSize["classify"] = 3
+                config.classify.update({
+                    "wikiDataSourceId": WIKI_DATA_SOURCE_ID,
+                    "dictionaryEntryCount": RESOURCE_ENTRY_COUNT,
+                    "resourceProfile": "e621",
+                    "resourceManifestRelativePath": RESOURCE_MANIFEST,
+                    "resourceFingerprint": FINGERPRINT,
+                })
+                database.insert_job({
+                    "job_id": "job-classify-batch", "config_schema_version": 10,
+                    "config_json": json.dumps(config.to_dict()), "config_hash": config.config_hash,
+                    "profile": "e621", "work_mode": "in_place", "overwrite_mode": "incremental",
+                    "source_root": str(dataset), "output_root": None, "dataset_root": str(dataset),
+                    "dataset_root_key": windows_key(dataset), "manifest_schema_version": 1,
+                    "recursive": 0, "sample_count": 3, "manifest_generated_at": "2026-08-27T00:00:00Z",
+                    "status": "ready", "current_module_id": None, "last_event_id": 0, "pinned": 0,
+                    "api_budget_extra": 0, "api_budget_revision": 0, "overlay_root": str(layout.root),
+                    "commit_journal_path": None, "resume_status": None, "created_at": "2026-08-27T00:00:00Z",
+                    "started_at": None, "cancel_requested_at": None, "finished_at": None,
+                })
+                samples: list[dict[str, object]] = []
+                for sample_id in range(1, 4):
+                    annotation_key = f"sample-{sample_id}"
+                    (dataset / f"{annotation_key}.png").write_bytes(b"immutable-image")
+                    (dataset / f"{annotation_key}.txt").write_text("solo, blue eyes", encoding="utf-8")
+                    samples.append({
+                        "sample_id": sample_id,
+                        "relative_image_path": f"{annotation_key}.png",
+                        "annotation_key": annotation_key,
+                        "source": "e621",
+                        "in_processing_scope": True,
+                        "image_format": "png",
+                        "image_frame_count": 1,
+                        "original_txt_state": "nonblank",
+                        "original_json_state": "missing_or_blank",
+                        "image_file_id": f"volume:{sample_id}",
+                        "image_size": len(b"immutable-image"),
+                        "image_mtime_ns": 1_000_000,
+                    })
+                database.insert_samples("job-classify-batch", samples)
+                lease_ids = iter(("lease-batch-1", "lease-batch-2", "lease-batch-3"))
+                scheduler = BoundedScheduler(database, lease_id_factory=lease_ids.__next__)
+                scheduler.start_module("job-classify-batch", "caption", enabled=False, profile="e621")
+                scheduler.start_module("job-classify-batch", "classify", enabled=True, profile="e621")
+                transport = FakeBatchClassifyTransport(issue_sample_id=2)
+
+                report = ClassifyRunner(
+                    database,
+                    scheduler,
+                    transport,
+                    WorkingAnnotationView(BaselineView(dataset), layout),
+                    ClassifyOverlayWriter(database, layout, "job-classify-batch"),
+                    job_id="job-classify-batch",
+                    worker_instance_id="classify-worker-batch",
+                    install_root=RESOURCE_ROOT,
+                    resource_manifest_relative_path=RESOURCE_MANIFEST,
+                    resource_fingerprint=FINGERPRINT,
+                ).run()
+
+                self.assertEqual(
+                    ("completed_with_issues", 2, 1, 1, 1),
+                    (report.status, report.completed, report.failed, report.helloRequests, report.processRequests),
+                )
+                self.assertEqual([3], transport.batch_sizes)
+                self.assertEqual([1, 2, 3], [item.sampleId for item in transport.items])
+                self.assertEqual("failed", database.get_sample_state("job-classify-batch", 2)["status"])
+                self.assertEqual(0, database.count_in_flight("job-classify-batch"))
+            finally:
+                database.close()
+                if layout.root.exists():
+                    layout.discard()
 
     def test_raw_e621_json_reuses_worker_and_preserves_artist_and_character(self) -> None:
         raw = parse_raw_e621_annotation(
@@ -290,11 +425,10 @@ class ClassifyRunnerTests(unittest.TestCase):
             finally:
                 fixture.close()
 
-    def test_v9_nl_uses_baseline_txt_without_replacing_tagger_input(self) -> None:
+    def test_v10_nl_uses_baseline_txt_without_replacing_tagger_input(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             fixture = ClassifyRecoveryFixture(
                 Path(temporary),
-                schema_version=9,
                 input_txt_mode="nl",
                 baseline_txt=b"baseline natural-language caption",
                 baseline_json=b'{"nl":"old NL"}',
@@ -311,12 +445,11 @@ class ClassifyRunnerTests(unittest.TestCase):
             finally:
                 fixture.close()
 
-    def test_v9_nl_missing_or_blank_baseline_txt_writes_an_empty_nl(self) -> None:
+    def test_v10_nl_missing_or_blank_baseline_txt_writes_an_empty_nl(self) -> None:
         for baseline_txt in (None, b" \t\r\n"):
             with self.subTest(baseline_txt=baseline_txt), tempfile.TemporaryDirectory() as temporary:
                 fixture = ClassifyRecoveryFixture(
                     Path(temporary),
-                    schema_version=9,
                     input_txt_mode="nl",
                     baseline_txt=baseline_txt,
                     baseline_json=b'{"nl":"old NL"}',
@@ -333,7 +466,7 @@ class ClassifyRunnerTests(unittest.TestCase):
                 finally:
                     fixture.close()
 
-    def test_v9_nl_rejects_invalid_baseline_txt_before_worker_process(self) -> None:
+    def test_v10_nl_rejects_invalid_baseline_txt_before_worker_process(self) -> None:
         for label, baseline_txt in (
             ("invalid-utf8", b"\xff"),
             ("nul", b"caption\x00text"),
@@ -342,7 +475,6 @@ class ClassifyRunnerTests(unittest.TestCase):
             with self.subTest(label=label), tempfile.TemporaryDirectory() as temporary:
                 fixture = ClassifyRecoveryFixture(
                     Path(temporary),
-                    schema_version=9,
                     input_txt_mode="nl",
                     baseline_txt=baseline_txt,
                     overlay_txt=b"generated, tag",
@@ -456,7 +588,7 @@ class ClassifyRunnerTests(unittest.TestCase):
             layout = OverlayLayout.create(dataset, "job-classify")
             database = StateDatabase.open(root / "state.db")
             try:
-                config = JobConfig(profile="e621", workMode="in_place", overwriteMode="incremental", sourceRoot=str(dataset))
+                config = JobConfig(workMode="in_place", overwriteMode="incremental", sourceRoot=str(dataset))
                 config.caption["enabled"] = False
                 config.classify.update({
                     "wikiDataSourceId": WIKI_DATA_SOURCE_ID,

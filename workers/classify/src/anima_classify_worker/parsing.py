@@ -30,6 +30,12 @@ def parse_tag_text(content: str, caption_format: Mapping[str, object], txt_prove
         content = content[1:]
     if not content.strip():
         return []
+    if txt_provenance == "module1_written":
+        content = content.strip()
+        # The shared v10 flat TXT serializer adds the frozen terminal period.
+        # It is presentation punctuation, not part of the final tag identity.
+        if content.endswith("."):
+            content = content[:-1]
     # Trigger removal happens before de-duplication: Caption does not de-duplicate
     # its prefix against the model tags, so a genuine tag repeating a trigger term
     # must survive (ROADMAP.md 6.4).

@@ -1,5 +1,6 @@
 import { ResourcePicker, type ResourcePickerProps } from "../ResourcePicker";
 import { FormField, ToggleField, type FieldGuidanceCopy } from "../FormField";
+import { ModuleBatchField } from "../ModuleBatchField";
 import { PathPicker, type PathPickerCopy } from "../PathPicker";
 import type { Draft } from "../../draft";
 import type { UiLanguage } from "../../i18n";
@@ -28,14 +29,20 @@ export type ReplaceStepProps = {
   onReplaceChange: (patch: Partial<Draft["replace"]>) => void;
   onIndexModeChange: (mode: Draft["replace"]["indexMode"]) => void;
   onRefreshResources: () => void;
+  batchSize: number;
+  batchRecommended?: number;
+  batchReason?: string;
+  onBatchSizeChange: (value: number) => void;
 };
 
 export function ReplaceStep({
   draft, taskLocked, language, resources, resourcesLoading, resourceError, invalidResourceCount,
   resourcePickerCopy, pathPickerCopy, replaceIndex, t, guidanceCopy, copy, onReplaceChange, onIndexModeChange, onRefreshResources,
+  batchSize, batchRecommended, batchReason, onBatchSizeChange,
 }: ReplaceStepProps) {
   return <div className="option-stack" data-config-surface="replace">
     <ToggleField id="replace-enabled" label={t("enableReplacement")} checked={draft.replace.enabled} disabled={taskLocked} onChange={(enabled) => onReplaceChange({ enabled })} copy={guidanceCopy} guidance={{ description: t("fieldHelp_enableReplacement"), defaultValue: draft.replace.enabled ? t("fieldEnabled") : t("fieldDisabled") }} />
+    <ModuleBatchField id="replace-batch-size" label={t("batchSize")} value={batchSize} defaultValue={128} recommended={batchRecommended} recommendationReason={batchReason} minimum={1} maximum={500} disabled={taskLocked || !draft.replace.enabled} t={t} guidanceCopy={guidanceCopy} onChange={onBatchSizeChange} />
     <FormField id="replace-mode" label={copy.replaceMode} copy={guidanceCopy} guidance={{ description: t("fieldHelp_replaceMode"), defaultValue: copy.bundledIndex }}>
       <select id="replace-mode" disabled={taskLocked || !draft.replace.enabled} value={draft.replace.indexMode} onChange={(event) => onIndexModeChange(event.target.value as Draft["replace"]["indexMode"])}><option value="bundled">{copy.bundledIndex}</option><option value="custom">{copy.customIndex}</option></select>
     </FormField>

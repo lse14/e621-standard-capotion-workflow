@@ -115,6 +115,27 @@ class _SelectPathBody(BaseModel):
     currentPath: str | None = Field(default=None, max_length=32_767)
 
 
+class DeviceRecommendationGpu(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    available: bool
+    name: str | None
+    totalVramBytes: int | None
+    freeVramBytes: int | None
+    probeSource: str
+
+
+class DeviceRecommendationResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    schemaVersion: int
+    baselineVersion: str
+    cpuPhysicalCores: int
+    cpuLogicalCores: int
+    gpu: DeviceRecommendationGpu
+    moduleBatchSize: dict[str, int]
+    reasons: dict[str, str]
+    probeErrors: list[str]
+
+
 @dataclass(frozen=True)
 class SelectPathRequest:
     purpose: Literal["source_dataset", "output_dataset", "replacement_csv", "classification_resource_json"]

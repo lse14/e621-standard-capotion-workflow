@@ -1,5 +1,6 @@
 import { ResourcePicker, type ResourcePickerProps } from "../ResourcePicker";
 import { FormField, ToggleField, type FieldGuidanceCopy } from "../FormField";
+import { ModuleBatchField } from "../ModuleBatchField";
 import type { Draft } from "../../draft";
 import type { UiLanguage } from "../../i18n";
 
@@ -25,12 +26,17 @@ export type PolicyStepProps = {
   onAppearanceNlChange: (patch: Partial<Draft["dropout"]["appearanceNl"]>) => void;
   onAppearanceProbabilityChange: (group: AppearanceGroup, key: "dropNl" | "dropAppearance", value: string) => void;
   onRefreshResources: () => void;
+  batchSize: number;
+  batchRecommended?: number;
+  batchReason?: string;
+  onBatchSizeChange: (value: number) => void;
 };
 
 export function PolicyStep({
   draft, defaults, taskLocked, language, resources, resourcesLoading, resourceError, invalidResourceCount,
   resourcePickerCopy, t, guidanceCopy, copy, onDropoutChange, onArtistChange, onQualityChange, onAppearanceNlChange,
   onAppearanceProbabilityChange, onRefreshResources,
+  batchSize, batchRecommended, batchReason, onBatchSizeChange,
 }: PolicyStepProps) {
   const appearanceDisabled = taskLocked || !draft.dropout.enabled || !draft.dropout.appearanceNl.enabled;
   const groupLabels = { solo: t("dropoutSolo"), nonSolo: t("dropoutNonSolo"), unknown: t("dropoutUnknown") };
@@ -38,6 +44,7 @@ export function PolicyStep({
 
   return <div className="option-stack" data-config-surface="policy">
     <ToggleField id="policy-enabled" label={t("enablePolicy")} checked={draft.dropout.enabled} disabled={taskLocked} onChange={(enabled) => onDropoutChange({ enabled })} copy={guidanceCopy} guidance={{ description: t("fieldHelp_policyEnabled"), defaultValue: defaults.dropout.enabled ? t("fieldEnabled") : t("fieldDisabled") }} />
+    <ModuleBatchField id="dropout-batch-size" label={t("batchSize")} value={batchSize} defaultValue={4} recommended={batchRecommended} recommendationReason={batchReason} minimum={1} maximum={16} disabled={taskLocked || !draft.dropout.enabled} t={t} guidanceCopy={guidanceCopy} onChange={onBatchSizeChange} />
     <div className="form-grid">
       <FormField id="policy-seed" label={t("seed")} copy={guidanceCopy} guidance={{ description: t("fieldHelp_policySeed"), defaultValue: defaults.dropout.seed }}>
         <input id="policy-seed" disabled={taskLocked || !draft.dropout.enabled} value={draft.dropout.seed} onChange={(event) => onDropoutChange({ seed: event.target.value })} />

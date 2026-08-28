@@ -1,5 +1,6 @@
 import { ResourcePicker, type ResourcePickerProps } from "../ResourcePicker";
 import { FormField, ToggleField, type FieldGuidanceCopy } from "../FormField";
+import { ModuleBatchField } from "../ModuleBatchField";
 import type { Draft } from "../../draft";
 import type { UiLanguage } from "../../i18n";
 
@@ -32,11 +33,15 @@ export type TokenBudgetStepProps = {
   guidanceCopy: FieldGuidanceCopy;
   onTokenBudgetChange: (patch: Partial<Draft["tokenBudget"]>) => void;
   onRefreshResources: () => void;
+  batchSize: number;
+  batchRecommended?: number;
+  batchReason?: string;
+  onBatchSizeChange: (value: number) => void;
 };
 
 export function TokenBudgetStep({
   draft, defaults, taskLocked, language, resources, resourcesLoading, resourceError, invalidResourceCount, resourcePickerCopy, t, guidanceCopy,
-  onTokenBudgetChange, onRefreshResources,
+  onTokenBudgetChange, onRefreshResources, batchSize, batchRecommended, batchReason, onBatchSizeChange,
 }: TokenBudgetStepProps) {
   const selected = resources.find((item) => item.resourceId === draft.tokenBudget.resourceId);
   const cap = selected?.contextLimit;
@@ -54,6 +59,7 @@ export function TokenBudgetStep({
 
   return <div className="option-stack token-budget-step" data-config-surface="token-budget">
     <ToggleField id="token-budget-enabled" label={t("enableTokenBudget")} checked={draft.tokenBudget.enabled} disabled={taskLocked} onChange={(enabled) => onTokenBudgetChange({ enabled })} copy={guidanceCopy} guidance={{ description: t("fieldHelp_tokenBudgetEnabled"), defaultValue: defaults.tokenBudget.enabled ? t("fieldEnabled") : t("fieldDisabled") }} />
+    <ModuleBatchField id="token-budget-batch-size" label={t("batchSize")} value={batchSize} defaultValue={128} recommended={batchRecommended} recommendationReason={batchReason} minimum={1} maximum={500} disabled={taskLocked || !draft.tokenBudget.enabled} t={t} guidanceCopy={guidanceCopy} onChange={onBatchSizeChange} />
     <div className="form-grid">
       <FormField id="token-budget-max" label={t("maximumTrainingTokens")} copy={guidanceCopy} guidance={{ description: t("fieldHelp_maximumTokens"), defaultValue: String(defaults.tokenBudget.maxTokens), range: `1-${cap ?? t("tokenizerContextLimit")}` }}>
         <input id="token-budget-max" disabled={controlsDisabled} type="number" min="1" max={cap} step="1" value={draft.tokenBudget.maxTokens} onChange={(event) => onTokenBudgetChange({ maxTokens: Number(event.target.value) })} />

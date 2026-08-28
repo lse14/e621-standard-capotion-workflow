@@ -167,3 +167,7 @@ class CaptionWorker:
             "provider": self.model.provider,
             "modelSessionLoads": self.model.session_loads,
         }
+
+    def process_batch(self, items: list[dict[str, object]]) -> list[dict[str, object]]:
+        """Keep item-local failures in their own outcomes while reusing this session."""
+        return [self.process(item) for item in items]

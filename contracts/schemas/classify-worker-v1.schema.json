@@ -122,7 +122,7 @@
       "properties": {
         "schemaVersion": {"const": 1},
         "payloadType": {"const": "classify_process_request"},
-        "items": {"type": "array", "minItems": 1, "maxItems": 1, "items": {"$ref": "#/$defs/workItem"}}
+        "items": {"type": "array", "minItems": 1, "maxItems": 500, "items": {"$ref": "#/$defs/workItem"}}
       },
       "additionalProperties": false
     },
@@ -160,6 +160,61 @@
         "retriable": {"type": "boolean"},
         "message": {"type": "string", "minLength": 1, "maxLength": 1024},
         "repairStartModule": {"const": "classify"}
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["schemaVersion", "payloadType", "outcomes"],
+      "properties": {
+        "schemaVersion": {"const": 1},
+        "payloadType": {"const": "classify_process_result"},
+        "outcomes": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 500,
+          "items": {
+            "oneOf": [
+              {
+                "type": "object",
+                "required": ["schemaVersion", "payloadType", "sampleId", "leaseId", "source", "relativeImagePath", "projection", "countDecision", "inputTagCount", "outputTagCount", "droppedTagCount"],
+                "properties": {
+                  "schemaVersion": {"const": 1},
+                  "payloadType": {"const": "classify_result"},
+                  "sampleId": {"type": "integer", "minimum": 1},
+                  "leaseId": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"},
+                  "source": {"enum": ["e621", "danbooru"]},
+                  "relativeImagePath": {"type": "string", "minLength": 1, "maxLength": 16384},
+                  "projection": {"$ref": "#/$defs/projection"},
+                  "countDecision": {"$ref": "#/$defs/countDecision"},
+                  "inputTagCount": {"type": "integer", "minimum": 0, "maximum": 16384},
+                  "outputTagCount": {"type": "integer", "minimum": 0, "maximum": 16384},
+                  "droppedTagCount": {"type": "integer", "minimum": 0, "maximum": 16384}
+                },
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "required": ["schemaVersion", "payloadType", "sampleId", "leaseId", "source", "relativeImagePath", "code", "severity", "blocking", "retriable", "message"],
+                "properties": {
+                  "schemaVersion": {"const": 1},
+                  "payloadType": {"const": "classify_issue"},
+                  "sampleId": {"type": "integer", "minimum": 1},
+                  "leaseId": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"},
+                  "source": {"enum": ["e621", "danbooru"]},
+                  "relativeImagePath": {"type": "string", "minLength": 1, "maxLength": 16384},
+                  "code": {"enum": ["classify_original_count_unresolved", "count_sheet_multi_conflict", "classify_no_writable_tags", "classify_text_invalid", "classify_wiki_io_failed", "classify_processing_failed"]},
+                  "severity": {"const": "error"},
+                  "blocking": {"const": true},
+                  "retriable": {"type": "boolean"},
+                  "message": {"type": "string", "minLength": 1, "maxLength": 1024},
+                  "repairStartModule": {"const": "classify"}
+                },
+                "additionalProperties": false
+              }
+            ]
+          }
+        }
       },
       "additionalProperties": false
     }

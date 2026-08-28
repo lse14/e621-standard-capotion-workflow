@@ -10,6 +10,8 @@ from typing import Protocol
 
 from .classify_overlay import ClassifyJsonError, parse_annotation_json
 from .contracts import (
+    CURRENT_JOB_CONFIG_SCHEMA_VERSION,
+    MODULE_BATCH_SIZE_BOUNDS,
     SampleIssue,
     WorkLease,
     job_config_supports_caption_input_txt_mode,
@@ -213,6 +215,7 @@ class NlRunner:
         self.worker_instance_id = worker_instance_id
         self.credentials = credentials
         self._hello_done = False
+        self._nl_batch_size = 3
 
     def _fatal(self, code: str, message: str) -> NlRunnerError:
         return NlRunnerError(code, message)
@@ -233,13 +236,25 @@ class NlRunner:
         if (
             not isinstance(config, dict)
             or sha256_json(config) != job["config_hash"]
-            or config_schema_version != 9
+            or config_schema_version != CURRENT_JOB_CONFIG_SCHEMA_VERSION
             or "profile" in config
             or not isinstance(config.get("nl"), dict)
             or config_schema_version != int(job["config_schema_version"])
             or config["nl"].get("promptVersion") != expected_prompt_version
         ):
             raise self._fatal("nl_protocol_violation", "frozen NL configuration is invalid")
+        batches = config.get("moduleBatchSize")
+        if (
+            not isinstance(batches, dict)
+            or set(batches) != set(MODULE_BATCH_SIZE_BOUNDS)
+            or type(batches.get("nl")) is not int
+            or not MODULE_BATCH_SIZE_BOUNDS["nl"][0] <= batches["nl"] <= MODULE_BATCH_SIZE_BOUNDS["nl"][1]
+        ):
+            raise self._fatal("nl_protocol_violation", "frozen module batch configuration is invalid")
+        self._nl_batch_size = int(batches["nl"])
+        raw_api_policy = config["nl"].get("apiPolicy") if isinstance(config.get("nl"), dict) else None
+        if isinstance(raw_api_policy, dict) and "concurrency" in raw_api_policy:
+            raise self._fatal("nl_protocol_violation", "NL concurrency is controlled by moduleBatchSize.nl")
         input_txt_mode: str | None = None
         if job_config_supports_caption_input_txt_mode(config_schema_version):
             caption = config.get("caption")
@@ -317,9 +332,10 @@ class NlRunner:
 
     def _policy(self, nl: dict[str, object]) -> dict[str, object]:
         value = nl.get("apiPolicy", {})
-        if not isinstance(value, dict) or set(value) - set(DEFAULT_POLICY):
+        if not isinstance(value, dict) or set(value) - set(DEFAULT_POLICY) or "concurrency" in value:
             raise self._fatal("nl_protocol_violation", "NL API policy is invalid")
         policy = {key: value.get(key, default) for key, default in DEFAULT_POLICY.items()}
+        policy["concurrency"] = self._nl_batch_size
         if "maxHttpAttempts" not in value:
             # F30: an unfrozen budget follows the dataset size instead of a flat constant.
             policy["maxHttpAttempts"] = max(1, nl_http_attempt_budget(int(self.database.get_job(self.job_id)["sample_count"])))

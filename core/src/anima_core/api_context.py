@@ -15,6 +15,7 @@ from .native_path_picker import NativePathPicker
 from .pipeline import PipelineService
 from .repair import RepairPreparationService
 from .resource_catalog import ResourceCatalog
+from .device_recommendation import DeviceRecommendationService
 
 
 @dataclass(frozen=True)
@@ -28,6 +29,7 @@ class ControlPlaneContext:
     pipeline_service: PipelineService
     repair_service: RepairPreparationService
     resource_catalog: ResourceCatalog
+    device_recommendation_service: DeviceRecommendationService
     shutdown_token: str | None
     shutdown_callback: Callable[[], None] | None
     native_path_picker: NativePathPicker

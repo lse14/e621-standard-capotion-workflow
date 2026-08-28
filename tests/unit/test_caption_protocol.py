@@ -18,6 +18,7 @@ from anima_core.caption_protocol import (
     CaptionHelloResultV1,
     CaptionIssueResultV1,
     CaptionProcessRequestV1,
+    CaptionProcessResultV1,
     CaptionProtocolError,
     CaptionResultV1,
     CaptionTagV1,
@@ -26,6 +27,7 @@ from anima_core.caption_protocol import (
     ImageDecodePolicyV1,
     parse_caption_outcome,
     validate_outcome_for_item,
+    validate_outcomes_for_items,
 )
 from anima_core.contracts import CaptionFormatPolicy, ImageDecodePolicy, JobConfig, validate_job_config
 
@@ -154,7 +156,7 @@ class CaptionProtocolTests(unittest.TestCase):
         with self.assertRaises(CaptionProtocolError):
             CaptionFormatPolicyV1.from_dict(invalid_format)
 
-        config = JobConfig(profile="e621", workMode="in_place", overwriteMode="incremental", sourceRoot="E:\\dataset")
+        config = JobConfig(workMode="in_place", overwriteMode="incremental", sourceRoot="E:\\dataset")
         validate_job_config(config)
         config.caption["uniformThreshold"] = True
         config.caption["thresholdMode"] = "uniform"
@@ -162,7 +164,6 @@ class CaptionProtocolTests(unittest.TestCase):
             validate_job_config(config)
 
         bad_image = JobConfig(
-            profile="e621",
             workMode="in_place",
             overwriteMode="incremental",
             sourceRoot="E:\\dataset",
@@ -171,7 +172,6 @@ class CaptionProtocolTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             validate_job_config(bad_image)
         bad_trigger = JobConfig(
-            profile="e621",
             workMode="in_place",
             overwriteMode="incremental",
             sourceRoot="E:\\dataset",
@@ -184,7 +184,6 @@ class CaptionProtocolTests(unittest.TestCase):
         """D16: preflight used to accept terms that the worker always rejects."""
         for term in ("my_style_", "_trigger", "___"):
             blocked = JobConfig(
-                profile="e621",
                 workMode="in_place",
                 overwriteMode="incremental",
                 sourceRoot="E:\\dataset",
@@ -193,7 +192,6 @@ class CaptionProtocolTests(unittest.TestCase):
             with self.subTest(term=term), self.assertRaises(ValueError):
                 validate_job_config(blocked)
             allowed = JobConfig(
-                profile="e621",
                 workMode="in_place",
                 overwriteMode="incremental",
                 sourceRoot="E:\\dataset",
@@ -205,17 +203,36 @@ class CaptionProtocolTests(unittest.TestCase):
             )
             validate_job_config(allowed)
 
-    def test_process_request_is_single_item_and_path_safe(self) -> None:
-        request = CaptionProcessRequestV1(_work_item())
-        payload = request.to_dict()
-        self.assertEqual(payload, CaptionProcessRequestV1.from_dict(payload).to_dict())
-        self.assertEqual(payload, validate_process_payload(payload))
+    def test_process_request_supports_bounded_unique_multi_items_and_path_safety(self) -> None:
+        first = _work_item()
+        second = CaptionWorkItemV1(
+            **{**first.__dict__, "sampleId": 8, "leaseId": "lease-8", "relativeImagePath": "nested\\image-8.png", "annotationKey": "nested\\image-8"}
+        )
+        payload = {
+            "schemaVersion": 1,
+            "payloadType": "caption_process_request",
+            "items": [first.to_dict(), second.to_dict()],
+        }
+        try:
+            request = CaptionProcessRequestV1.from_dict(payload)
+        except CaptionProtocolError:
+            request = None
+        self.assertIsNotNone(request, "caption v1 must accept a bounded multi-item request")
+        assert request is not None
+        self.assertEqual((first, second), request.items)
+        self.assertEqual(payload, request.to_dict())
 
-        two = {**payload, "items": payload["items"] * 2}
+        try:
+            worker_validated = validate_process_payload(payload)
+        except CaptionPayloadError:
+            worker_validated = None
+        self.assertEqual(payload, worker_validated)
+
+        duplicate = {**payload, "items": [first.to_dict(), first.to_dict()]}
         with self.assertRaises(CaptionProtocolError):
-            CaptionProcessRequestV1.from_dict(two)
+            CaptionProcessRequestV1.from_dict(duplicate)
         with self.assertRaises(CaptionPayloadError):
-            validate_process_payload(two)
+            validate_process_payload(duplicate)
 
         escaped_item = dict(payload["items"][0])
         escaped_item["relativeImagePath"] = "..\\image.png"
@@ -270,11 +287,53 @@ class CaptionProtocolTests(unittest.TestCase):
         with self.assertRaises(CaptionProtocolError):
             parse_caption_outcome(invalid_issue)
 
+    def test_batch_outcomes_require_exact_unique_leased_identities(self) -> None:
+        first = _work_item()
+        second = CaptionWorkItemV1(
+            **{**first.__dict__, "sampleId": 8, "leaseId": "lease-8", "relativeImagePath": "nested\\image-8.png", "annotationKey": "nested\\image-8"}
+        )
+        first_result = CaptionResultV1(
+            sampleId=first.sampleId,
+            leaseId=first.leaseId,
+            relativeImagePath=first.relativeImagePath,
+            tags=(CaptionTagV1("blue_eyes", 0.8, "general"),),
+            formattedTxt="blue eyes",
+            provider="CPUExecutionProvider",
+        )
+        second_issue = CaptionIssueResultV1(
+            sampleId=second.sampleId,
+            leaseId=second.leaseId,
+            relativeImagePath=second.relativeImagePath,
+            code="caption_no_tags",
+            retriable=False,
+            message="No model tags matched the frozen thresholds.",
+            repairStartModule=None,
+        )
+        parsed = CaptionProcessResultV1.from_dict({
+            "schemaVersion": 1,
+            "payloadType": "caption_process_result",
+            "outcomes": [second_issue.to_dict(), first_result.to_dict()],
+        })
+        self.assertEqual((first_result, second_issue), validate_outcomes_for_items(parsed.outcomes, (first, second)))
+
+        duplicate = {**parsed.to_dict(), "outcomes": [first_result.to_dict(), first_result.to_dict()]}
+        with self.assertRaises(CaptionProtocolError):
+            CaptionProcessResultV1.from_dict(duplicate)
+        missing = {**parsed.to_dict(), "outcomes": [first_result.to_dict()]}
+        with self.assertRaises(CaptionProtocolError):
+            validate_outcomes_for_items(CaptionProcessResultV1.from_dict(missing).outcomes, (first, second))
+        with self.assertRaises(CaptionProtocolError):
+            CaptionProcessResultV1.from_dict({
+                "schemaVersion": 1,
+                "payloadType": "caption_process_result",
+                "outcomes": "not-a-list",
+            })
+
     def test_caption_schema_and_job_schema_are_parseable_and_strict(self) -> None:
         caption_schema = json.loads((ROOT / "contracts" / "schemas" / "caption-worker-v1.schema.json").read_text(encoding="utf-8"))
-        job_schema = json.loads((ROOT / "contracts" / "schemas" / "job-config-v9.schema.json").read_text(encoding="utf-8"))
+        job_schema = json.loads((ROOT / "contracts" / "schemas" / "job-config-v10.schema.json").read_text(encoding="utf-8"))
         self.assertEqual("anima://contracts/caption-worker-v1", caption_schema["$id"])
-        self.assertEqual(5, len(caption_schema["oneOf"]))
+        self.assertEqual(6, len(caption_schema["oneOf"]))
         self.assertFalse(job_schema["$defs"]["caption"]["additionalProperties"])
         self.assertFalse(job_schema["$defs"]["captionFormat"]["additionalProperties"])
         self.assertFalse(job_schema["$defs"]["imageDecode"]["additionalProperties"])

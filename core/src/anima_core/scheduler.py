@@ -7,12 +7,31 @@ from datetime import datetime, timedelta, timezone
 from typing import Callable
 
 from . import PROTOCOL_VERSION
-from .contracts import ModuleId, SampleIssue, SampleRunState, WorkLease, pipeline_module_ids
+from .contracts import (
+    CURRENT_JOB_CONFIG_SCHEMA_VERSION,
+    MODULE_BATCH_SIZE_BOUNDS,
+    ModuleId,
+    SampleIssue,
+    SampleRunState,
+    WorkLease,
+    pipeline_module_ids,
+)
 from .db import MAX_PAGE_SIZE, StateDatabase
 from .state_machine import transition_module
 
 
 FINAL_MODULE_STATUSES = frozenset({"completed", "completed_with_issues", "skipped", "skipped_not_available"})
+_MODULE_BATCH_CONFIG_KEYS = {
+    "caption": "caption",
+    "classify": "classify",
+    "replace": "replace",
+    "ocr": "ocr",
+    "nl": "nl",
+    "count_review": "countReview",
+    "dropout": "dropout",
+    "token_budget": "tokenBudget",
+    "export": "export",
+}
 
 
 @dataclass(frozen=True)
@@ -26,11 +45,11 @@ MODULE_QUEUE_LIMITS: dict[str, ModuleQueueLimits] = {
     "caption": ModuleQueueLimits(lease_batch_size=64, max_resident_pages=1, max_prefetch=64),
     "classify": ModuleQueueLimits(lease_batch_size=500, max_resident_pages=2),
     "replace": ModuleQueueLimits(lease_batch_size=500, max_resident_pages=2),
-    "ocr": ModuleQueueLimits(lease_batch_size=1, max_resident_pages=1),
-    "nl": ModuleQueueLimits(lease_batch_size=32, max_resident_pages=1),
+    "ocr": ModuleQueueLimits(lease_batch_size=1024, max_resident_pages=1),
+    "nl": ModuleQueueLimits(lease_batch_size=16, max_resident_pages=1),
     "count_review": ModuleQueueLimits(lease_batch_size=500, max_resident_pages=1),
     "dropout": ModuleQueueLimits(lease_batch_size=16, max_resident_pages=1, max_prefetch=16),
-    "token_budget": ModuleQueueLimits(lease_batch_size=32, max_resident_pages=1),
+    "token_budget": ModuleQueueLimits(lease_batch_size=500, max_resident_pages=1),
     "export": ModuleQueueLimits(lease_batch_size=500, max_resident_pages=2),
 }
 
@@ -67,26 +86,39 @@ class BoundedScheduler:
         return min(2 * concurrency, 32)
 
     @staticmethod
-    def _nl_concurrency(job: object) -> int:
+    def _require_v10_config(job: object) -> dict[str, object]:
         try:
             config = json.loads(job["config_json"])  # type: ignore[index]
-            policy = config["nl"].get("apiPolicy") or {}
-            concurrency = policy.get("concurrency", 3)
+            schema_version = job["config_schema_version"]  # type: ignore[index]
         except (KeyError, TypeError, json.JSONDecodeError) as exc:
-            raise SchedulerError("frozen NL configuration is invalid") from exc
-        if type(concurrency) is not int or not 1 <= concurrency <= 16:
-            raise SchedulerError("frozen NL concurrency must be between 1 and 16")
-        return concurrency
+            raise SchedulerError("frozen JobConfig is invalid") from exc
+        if not isinstance(config, dict):
+            raise SchedulerError("frozen JobConfig is invalid")
+        if config.get("schemaVersion") != CURRENT_JOB_CONFIG_SCHEMA_VERSION or schema_version != CURRENT_JOB_CONFIG_SCHEMA_VERSION:
+            raise SchedulerError(
+                "legacy JobConfig is incompatible; reinitialize the state database and create a new task"
+            )
+        batches = config.get("moduleBatchSize")
+        if not isinstance(batches, dict) or set(batches) != set(MODULE_BATCH_SIZE_BOUNDS):
+            raise SchedulerError("frozen JobConfig moduleBatchSize is invalid")
+        for key, (minimum, maximum) in MODULE_BATCH_SIZE_BOUNDS.items():
+            value = batches[key]
+            if type(value) is not int or not minimum <= value <= maximum:
+                raise SchedulerError("frozen JobConfig moduleBatchSize is invalid")
+        return config
 
-    @staticmethod
-    def _dropout_batch_size(job: object) -> int:
-        try:
-            config = json.loads(job["config_json"])  # type: ignore[index]
-            batch_size = config["dropout"]["quality"]["batchSize"]
-        except (KeyError, TypeError, json.JSONDecodeError) as exc:
-            raise SchedulerError("frozen policy configuration is invalid") from exc
-        if type(batch_size) is not int or not 1 <= batch_size <= 16:
-            raise SchedulerError("frozen policy batch size must be between 1 and 16")
+    @classmethod
+    def _frozen_module_batch_size(cls, job: object, module_id: ModuleId) -> int:
+        """Read the immutable v10 per-round batch size without rewriting it."""
+        config = cls._require_v10_config(job)
+        batches = config.get("moduleBatchSize")
+        key = _MODULE_BATCH_CONFIG_KEYS[module_id]
+        bounds = MODULE_BATCH_SIZE_BOUNDS.get(key)
+        if not isinstance(batches, dict) or bounds is None:
+            raise SchedulerError(f"frozen {module_id} moduleBatchSize is invalid")
+        batch_size = batches.get(key)
+        if type(batch_size) is not int or not bounds[0] <= batch_size <= bounds[1]:
+            raise SchedulerError(f"frozen {module_id} moduleBatchSize is invalid")
         return batch_size
 
     def _assert_module_order(self, job_id: str, module_id: ModuleId) -> None:
@@ -160,6 +192,7 @@ class BoundedScheduler:
         profile: str | None = None,
     ) -> str:
         job = self.database.get_job(job_id)
+        self._require_v10_config(job)
         allowed_job_states = {"ready", "running", "paused", "reviewing", "exporting"}
         if module_id == "caption":
             allowed_job_states.add("preparing_workspace")
@@ -271,15 +304,14 @@ class BoundedScheduler:
         self.reclaim_expired_leases(job_id)
         if job["config_hash"] != config_hash:
             raise SchedulerError("config hash does not match immutable job configuration")
-        maximum = MODULE_QUEUE_LIMITS[module_id].lease_batch_size
-        if module_id == "dropout":
-            maximum = self._dropout_batch_size(job)
-        actual_limit = maximum if limit is None else limit
-        if not 1 <= actual_limit <= maximum:
-            raise SchedulerError(f"{module_id} lease limit must be between 1 and {maximum}")
-        max_in_flight = maximum * MODULE_QUEUE_LIMITS[module_id].max_resident_pages
+        protocol_maximum = MODULE_QUEUE_LIMITS[module_id].lease_batch_size
+        configured_limit = self._frozen_module_batch_size(job, module_id)
+        actual_limit = configured_limit if limit is None else limit
+        if not 1 <= actual_limit <= configured_limit or actual_limit > protocol_maximum:
+            raise SchedulerError(f"{module_id} lease limit must be between 1 and {configured_limit}")
+        max_in_flight = configured_limit * MODULE_QUEUE_LIMITS[module_id].max_resident_pages
         if module_id == "nl":
-            max_in_flight = self.nl_queue_limit(self._nl_concurrency(job))
+            max_in_flight = self.nl_queue_limit(configured_limit)
         try:
             rows = self.database.claim_leases(
                 job_id,
@@ -289,6 +321,7 @@ class BoundedScheduler:
                 limit=actual_limit,
                 max_in_flight=max_in_flight,
                 single_worker=module_id in {"caption", "ocr", "count_review", "dropout"},
+                lease_bound=max(protocol_maximum, max_in_flight),
                 lease_id_factory=self.lease_id_factory,
                 expires_at=_expires_at(self.lease_seconds),
             )

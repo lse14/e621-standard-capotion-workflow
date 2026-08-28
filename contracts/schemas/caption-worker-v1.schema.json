@@ -135,7 +135,7 @@
       "properties": {
         "schemaVersion": {"const": 1},
         "payloadType": {"const": "caption_process_request"},
-        "items": {"type": "array", "minItems": 1, "maxItems": 1, "items": {"$ref": "#/$defs/workItem"}}
+        "items": {"type": "array", "minItems": 1, "maxItems": 64, "items": {"$ref": "#/$defs/workItem"}}
       },
       "additionalProperties": false
     },
@@ -172,6 +172,60 @@
         "retriable": {"type": "boolean"},
         "repairStartModule": {"const": "caption"},
         "message": {"type": "string", "minLength": 1, "maxLength": 1024}
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["schemaVersion", "payloadType", "outcomes"],
+      "properties": {
+        "schemaVersion": {"const": 1},
+        "payloadType": {"const": "caption_process_result"},
+        "outcomes": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "items": {
+            "oneOf": [
+              {
+                "type": "object",
+                "required": ["schemaVersion", "payloadType", "sampleId", "leaseId", "source", "relativeImagePath", "tags", "formattedTxt", "provider", "modelSessionLoads"],
+                "properties": {
+                  "schemaVersion": {"const": 1},
+                  "payloadType": {"const": "caption_result"},
+                  "sampleId": {"type": "integer", "minimum": 1},
+                  "leaseId": {"type": "string", "minLength": 1, "maxLength": 128},
+                  "source": {"enum": ["e621", "danbooru"]},
+                  "relativeImagePath": {"type": "string", "minLength": 1, "maxLength": 16384},
+                  "tags": {"type": "array", "minItems": 1, "maxItems": 1000000, "items": {"$ref": "#/$defs/tag"}},
+                  "formattedTxt": {"type": "string", "minLength": 1, "maxLength": 262144},
+                  "provider": {"type": "string", "minLength": 1, "maxLength": 64},
+                  "modelSessionLoads": {"const": 1}
+                },
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "required": ["schemaVersion", "payloadType", "sampleId", "leaseId", "source", "relativeImagePath", "code", "severity", "blocking", "retriable", "message"],
+                "properties": {
+                  "schemaVersion": {"const": 1},
+                  "payloadType": {"const": "caption_issue"},
+                  "sampleId": {"type": "integer", "minimum": 1},
+                  "leaseId": {"type": "string", "minLength": 1, "maxLength": 128},
+                  "source": {"enum": ["e621", "danbooru"]},
+                  "relativeImagePath": {"type": "string", "minLength": 1, "maxLength": 16384},
+                  "code": {"enum": ["caption_image_decode_failed", "caption_inference_failed", "caption_no_tags"]},
+                  "severity": {"const": "error"},
+                  "blocking": {"const": true},
+                  "retriable": {"type": "boolean"},
+                  "repairStartModule": {"const": "caption"},
+                  "message": {"type": "string", "minLength": 1, "maxLength": 1024}
+                },
+                "additionalProperties": false
+              }
+            ]
+          }
+        }
       },
       "additionalProperties": false
     }

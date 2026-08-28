@@ -107,7 +107,7 @@ def main() -> int:
                 payload = validate_process_payload(request.get("payload"))
                 if worker.hello is None or request.get("jobId") != worker.hello["jobId"] or request.get("configHash") != worker.hello["configHash"]:
                     raise CaptionPayloadError("process envelope does not match initialized job")
-                outcome = worker.process(payload["items"][0])
+                outcomes = worker.process_batch(payload["items"])
             except CaptionSourceFingerprintError as exc:
                 _reply(request, "error", {"code": "caption_source_fingerprint_mismatch"})
                 print(f"caption source fingerprint error: {exc}", file=sys.stderr)
@@ -116,7 +116,11 @@ def main() -> int:
                 _reply(request, "error", {"code": "caption_protocol_violation"})
                 print(f"caption process protocol error: {exc}", file=sys.stderr)
                 return 2
-            _reply(request, "result", outcome)
+            _reply(
+                request,
+                "result",
+                {"schemaVersion": 1, "payloadType": "caption_process_result", "outcomes": outcomes},
+            )
             continue
         _reply(request, "error", {"code": "unsupported_method"})
     return 0

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { Draft } from "../../draft";
 import { FormField, ToggleField, type FieldGuidanceCopy } from "../FormField";
+import { ModuleBatchField } from "../ModuleBatchField";
 import { NlApiTools, NlPromptPresetLibrary } from "../NlApiTools";
 
 type Translate = (key: string, values?: Record<string, string | number>) => string;
@@ -31,7 +32,6 @@ export type NlStepProps = {
   profileHelp: string;
   onNlChange: (patch: Partial<Draft["nl"]>) => void;
   onApiPolicyChange: (patch: Partial<Draft["nl"]["apiPolicy"]>) => void;
-  onConcurrencyChange: (value: string) => void;
   onRequestsPerMinuteChange: (value: string) => void;
   onUnlimitedRpmChange: (enabled: boolean) => void;
   onAttemptBudgetChange: (value: string) => void;
@@ -40,6 +40,10 @@ export type NlStepProps = {
   onSecretChange: (value: string) => void;
   onSaveProfile: () => void;
   onClearSecret: () => void;
+  batchSize: number;
+  batchRecommended?: number;
+  batchReason?: string;
+  onBatchSizeChange: (value: number) => void;
 };
 
 function distributionError(distribution: Draft["nl"]["lengthDistribution"]): boolean {
@@ -50,8 +54,9 @@ function distributionError(distribution: Draft["nl"]["lengthDistribution"]): boo
 
 export function NlStep({
   draft, defaults, taskLocked, attemptBudget, profile, profiles, secret, profileSavePending, credentialDeletePending, t,
-  onNlChange, onApiPolicyChange, onConcurrencyChange, onRequestsPerMinuteChange,
+  onNlChange, onApiPolicyChange, onRequestsPerMinuteChange,
   onUnlimitedRpmChange, onAttemptBudgetChange, onProfileSelect, onProfileChange, onSecretChange, onSaveProfile, onClearSecret, guidanceCopy, profileHelp, diagnosticResetToken,
+  batchSize, batchRecommended, batchReason, onBatchSizeChange,
 }: NlStepProps) {
   const apiDisabled = taskLocked || !draft.nl.enabled || !draft.nl.apiEnabled;
   const apiCollapsed = !draft.nl.enabled || !draft.nl.apiEnabled;
@@ -77,6 +82,7 @@ export function NlStep({
         <ToggleField id="nl-use-image" label={t("useImage")} checked={draft.nl.useImage} disabled={taskLocked || !draft.nl.enabled || !draft.nl.apiEnabled} guidance={{ description: t("fieldHelp_useImage") }} copy={guidanceCopy} onChange={(useImage) => onNlChange({ useImage })} />
         <ToggleField id="nl-use-json" label={t("useJsonContext")} checked={draft.nl.useFullJson} disabled={taskLocked || !draft.nl.enabled || !draft.nl.apiEnabled} guidance={{ description: t("fieldHelp_useJsonContext") }} copy={guidanceCopy} onChange={(useFullJson) => onNlChange({ useFullJson })} />
       </div>
+      <ModuleBatchField id="nl-batch-size" label={t("batchSize")} value={batchSize} defaultValue={3} recommended={batchRecommended} recommendationReason={batchReason} minimum={1} maximum={16} disabled={taskLocked || !draft.nl.enabled} t={t} guidanceCopy={guidanceCopy} onChange={onBatchSizeChange} />
     </section>
 
     <section className="settings-section nl-prompt-section">
@@ -141,9 +147,6 @@ export function NlStep({
             <div className="step-actions"><button disabled={taskLocked || profileSavePending} aria-busy={profileSavePending} type="button" onClick={onSaveProfile}>{t("saveProfile")}</button><button className="secondary" disabled={taskLocked || credentialDeletePending || (!profile.hasCredential && !profile.apiCredentialRef)} aria-busy={credentialDeletePending} type="button" onClick={onClearSecret}>{t("clearKey")}</button></div>
 
             <div className="form-grid nl-request-limits">
-              <FormField label={t("concurrency")} id="nl-concurrency" copy={guidanceCopy} guidance={{ description: t("fieldHelp_concurrency"), defaultValue: String(defaults.nl.apiPolicy.concurrency), range: "1-16" }}>
-                <input id="nl-concurrency" disabled={apiDisabled} type="number" min="1" max="16" step="1" value={draft.nl.apiPolicy.concurrency} onChange={(event) => onConcurrencyChange(event.target.value)} />
-              </FormField>
               <FormField label={t("requestsPerMinute")} id="nl-rpm" copy={guidanceCopy} guidance={{ description: t("fieldHelp_requestsPerMinute"), defaultValue: String(defaults.nl.apiPolicy.maxRequestsPerMinute === "unlimited" ? 60 : defaults.nl.apiPolicy.maxRequestsPerMinute), range: "1-100000" }}>
                 <input id="nl-rpm" disabled={apiDisabled || unlimitedRpm} type="number" min="1" max="100000" step="1" value={unlimitedRpm ? 60 : draft.nl.apiPolicy.maxRequestsPerMinute} onChange={(event) => onRequestsPerMinuteChange(event.target.value)} />
               </FormField>

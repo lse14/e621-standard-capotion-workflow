@@ -449,17 +449,15 @@ class RepairPreparationTests(unittest.TestCase):
                 repair.close()
                 preparation.close()
 
-    def test_v9_repair_preserves_frozen_version_and_inherits_count_evidence(self) -> None:
+    def test_v10_repair_preserves_frozen_version_and_inherits_count_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             dataset = root / "dataset"
             dataset.mkdir()
             Image.new("RGB", (3, 3), "white").save(dataset / "target.png")
             config = JobConfig(
-                profile="e621", workMode="in_place", overwriteMode="incremental",
-                sourceRoot=str(dataset), schemaVersion=9,
+                workMode="in_place", overwriteMode="incremental", sourceRoot=str(dataset),
             )
-            config.nl["promptVersion"] = "nl-default-prompt-v4"
             config.nl["systemPrompt"] = "describe the visible image"
             preparation = JobPreparationService(root / "state.db")
             parent_id = preparation.preflight(config.to_dict()).jobId
@@ -498,7 +496,7 @@ class RepairPreparationTests(unittest.TestCase):
                 try:
                     child = database.get_job(result.repairJobId)
                     self.assertEqual(
-                        (9, parent["config_json"], parent["config_hash"]),
+                        (10, parent["config_json"], parent["config_hash"]),
                         (child["config_schema_version"], child["config_json"], child["config_hash"]),
                     )
                     self.assertEqual(1, database.connection.execute(
@@ -515,7 +513,7 @@ class RepairPreparationTests(unittest.TestCase):
                 repair.close()
                 preparation.close()
 
-    def test_v9_ocr_repair_targets_only_retriable_inference_failures(self) -> None:
+    def test_v10_ocr_repair_targets_only_retriable_inference_failures(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             dataset = root / "dataset"
@@ -523,10 +521,8 @@ class RepairPreparationTests(unittest.TestCase):
             Image.new("RGB", (3, 3), "white").save(dataset / "retry.png")
             Image.new("RGB", (3, 3), "black").save(dataset / "oversize.png")
             config = JobConfig(
-                profile="e621", workMode="in_place", overwriteMode="incremental",
-                sourceRoot=str(dataset), schemaVersion=9,
+                workMode="in_place", overwriteMode="incremental", sourceRoot=str(dataset),
             )
-            config.nl["promptVersion"] = "nl-default-prompt-v4"
             config.caption["enabled"] = config.classify["enabled"] = config.replace["enabled"] = False
             config.nl["enabled"] = config.dropout["enabled"] = False
             config.countReview["enabled"] = False  # type: ignore[index]
@@ -577,7 +573,7 @@ class RepairPreparationTests(unittest.TestCase):
                 repair.close()
                 preparation.close()
 
-    def test_v9_token_budget_issue_repairs_from_token_budget_without_replaying_upstream(self) -> None:
+    def test_v10_token_budget_issue_repairs_from_token_budget_without_replaying_upstream(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             dataset = root / "dataset"
@@ -587,7 +583,7 @@ class RepairPreparationTests(unittest.TestCase):
                 "quality": [], "count": "solo", "character": "", "series": "", "artist": "",
                 "appearance": [], "tags": ["tag"], "environment": [], "nl": "",
             }))
-            config = JobConfig(schemaVersion=9, profile="e621", workMode="in_place", overwriteMode="incremental", sourceRoot=str(dataset))
+            config = JobConfig(workMode="in_place", overwriteMode="incremental", sourceRoot=str(dataset))
             config.caption["enabled"] = config.classify["enabled"] = config.replace["enabled"] = config.ocr["enabled"] = config.nl["enabled"] = config.dropout["enabled"] = False
             config.countReview["enabled"] = False  # type: ignore[index]
             preparation = JobPreparationService(root / "state.db")

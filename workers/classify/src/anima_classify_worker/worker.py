@@ -195,3 +195,7 @@ class ClassifyWorker:
             "outputTagCount": projection.output_tag_count,
             "droppedTagCount": projection.dropped_tag_count,
         }
+
+    def process_batch(self, items: list[dict[str, object]]) -> list[dict[str, object]]:
+        """Reuse initialized resources while preserving item-local outcomes."""
+        return [self.process(item) for item in items]

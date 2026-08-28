@@ -21,6 +21,30 @@ RESOURCE_FINGERPRINT = "3cabbeeffd379a893a0b53d427c3dbb26ea6c587f474ae761b21afde
 
 
 class ReplaceResourceTests(unittest.TestCase):
+    def test_worker_process_batch_reuses_the_loaded_index_and_isolates_item_failures(self) -> None:
+        worker = ReplaceWorker()
+        worker.initialize({
+            "schemaVersion": 1, "payloadType": "replace_hello_request", "jobId": "job-1", "configHash": "a" * 64,
+            "resourceManifestRelativePath": RESOURCE_MANIFEST,
+            "resourceFingerprint": RESOURCE_FINGERPRINT,
+        }, install_root=RESOURCE_ROOT)
+
+        outcomes = worker.process_batch([
+            {
+                "schemaVersion": 1, "sampleId": 1, "leaseId": "lease-1", "source": "e621", "relativeImagePath": "one.png",
+                "projection": {"quality": [], "count": "", "character": "", "series": "", "artist": "", "appearance": [], "tags": ["!"], "environment": [], "nl": ""},
+            },
+            {
+                "schemaVersion": 1, "sampleId": 2, "leaseId": "lease-2", "source": "e621", "relativeImagePath": "two.png",
+                "projection": {},
+            },
+        ])
+
+        self.assertEqual(
+            [("replace_result", 1, "lease-1"), ("replace_issue", 2, "lease-2")],
+            [(outcome["payloadType"], outcome["sampleId"], outcome["leaseId"]) for outcome in outcomes],
+        )
+
     def test_worker_initializes_once_and_processes_without_filesystem_input(self) -> None:
         install = RESOURCE_ROOT
         worker = ReplaceWorker()

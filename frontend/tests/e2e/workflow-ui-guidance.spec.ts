@@ -186,7 +186,7 @@ test.describe("workflow guidance for NL", () => {
       await expect(controls.nth(index).locator("xpath=ancestor::*[@data-setting-field][1]")).toHaveCount(1);
     }
 
-    await page.getByRole("button", { name: "Concurrency information" }).click();
+    await page.getByRole("button", { name: "Batch size information" }).click();
     await expect(page.getByRole("tooltip")).toContainText("Default: 3");
     await expect(page.getByRole("tooltip")).toContainText("Range: 1-16");
     await page.getByRole("button", { name: "Endpoint URL information" }).click();

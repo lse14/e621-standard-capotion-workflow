@@ -13,6 +13,7 @@ CLASSIFY_WIKI_DATA_SOURCE_ID = "e621-wiki-count-20260724-v1"
 MAX_CLASSIFY_TXT_BYTES = 262_144
 MAX_CLASSIFY_TAGS = 16_384
 MAX_CLASSIFY_WARNINGS = 64
+MAX_CLASSIFY_PROCESS_ITEMS = 500
 MAX_PATH_BYTES = 16_384
 COUNT_VALUES = frozenset({"", "solo", "duo", "trio", "group"})
 COUNT_NONEMPTY_VALUES = frozenset({"solo", "duo", "trio", "group"})
@@ -348,7 +349,7 @@ class ClassifyWorkItemV1:
 
 @dataclass(frozen=True)
 class ClassifyProcessRequestV1:
-    item: ClassifyWorkItemV1
+    items: tuple[ClassifyWorkItemV1, ...]
     schemaVersion: Literal[1] = 1
 
     @classmethod
@@ -357,12 +358,25 @@ class ClassifyProcessRequestV1:
         _schema(payload)
         _keys(payload, required={"schemaVersion", "payloadType", "items"})
         items = payload["items"]
-        if payload["payloadType"] != "classify_process_request" or not isinstance(items, list) or len(items) != 1:
-            raise ClassifyProtocolError("classify process v1 requires exactly one item")
-        return cls(ClassifyWorkItemV1.from_dict(items[0]))
+        if (
+            payload["payloadType"] != "classify_process_request"
+            or not isinstance(items, list)
+            or not 1 <= len(items) <= MAX_CLASSIFY_PROCESS_ITEMS
+        ):
+            raise ClassifyProtocolError(
+                f"classify process v1 requires 1..{MAX_CLASSIFY_PROCESS_ITEMS} items"
+            )
+        parsed = tuple(ClassifyWorkItemV1.from_dict(item) for item in items)
+        if len({(item.sampleId, item.leaseId) for item in parsed}) != len(parsed):
+            raise ClassifyProtocolError("classify process items contain duplicate sampleId and leaseId")
+        return cls(parsed)
 
     def to_dict(self) -> dict[str, object]:
-        return {"schemaVersion": 1, "payloadType": "classify_process_request", "items": [self.item.to_dict()]}
+        return {
+            "schemaVersion": 1,
+            "payloadType": "classify_process_request",
+            "items": [item.to_dict() for item in self.items],
+        }
 
 
 @dataclass(frozen=True)
@@ -633,6 +647,38 @@ class ClassifyIssueResultV1:
         return value
 
 
+@dataclass(frozen=True)
+class ClassifyProcessResultV1:
+    outcomes: tuple[ClassifyResultV1 | ClassifyIssueResultV1, ...]
+    schemaVersion: Literal[1] = 1
+
+    @classmethod
+    def from_dict(cls, value: object) -> "ClassifyProcessResultV1":
+        payload = _object(value, "classify process result")
+        _schema(payload)
+        _keys(payload, required={"schemaVersion", "payloadType", "outcomes"})
+        values = payload["outcomes"]
+        if (
+            payload["payloadType"] != "classify_process_result"
+            or not isinstance(values, list)
+            or not 1 <= len(values) <= MAX_CLASSIFY_PROCESS_ITEMS
+        ):
+            raise ClassifyProtocolError(
+                f"classify process result requires 1..{MAX_CLASSIFY_PROCESS_ITEMS} outcomes"
+            )
+        outcomes = tuple(parse_classify_outcome(item) for item in values)
+        if len({(outcome.sampleId, outcome.leaseId) for outcome in outcomes}) != len(outcomes):
+            raise ClassifyProtocolError("classify process outcomes contain duplicate sampleId and leaseId")
+        return cls(outcomes)
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "schemaVersion": 1,
+            "payloadType": "classify_process_result",
+            "outcomes": [outcome.to_dict() for outcome in self.outcomes],
+        }
+
+
 def parse_classify_outcome(value: object) -> ClassifyResultV1 | ClassifyIssueResultV1:
     payload = _object(value, "classify outcome")
     if payload.get("payloadType") == "classify_result":
@@ -653,3 +699,22 @@ def validate_outcome_for_item(
         or outcome.relativeImagePath != item.relativeImagePath
     ):
         raise ClassifyProtocolError("classify outcome does not match the leased work item")
+
+
+def validate_outcomes_for_items(
+    outcomes: tuple[ClassifyResultV1 | ClassifyIssueResultV1, ...],
+    items: tuple[ClassifyWorkItemV1, ...],
+) -> tuple[ClassifyResultV1 | ClassifyIssueResultV1, ...]:
+    by_identity = {(outcome.sampleId, outcome.leaseId): outcome for outcome in outcomes}
+    if len(by_identity) != len(outcomes):
+        raise ClassifyProtocolError("classify process outcomes contain duplicate sampleId and leaseId")
+    if len(by_identity) != len(items):
+        raise ClassifyProtocolError("classify process outcomes do not match the requested item count")
+    ordered: list[ClassifyResultV1 | ClassifyIssueResultV1] = []
+    for item in items:
+        outcome = by_identity.get((item.sampleId, item.leaseId))
+        if outcome is None:
+            raise ClassifyProtocolError("classify process outcomes are missing a requested item")
+        validate_outcome_for_item(outcome, item)
+        ordered.append(outcome)
+    return tuple(ordered)

@@ -47,6 +47,7 @@ from .native_path_picker import NativePathPicker
 from .pipeline import PipelineService
 from .repair import RepairPreparationService
 from .resource_catalog import ResourceCatalog, default_resource_library_root
+from .device_recommendation import DeviceRecommendationService
 
 
 def build_control_app(
@@ -64,6 +65,7 @@ def build_control_app(
     shutdown_token: str | None = None,
     shutdown_callback: Callable[[], None] | None = None,
     native_path_picker: NativePathPicker | None = None,
+    device_recommendation_service: DeviceRecommendationService | None = None,
 ) -> FastAPI:
     """Create a localhost control-plane application from explicit stable stores."""
     database_path = Path(database_path) if database_path is not None else default_state_database_path()
@@ -92,6 +94,7 @@ def build_control_app(
     )
     repair_service = repair_service or RepairPreparationService(database_path)
     native_path_picker = native_path_picker or NativePathPicker()
+    device_recommendation_service = device_recommendation_service or DeviceRecommendationService()
     pipeline_service.startup_recovery()
     context = ControlPlaneContext(
         database_path=database_path,
@@ -103,6 +106,7 @@ def build_control_app(
         pipeline_service=pipeline_service,
         repair_service=repair_service,
         resource_catalog=resource_catalog,
+        device_recommendation_service=device_recommendation_service,
         shutdown_token=shutdown_token,
         shutdown_callback=shutdown_callback,
         native_path_picker=native_path_picker,

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .contracts import COUNT_REVIEW_SCHEMA_VERSIONS
+from .contracts import CURRENT_JOB_CONFIG_SCHEMA_VERSION
 from .count_review_overlay import CountReviewOverlayWriter
 from .count_review_protocol import FINAL_COUNT_VALUES
 from .count_review_service import CountReviewError, CountReviewService
@@ -28,8 +28,8 @@ class CountReviewRunner:
 
     def run(self) -> str:
         job = self.database.get_job(self.job_id)
-        if int(job["config_schema_version"]) not in COUNT_REVIEW_SCHEMA_VERSIONS or job["current_module_id"] != "count_review":
-            raise CountReviewError("count review runner requires an active v3/v4 module")
+        if int(job["config_schema_version"]) != CURRENT_JOB_CONFIG_SCHEMA_VERSION or job["current_module_id"] != "count_review":
+            raise CountReviewError("count review runner requires an active v10 module")
         if job["status"] in {"cancelling", "paused"}:
             return str(job["status"])
         initialized = CountReviewService(self.database, self.job_id).initialize()

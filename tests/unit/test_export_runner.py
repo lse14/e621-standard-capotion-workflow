@@ -1,7 +1,8 @@
 from __future__ import annotations
 import json,sys,tempfile,unittest
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[2];sys.path.insert(0,str(ROOT/'core'/'src'))
+ROOT=Path(__file__).resolve().parents[2];sys.path.insert(0,str(ROOT/'core'/'src'));sys.path.insert(0,str(ROOT/'tests'/'unit'))
+sys.path.insert(0,str(ROOT/'workers'/'export'/'src'))
 from PIL import Image
 from anima_core.classify_overlay import serialize_annotation_json
 from anima_core.contracts import JobConfig,sha256_json
@@ -12,6 +13,9 @@ from anima_core.job_preflight import JobPreparationService
 from anima_core.overlay import BaselineView,OverlayLayout,WorkingAnnotationView
 from anima_core.scheduler import BoundedScheduler
 from anima_core.worker_protocol import ProtocolEnvelopeV1
+from anima_caption_format import serialize_flat_txt
+from anima_caption_format.normalizer import CaptionDisplayPolicy
+from test_job_preflight import _write_test_resource_library
 
 class _Transport:
  def __init__(self,layout,bad=False,conversions=None):self.layout,self.bad,self.conversions,self.requests=layout,bad,conversions,[]
@@ -29,22 +33,48 @@ class _Transport:
    p={'schemaVersion':1,'payloadType':'export_batch_result','outcomes':outcomes};m='result'
   return ProtocolEnvelopeV1('1.0','response','r-'+r.messageId,'export','export',m,p,replyTo=r.messageId,jobId=r.jobId,configHash=r.configHash)
 
+
+class _BatchWorkerTransport:
+ def __init__(self, layout, dataset, caption_format, format_value='both'):
+  self.layout = layout
+  self.dataset = dataset
+  self.caption_format = caption_format
+  self.format_value = format_value
+  self.worker = None
+  self.batch_lengths = []
+ def exchange(self, request):
+  if request.method == 'hello':
+   from anima_export_worker.worker import ExportWorker
+   self.worker = ExportWorker()
+   payload = dict(request.payload)
+   self.worker.initialize(payload)
+   return ProtocolEnvelopeV1('1.0','response','r-'+request.messageId,'export','export','hello',{'schemaVersion':1,'payloadType':'export_hello_result','ready':True},replyTo=request.messageId,jobId=request.jobId,configHash=request.configHash)
+  from anima_export_worker.protocol import parse_process
+  self.batch_lengths.append(len(request.payload['items']))
+  assert self.worker is not None
+  result = self.worker.process(parse_process(request.payload))
+  result['outcomes'] = list(reversed(result['outcomes']))
+  return ProtocolEnvelopeV1('1.0','response','r-'+request.messageId,'export','export','result',result,replyTo=request.messageId,jobId=request.jobId,configHash=request.configHash)
+
 class ExportRunnerTests(unittest.TestCase):
  def _runner(self,root,bad,conversions=None,*,schema_version=None):
   dataset=root/'d';dataset.mkdir();Image.new('RGB',(2,2)).save(dataset/'a.png');(dataset/'a.json').write_bytes(serialize_annotation_json({'quality':[],'count':'solo','character':'','series':'','artist':'','appearance':[],'tags':['ok'],'environment':[],'nl':''}))
   config_kwargs={} if schema_version is None else {'schemaVersion':schema_version}
   cfg=JobConfig(profile='e621',workMode='in_place',overwriteMode='incremental',sourceRoot=str(dataset),recursive=True,**config_kwargs);cfg.caption['enabled']=cfg.replace['enabled']=cfg.nl['enabled']=cfg.dropout['enabled']=False;cfg.classify['enabled']=True;cfg.export['format']='json';cfg.tokenBudget['enabled']=False
-  prep=JobPreparationService(root/'s.db');job=prep.preflight(cfg.to_dict()).jobId;prep.confirm_workspace(job,confirmed=True,confirmed_rebuild=False);db=StateDatabase.open(root/'s.db')
-  if schema_version==9:
-   frozen=json.loads(str(db.get_job(job)['config_json']));frozen['tokenBudget'].update({'enabled':True,'resourceManifestRelativePath':r'tokenizers\tokenizer-qwen3-0.6b-anima-v1\resource.json','resourceFingerprint':'a'*64,'contextLimit':512});db.connection.execute('UPDATE jobs SET config_json=?,config_hash=? WHERE job_id=?',(json.dumps(frozen),sha256_json(frozen),job))
+  catalog, _ = _write_test_resource_library(root, include_ocr=False)
+  cfg.caption['resourceId']='tagger-default'; cfg.classify['resourceId']='classify-default'; cfg.replace['resourceId']='replace-default'; cfg.dropout['quality']['resourceId']='dropout-default'
+  prep=JobPreparationService(root/'s.db', resource_catalog=catalog);job=prep.preflight(cfg.to_dict()).jobId;prep.confirm_workspace(job,confirmed=True,confirmed_rebuild=False);db=StateDatabase.open(root/'s.db')
   sch=BoundedScheduler(db)
   for m in ('caption','classify','replace') + (('ocr',) if schema_version in {7,8,9} or schema_version is None else ()) + ('nl','count_review','dropout') + (('token_budget',) if schema_version in {7,8,9} or schema_version is None else ()):sch.start_module(job,m,enabled=False,profile='e621')
   sch.start_module(job,'export',enabled=True,profile='e621');layout=OverlayLayout.open_existing(str(db.get_job(job)['overlay_root']),job)
   return db,prep,job,ExportRunner(db,sch,_Transport(layout,bad,conversions),WorkingAnnotationView(BaselineView(dataset),layout),job_id=job,worker_instance_id='e')
- def test_v9_enabled_token_budget_blocks_export_before_transport_without_a_frozen_record(self):
+ def test_v10_enabled_token_budget_blocks_export_before_transport_without_a_frozen_record(self):
   with tempfile.TemporaryDirectory() as t:
-   db,p,j,r=self._runner(Path(t),False,schema_version=9)
+   db,p,j,r=self._runner(Path(t),False)
    try:
+    frozen=json.loads(str(db.get_job(j)['config_json']))
+    frozen['tokenBudget']={'enabled':True,'maxTokens':128,'resourceId':'tokenizer-test','resourceManifestRelativePath':r'tokenizers\tokenizer-test\resource.json','resourceFingerprint':'a'*64,'contextLimit':512}
+    db.connection.execute('UPDATE jobs SET config_json=?,config_hash=? WHERE job_id=?',(json.dumps(frozen),sha256_json(frozen),j))
     with self.assertRaisesRegex(ExportRunnerError,'Token Budget gate'):
      r.run()
     self.assertEqual([],r.transport.requests)
@@ -102,3 +132,43 @@ class ExportRunnerTests(unittest.TestCase):
     self.assertEqual(sidecar,r.view.overlay.ocr_sidecar_path('a.png').read_bytes())
     self.assertEqual([],list(r.view.overlay.root.glob('annotations/ocr_annotations/*')))
    finally:db.close();p.close()
+
+ def test_v10_export_claims_a_configured_batch_and_preserves_shared_txt_bytes(self):
+  for layout_name in ('single_line', 'nl_newline'):
+   with self.subTest(layout=layout_name), tempfile.TemporaryDirectory() as t:
+    root=Path(t)
+    dataset=root/'d'; dataset.mkdir()
+    source={'quality':[],'count':'solo','character':'Hero','series':'Series','artist':'','appearance':['blue_eyes'],'tags':['smile'],'environment':[],'nl':'Hero smiles.'}
+    for name in ('a','b'):
+     Image.new('RGB',(2,2)).save(dataset/f'{name}.png')
+     (dataset/f'{name}.json').write_bytes(serialize_annotation_json(source))
+    cfg=JobConfig(profile='e621',workMode='in_place',overwriteMode='incremental',sourceRoot=str(dataset),recursive=True)
+    cfg.caption['enabled']=cfg.replace['enabled']=cfg.nl['enabled']=cfg.dropout['enabled']=False
+    cfg.classify['enabled']=True; cfg.export['format']='both'; cfg.tokenBudget['enabled']=False
+    cfg.moduleBatchSize['export']=2
+    catalog, _ = _write_test_resource_library(root, include_ocr=False)
+    cfg.caption['resourceId']='tagger-default'; cfg.classify['resourceId']='classify-default'; cfg.replace['resourceId']='replace-default'; cfg.dropout['quality']['resourceId']='dropout-default'
+    prep=JobPreparationService(root/'s.db', resource_catalog=catalog); job=prep.preflight(cfg.to_dict()).jobId
+    prep.confirm_workspace(job,confirmed=True,confirmed_rebuild=False); db=StateDatabase.open(root/'s.db')
+    try:
+     sch=BoundedScheduler(db,lease_id_factory=iter(('lease-a','lease-b')).__next__)
+     for m in ('caption','classify','replace','ocr','nl','count_review','dropout','token_budget'): sch.start_module(job,m,enabled=False,profile='e621')
+     sch.start_module(job,'export',enabled=True,profile='e621')
+     overlay=OverlayLayout.open_existing(str(db.get_job(job)['overlay_root']),job)
+     frozen=json.loads(str(db.get_job(job)['config_json']))
+     frozen['captionFormat']['flatTxtLayout']=layout_name
+     # Keep the runner's immutable hash contract intact after changing only the test fixture.
+     frozen_hash=sha256_json(frozen)
+     db.connection.execute('UPDATE jobs SET config_json=?,config_hash=? WHERE job_id=?',(json.dumps(frozen),frozen_hash,job))
+     transport=_BatchWorkerTransport(overlay,dataset,frozen['captionFormat'])
+     runner=ExportRunner(db,sch,transport,WorkingAnnotationView(BaselineView(dataset),overlay),job_id=job,worker_instance_id='e')
+     self.assertEqual('completed',runner.run())
+     self.assertEqual([2],transport.batch_lengths)
+     self.assertEqual([2], [int(row['completed']) for row in [db.module_summary(job,'export')]])
+     policy=CaptionDisplayPolicy.from_mapping(frozen['captionFormat'])
+     expected=serialize_flat_txt(source,policy)
+     for lease in ('lease-a','lease-b'):
+      staged=overlay.root/'prepared'/'export'/f'{lease}.txt'
+      self.assertEqual(expected, staged.read_bytes())
+    finally:
+     db.close(); prep.close()

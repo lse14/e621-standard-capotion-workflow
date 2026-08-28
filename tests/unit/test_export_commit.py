@@ -70,7 +70,7 @@ class ExportCommitTests(unittest.TestCase):
             annotation = Path(image_name).with_suffix("")
             (dataset / f"{annotation}.json").write_bytes(b'{"legacy":true}\n')
             (dataset / f"{annotation}.txt").write_bytes(b"legacy\n")
-        config = JobConfig(workMode="in_place", overwriteMode="incremental", sourceRoot=str(dataset), recursive=True, schemaVersion=9)
+        config = JobConfig(workMode="in_place", overwriteMode="incremental", sourceRoot=str(dataset), recursive=True, schemaVersion=10)
         config.caption["enabled"] = config.classify["enabled"] = config.replace["enabled"] = config.nl["enabled"] = config.dropout["enabled"] = False
         config.ocr["enabled"] = ocr_enabled
         config.countReview["enabled"] = False  # type: ignore[index]

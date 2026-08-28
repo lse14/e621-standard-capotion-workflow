@@ -648,6 +648,35 @@ class CaptionProcessingTests(unittest.TestCase):
             with self.assertRaises(CaptionSourceFingerprintError):
                 worker.process(changed)
 
+    def test_worker_process_batch_keeps_individual_decode_failures_isolated(self) -> None:
+        from PIL import Image
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            good = root / "good.png"
+            bad = root / "bad.png"
+            Image.new("RGB", (8, 8), "red").save(good)
+            bad.write_bytes(b"not an image")
+            good_item = _work_item(good, "png")
+            bad_item = _work_item(bad, "png")
+            bad_item.update({"sampleId": 2, "leaseId": "lease-2", "relativeImagePath": "bad.png", "annotationKey": "bad"})
+            worker = _ready_worker(
+                root,
+                _WorkerModel((CaptionPrediction("blue_eyes", 0.9, "general", 0),)),
+            )
+
+            process_batch = getattr(worker, "process_batch", None)
+            self.assertIsNotNone(process_batch, "CaptionWorker must expose a multi-item process_batch API")
+            assert process_batch is not None
+            outcomes = [parse_caption_outcome(value) for value in process_batch([good_item, bad_item])]
+
+            self.assertIsInstance(outcomes[0], CaptionResultV1)
+            self.assertIsInstance(outcomes[1], CaptionIssueResultV1)
+            self.assertEqual((1, "lease-1"), (outcomes[0].sampleId, outcomes[0].leaseId))
+            self.assertEqual((2, "lease-2", "caption_image_decode_failed"), (
+                outcomes[1].sampleId, outcomes[1].leaseId, outcomes[1].code,
+            ))
+
 
 if __name__ == "__main__":
     unittest.main()

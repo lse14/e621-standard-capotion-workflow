@@ -1,10 +1,16 @@
 from __future__ import annotations
 
+import json
 import os
 import re
 from dataclasses import dataclass
 
+from anima_caption_format import serialize_flat_txt
+from anima_caption_format.flat_txt import FlatTextSerializationError
+from anima_caption_format.normalizer import CaptionDisplayPolicy
+
 from .caption_protocol import CaptionResultV1, CaptionWorkItemV1
+from .contracts import CURRENT_JOB_CONFIG_SCHEMA_VERSION, sha256_json
 from .db import StateDatabase
 from .overlay import OverlayError, OverlayLayout
 from .path_safety import safe_relative_path, sha256_file, windows_paths_equal
@@ -49,9 +55,27 @@ class CaptionOverlayWriter:
             or result.relativeImagePath != item.relativeImagePath
         ):
             raise OverlayError("caption result does not match its prepared work item")
-        data = result.formattedTxt.encode("utf-8")
-        if not data or data.startswith(b"\xef\xbb\xbf") or b"\r" in data or b"\n" in data:
-            raise OverlayError("caption TXT must be non-empty UTF-8 without BOM or line breaks")
+        try:
+            job = self.database.get_job(self.job_id)
+            config = json.loads(str(job["config_json"]))
+            if (
+                not isinstance(config, dict)
+                or config.get("schemaVersion") != CURRENT_JOB_CONFIG_SCHEMA_VERSION
+                or int(job["config_schema_version"]) != CURRENT_JOB_CONFIG_SCHEMA_VERSION
+                or not isinstance(job["config_hash"], str)
+                or sha256_json(config) != job["config_hash"]
+                or not isinstance(config.get("captionFormat"), dict)
+            ):
+                raise ValueError("frozen caption configuration is invalid")
+            policy = CaptionDisplayPolicy.from_mapping(config["captionFormat"])
+            data = serialize_flat_txt({
+                "quality": [], "count": "", "character": "", "series": "", "artist": "",
+                "appearance": [], "tags": [tag.rawTag for tag in result.tags], "environment": [], "nl": "",
+            }, policy)
+        except (FlatTextSerializationError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise OverlayError("caption TXT serialization is invalid") from exc
+        if not data or data.startswith(b"\xef\xbb\xbf") or b"\r" in data or data.endswith(b"\n"):
+            raise OverlayError("caption TXT must be non-empty UTF-8 with LF-only layout and no terminal newline")
         prepared, digest = self.layout.write_prepared("caption", item.leaseId, ".txt", data)
         relative = os.path.relpath(prepared, self.layout.root).replace("/", "\\")
         self.database.stage_prepared_artifact(

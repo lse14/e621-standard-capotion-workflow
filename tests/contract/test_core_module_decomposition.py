@@ -89,12 +89,18 @@ API_REQUEST_MODELS = frozenset({
     "_SecretBody", "_ShutdownBody", "_TokenBudgetApplyBody", "_TokenBudgetRecountBody",
     "_TokenBudgetRewriteShortBody", "_WorkspaceBody",
 })
-API_MODEL_CLASSES = API_REQUEST_MODELS | frozenset({"CreateJobRequest", "SelectPathRequest"})
+API_MODEL_CLASSES = API_REQUEST_MODELS | frozenset({
+    "CreateJobRequest",
+    "DeviceRecommendationGpu",
+    "DeviceRecommendationResponse",
+    "SelectPathRequest",
+})
 
 API_APPLICATION_ROUTES = frozenset({
     ("GET", "/health"),
     ("GET", "/api/health"),
     ("GET", "/api/resources"),
+    ("GET", "/api/application/device-recommendations"),
     ("POST", "/api/jobs/{job_id}/policy/pause"),
     ("POST", "/api/jobs/{job_id}/policy/resume"),
     ("POST", "/api/application/select-path"),

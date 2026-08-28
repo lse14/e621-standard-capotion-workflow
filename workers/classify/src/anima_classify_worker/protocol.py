@@ -9,6 +9,7 @@ SCHEMA_VERSION = 1
 WIKI_DATA_SOURCE_ID = "e621-wiki-count-20260724-v1"
 MAX_TXT_BYTES = 262_144
 MAX_PATH_BYTES = 16_384
+MAX_PROCESS_ITEMS = 500
 IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
@@ -180,6 +181,13 @@ def validate_process_payload(value: object) -> dict[str, object]:
     _schema(item)
     _keys(item, {"schemaVersion", "payloadType", "items"})
     items = item["items"]
-    if item["payloadType"] != "classify_process_request" or not isinstance(items, list) or len(items) != 1:
-        raise ClassifyPayloadError("classify process v1 requires exactly one item")
-    return {"schemaVersion": 1, "payloadType": "classify_process_request", "items": [validate_work_item(items[0])]}
+    if (
+        item["payloadType"] != "classify_process_request"
+        or not isinstance(items, list)
+        or not 1 <= len(items) <= MAX_PROCESS_ITEMS
+    ):
+        raise ClassifyPayloadError(f"classify process v1 requires 1..{MAX_PROCESS_ITEMS} items")
+    parsed = [validate_work_item(value) for value in items]
+    if len({(int(value["sampleId"]), str(value["leaseId"])) for value in parsed}) != len(parsed):
+        raise ClassifyPayloadError("classify process items contain duplicate sampleId and leaseId")
+    return {"schemaVersion": 1, "payloadType": "classify_process_request", "items": parsed}

@@ -50,6 +50,7 @@ class ReplaceTransport:
         self.direction_conflicts = direction_conflicts
         self.hello_requests = 0
         self.process_requests = 0
+        self.batch_sizes: list[int] = []
 
     @staticmethod
     def _response(request: ProtocolEnvelopeV1, method: str, payload: dict[str, object]) -> ProtocolEnvelopeV1:
@@ -68,14 +69,52 @@ class ReplaceTransport:
                 "keepNonCanonical": self.keep_non_canonical, "canonicalDirectionConflict": self.direction_conflicts,
             })
         self.process_requests += 1
-        item = request.payload["items"][0]
+        items = request.payload["items"]
+        assert isinstance(items, list)
+        self.batch_sizes.append(len(items))
         if self.cancel_after_first and self.process_requests == 1 and self.database is not None:
             self.database.begin_cancellation(str(request.jobId))
         return self._response(request, "result", {
-            "schemaVersion": 1, "payloadType": "replace_result", "sampleId": item["sampleId"],
-            "leaseId": item["leaseId"], "source": "e621", "relativeImagePath": item["relativeImagePath"],
-            "projection": _projection("exclamation_point"), "replaced": 1, "dropped": 0, "passthrough": 1,
-            "keepRewritten": 2,
+            "schemaVersion": 1, "payloadType": "replace_process_result", "outcomes": [{
+                "schemaVersion": 1, "payloadType": "replace_result", "sampleId": item["sampleId"],
+                "leaseId": item["leaseId"], "source": "e621", "relativeImagePath": item["relativeImagePath"],
+                "projection": _projection("exclamation_point"), "replaced": 1, "dropped": 0, "passthrough": 1,
+                "keepRewritten": 2,
+            } for item in items],
+        })
+
+
+class BatchReplaceTransport(ReplaceTransport):
+    def __init__(self) -> None:
+        super().__init__()
+        self.batch_sizes: list[int] = []
+
+    def exchange(self, request: ProtocolEnvelopeV1) -> ProtocolEnvelopeV1:
+        if request.method == "hello":
+            return super().exchange(request)
+        self.process_requests += 1
+        items = request.payload["items"]
+        assert isinstance(items, list)
+        self.batch_sizes.append(len(items))
+        outcomes: list[dict[str, object]] = []
+        for item in reversed(items):
+            assert isinstance(item, dict)
+            if item["sampleId"] == 2:
+                outcomes.append({
+                    "schemaVersion": 1, "payloadType": "replace_issue", "sampleId": item["sampleId"],
+                    "leaseId": item["leaseId"], "source": "e621", "relativeImagePath": item["relativeImagePath"],
+                    "code": "replace_json_invalid", "severity": "error", "blocking": True, "retriable": False,
+                    "message": "projection rejected",
+                })
+            else:
+                outcomes.append({
+                    "schemaVersion": 1, "payloadType": "replace_result", "sampleId": item["sampleId"],
+                    "leaseId": item["leaseId"], "source": "e621", "relativeImagePath": item["relativeImagePath"],
+                    "projection": _projection("exclamation_point"), "replaced": 1, "dropped": 0,
+                    "passthrough": 1, "keepRewritten": 2,
+                })
+        return self._response(request, "result", {
+            "schemaVersion": 1, "payloadType": "replace_process_result", "outcomes": outcomes,
         })
 
 
@@ -134,6 +173,25 @@ class ReplaceRunnerFixture:
 
 
 class ReplaceRunnerTests(unittest.TestCase):
+    def test_v10_runner_sends_one_batch_and_settles_shuffled_item_outcomes(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = ReplaceRunnerFixture(Path(temporary), 3)
+            try:
+                fixture.config.moduleBatchSize["replace"] = 3
+                fixture.database.connection.execute(
+                    "UPDATE jobs SET config_json=?, config_hash=? WHERE job_id=?",
+                    (json.dumps(fixture.config.to_dict()), fixture.config.config_hash, "job-replace-runner"),
+                )
+                transport = BatchReplaceTransport()
+
+                self.assertEqual("completed_with_issues", fixture.runner(transport).run())
+                self.assertEqual([3], transport.batch_sizes)
+                self.assertEqual("failed", fixture.database.get_sample_state("job-replace-runner", 2)["status"])
+                self.assertEqual("completed", fixture.database.get_sample_state("job-replace-runner", 3)["status"])
+                self.assertEqual(0, fixture.database.count_in_flight("job-replace-runner"))
+            finally:
+                fixture.close()
+
     def test_runner_processes_500_leases_with_overlay_only_and_aggregate_info(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             fixture = ReplaceRunnerFixture(Path(temporary), 500)
@@ -141,7 +199,8 @@ class ReplaceRunnerTests(unittest.TestCase):
             try:
                 transport = ReplaceTransport()
                 self.assertEqual("completed", fixture.runner(transport).run())
-                self.assertEqual((1, 500), (transport.hello_requests, transport.process_requests))
+                self.assertEqual((1, 4), (transport.hello_requests, transport.process_requests))
+                self.assertEqual([128, 128, 128, 116], transport.batch_sizes)
                 self.assertEqual(before, {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in fixture.dataset.glob("*")})
                 self.assertEqual("completed", fixture.database.get_sample_state("job-replace-runner", 500)["status"])
                 self.assertEqual("exclamation_point", json.loads(fixture.layout.annotation_path("sample-0500", ".json").read_text(encoding="utf-8"))["tags"][0])
@@ -170,6 +229,11 @@ class ReplaceRunnerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             fixture = ReplaceRunnerFixture(Path(temporary), 3)
             try:
+                fixture.config.moduleBatchSize["replace"] = 1
+                fixture.database.connection.execute(
+                    "UPDATE jobs SET config_json=?, config_hash=? WHERE job_id=?",
+                    (json.dumps(fixture.config.to_dict()), fixture.config.config_hash, "job-replace-runner"),
+                )
                 transport = ReplaceTransport(fixture.database, cancel_after_first=True)
                 self.assertEqual("cancelling", fixture.runner(transport).run())
                 self.assertEqual(1, transport.process_requests)

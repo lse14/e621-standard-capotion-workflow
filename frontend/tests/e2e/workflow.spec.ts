@@ -9,13 +9,14 @@ import {
 
 function expectedE621Draft(sourceRoot: string, systemPrompt: string): Record<string, unknown> {
   return {
-    schemaVersion: 9,
+    schemaVersion: 10,
+    moduleBatchSize: { caption: 4, classify: 128, replace: 128, ocr: 4, nl: 3, countReview: 100, dropout: 4, tokenBudget: 128, export: 500 },
     workMode: "in_place",
     overwriteMode: "incremental",
     sourceRoot,
     annotationBackup: "required",
     recursive: false,
-    captionFormat: { replaceUnderscoresWithSpaces: true, preserveEscapes: true, triggersEnabled: false, triggerTerms: [] },
+    captionFormat: { flatTxtLayout: "nl_newline", replaceUnderscoresWithSpaces: true, preserveEscapes: true, triggersEnabled: false, triggerTerms: [] },
     imageDecode: {
       extensions: [".jpg", ".jpeg", ".png", ".webp", ".bmp"],
       rejectMultiFrame: true,
@@ -58,7 +59,7 @@ function expectedE621Draft(sourceRoot: string, systemPrompt: string): Record<str
       lengthDistribution: { short: 33, medium: 34, long: 33 },
       lengthSeed: "anima-nl-length-v1",
       apiProfileId: "default",
-      apiPolicy: { concurrency: 3, maxRequestsPerMinute: 60, backupEnabled: false },
+      apiPolicy: { maxRequestsPerMinute: 60, backupEnabled: false },
     },
     countReview: { enabled: true, protocolVersion: "count-review-v1" },
     dropout: {
@@ -86,6 +87,66 @@ function expectedE621Draft(sourceRoot: string, systemPrompt: string): Record<str
 }
 
 test.describe("workflow characterization", () => {
+  test("exposes v10 batch controls and the default NL-newline layout", async ({ page }) => {
+    await openApp(page, { language: "en" });
+    await expect(page.getByRole("button", { name: "Recommend from device", exact: true })).toBeVisible();
+    const moduleControls: Array<[RegExp, string]> = [
+      [/Caption/, "caption-batch-size"], [/Classify/, "classify-batch-size"], [/Replace/, "replace-batch-size"],
+      [/OCR/, "ocr-batch-size"], [/NL/, "nl-batch-size"], [/Count Review/, "count-review-batch-size"],
+      [/Dropout/, "dropout-batch-size"], [/Token Budget/, "token-budget-batch-size"], [/Export/, "export-batch-size"],
+    ];
+    for (const [stepName, controlId] of moduleControls) {
+      await page.locator(".workflow-rail").getByRole("button", { name: stepName }).click();
+      await expect(page.locator(`#${controlId}`)).toBeVisible();
+    }
+    const layout = page.getByLabel("Flat TXT layout", { exact: true });
+    await expect(layout).toHaveValue("nl_newline");
+    await layout.selectOption("single_line");
+    await expect(layout).toHaveValue("single_line");
+  });
+
+  test("fills module recommendations once, keeps manual overrides, and protects values on probe failure", async ({ page, api }) => {
+    await openApp(page, { language: "en" });
+    const recommend = page.getByRole("button", { name: "Recommend from device", exact: true });
+    await recommend.click();
+    await expect.poll(() => api.recommendationRequests).toBe(1);
+    await page.locator(".workflow-rail").getByRole("button", { name: /Caption/ }).click();
+    await page.locator("#caption-batch-size").fill("10");
+    await page.locator("#caption-batch-size").press("Tab");
+    await expect(page.locator("#caption-batch-size")).toHaveValue("10");
+    await expect(page.getByRole("alert").filter({ hasText: "above the device recommendation" })).toBeVisible();
+
+    failRoute(api, "GET /api/application/device-recommendations", "device probe unavailable", 503);
+    await recommend.click();
+    await expect(page.getByRole("alert").filter({ hasText: "device probe unavailable" })).toBeVisible();
+    await expect(page.locator("#caption-batch-size")).toHaveValue("10");
+  });
+
+  test("keeps closed module batch controls disabled while retaining their draft values", async ({ page }) => {
+    await openApp(page, { language: "en" });
+    await page.locator(".workflow-rail").getByRole("button", { name: /OCR/ }).click();
+    const batch = page.locator("#ocr-batch-size");
+    await expect(batch).toHaveValue("4");
+    await expect(batch).toBeDisabled();
+    await page.locator(".workflow-rail").getByRole("button", { name: /Dropout/ }).click();
+    await expect(page.locator("#dropout-batch-size")).toHaveValue("4");
+    await expect(page.locator("#dropout-batch-size")).toBeDisabled();
+  });
+
+  test("locks every module batch control after workspace confirmation", async ({ page }) => {
+    await openApp(page, { language: "en" });
+    await page.getByRole("textbox", { name: "Source dataset", exact: true }).fill("E:\\datasets\\batch-lock");
+    await page.getByRole("button", { name: "Preflight", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Confirm workspace" })).toBeEnabled();
+    page.once("dialog", (dialog) => dialog.accept());
+    await page.getByRole("button", { name: "Confirm workspace" }).click();
+    await page.locator(".workflow-rail").getByRole("button", { name: /Caption/ }).click();
+    await expect(page.locator("#caption-batch-size")).toBeDisabled();
+    await page.locator(".workflow-rail").getByRole("button", { name: /Export/ }).click();
+    await expect(page.locator("#export-batch-size")).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Recommend from device", exact: true })).toBeDisabled();
+  });
+
   test("keeps the E621 Draft shape through preflight, workspace confirmation, and start", async ({ page, api }) => {
     const sourceRoot = "E:\\datasets\\e621-characterization";
     await openApp(page, { language: "en" });
@@ -121,7 +182,7 @@ test.describe("workflow characterization", () => {
     await expect.poll(() => mutationsFor(api, "POST", "/api/jobs/job-e621-characterization/start").length).toBe(1);
   });
 
-  test("lets Caption choose v9 TXT input handling and sends the selected mode", async ({ page, api }) => {
+  test("lets Caption choose v10 TXT input handling and sends the selected mode", async ({ page, api }) => {
     await openApp(page, { language: "en" });
     await page.locator(".workflow-rail").getByRole("button", { name: /Caption/ }).click();
 
@@ -166,7 +227,7 @@ test.describe("workflow characterization", () => {
     await expect(page.getByRole("tooltip").filter({ hasText: "重新创建任务运行" })).toBeVisible();
   });
 
-  test("keeps OCR and NL independent while sending the exact v9 OCR request object", async ({ page, api }) => {
+  test("keeps OCR and NL independent while sending the exact v10 OCR request object", async ({ page, api }) => {
     await openApp(page, { language: "en" });
     await page.locator(".workflow-rail").getByRole("button", { name: /OCR/ }).click();
     const enableOcr = page.getByRole("checkbox", { name: "Enable OCR" });
@@ -180,8 +241,8 @@ test.describe("workflow characterization", () => {
     await expect(device).toHaveValue("auto");
     await expect(page.getByLabel("Automatic detection limit")).toBeChecked();
     await expect(page.getByLabel("Automatic text batch")).toBeChecked();
-    await expect(page.getByRole("spinbutton").nth(1)).toBeDisabled();
-    await expect(page.getByRole("spinbutton").nth(2)).toBeDisabled();
+    await expect(page.getByLabel("OCR detection limit", { exact: true })).toBeDisabled();
+    await expect(page.getByLabel("OCR text batch", { exact: true })).toBeDisabled();
     await confidence.fill("1.4");
     await confidence.press("Tab");
     await expect(confidence).toHaveValue("1");
@@ -193,7 +254,7 @@ test.describe("workflow characterization", () => {
     await expect.poll(() => mutationsFor(api, "POST", "/api/jobs/preflight").length).toBe(1);
     const config = (mutationsFor(api, "POST", "/api/jobs/preflight")[0].body as { config: Record<string, unknown> }).config;
     expect(mutationsFor(api, "POST", "/api/jobs/preflight")[0].body).toMatchObject({
-      config: { schemaVersion: 9, ocr: { enabled: true, device: "auto", llmMinConfidence: 1, forceReprocess: false, resourceId: "ocr-ppocrv5-server-paddle-v1" } },
+      config: { schemaVersion: 10, ocr: { enabled: true, device: "auto", llmMinConfidence: 1, forceReprocess: false, resourceId: "ocr-ppocrv5-server-paddle-v1" } },
       ocrExecution: {
         textDetLimitSideLen: { mode: "auto", value: null },
         textBatchSize: { mode: "auto", value: null },
@@ -217,13 +278,13 @@ test.describe("workflow characterization", () => {
     await expect(page.getByRole("checkbox", { name: "Enable OCR" })).toBeDisabled();
   });
 
-  test("creates v9 tasks with independent E621 defaults", async ({ page, api }) => {
+  test("creates v10 tasks with independent E621 defaults", async ({ page, api }) => {
     await openApp(page, { language: "en" });
-    await page.getByRole("textbox", { name: "Source dataset", exact: true }).fill("E:\\datasets\\e621-v9");
+    await page.getByRole("textbox", { name: "Source dataset", exact: true }).fill("E:\\datasets\\e621-v10");
     await page.getByRole("button", { name: "Preflight", exact: true }).click();
     await expect.poll(() => mutationsFor(api, "POST", "/api/jobs/preflight").length).toBe(1);
     const config = (mutationsFor(api, "POST", "/api/jobs/preflight")[0].body as { config: Record<string, unknown> }).config;
-    expect(config.schemaVersion).toBe(9);
+    expect(config.schemaVersion).toBe(10);
     expect(config.profile).toBeUndefined();
     expect(config.classify).toMatchObject({ indexMode: "bundled", resourceId: "classify-e621-20260724-v1" });
     expect(config.ocr).toEqual({ enabled: false, device: "auto", llmMinConfidence: 0.5, forceReprocess: false, resourceId: "ocr-ppocrv5-server-paddle-v1" });

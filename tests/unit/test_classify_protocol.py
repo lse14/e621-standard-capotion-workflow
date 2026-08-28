@@ -23,12 +23,14 @@ from anima_core.classify_protocol import (
     ClassifyHelloResultV1,
     ClassifyIssueResultV1,
     ClassifyProcessRequestV1,
+    ClassifyProcessResultV1,
     ClassifyProjectionV1,
     ClassifyProtocolError,
     ClassifyResultV1,
     ClassifyWorkItemV1,
     parse_classify_outcome,
     validate_outcome_for_item,
+    validate_outcomes_for_items,
 )
 from anima_core.contracts import JobConfig, validate_job_config
 
@@ -78,7 +80,7 @@ def _decision() -> ClassifyCountDecisionV1:
 
 class ClassifyProtocolTests(unittest.TestCase):
     def test_job_config_and_both_schemas_are_strict(self) -> None:
-        job_schema = json.loads((ROOT / "contracts" / "schemas" / "job-config-v9.schema.json").read_text())
+        job_schema = json.loads((ROOT / "contracts" / "schemas" / "job-config-v10.schema.json").read_text())
         classify_schema = json.loads(
             (ROOT / "contracts" / "schemas" / "classify-worker-v1.schema.json").read_text()
         )
@@ -87,9 +89,9 @@ class ClassifyProtocolTests(unittest.TestCase):
         self.assertEqual("#/$defs/resourceId", classify["properties"]["wikiDataSourceId"]["$ref"])
         self.assertEqual("^[a-z0-9][a-z0-9-]{0,127}$", job_schema["$defs"]["resourceId"]["pattern"])
         self.assertEqual("anima://contracts/classify-worker-v1", classify_schema["$id"])
-        self.assertEqual(5, len(classify_schema["oneOf"]))
+        self.assertEqual(6, len(classify_schema["oneOf"]))
 
-        config = JobConfig(profile="e621", workMode="in_place", overwriteMode="incremental", sourceRoot="C:\\data")
+        config = JobConfig(workMode="in_place", overwriteMode="incremental", sourceRoot="C:\\data")
         validate_job_config(config)
         invalid_values = (
             {"enabled": True, "overwriteJson": False, "overwriteCount": False},
@@ -101,7 +103,6 @@ class ClassifyProtocolTests(unittest.TestCase):
         for invalid in invalid_values:
             with self.subTest(invalid=invalid):
                 changed = JobConfig(
-                    profile="e621",
                     workMode="in_place",
                     overwriteMode="incremental",
                     sourceRoot="C:\\data",
@@ -133,8 +134,18 @@ class ClassifyProtocolTests(unittest.TestCase):
                 with self.assertRaises(ClassifyPayloadError):
                     validate_hello_payload(invalid)
 
-    def test_process_is_single_item_path_safe_and_bounded(self) -> None:
-        request = ClassifyProcessRequestV1(_item())
+    def test_process_accepts_bounded_unique_multi_items_and_keeps_path_safety(self) -> None:
+        first = _item()
+        second = ClassifyWorkItemV1(
+            sampleId=2,
+            leaseId="lease-2",
+            relativeImagePath="nested\\sample-2.png",
+            annotationKey="nested\\sample-2",
+            txtText="anima style, blue hair",
+            txtProvenance="module1_written",
+            originalCount=None,
+        )
+        request = ClassifyProcessRequestV1((first, second))
         payload = request.to_dict()
         self.assertEqual(request, ClassifyProcessRequestV1.from_dict(payload))
         self.assertEqual(payload, validate_process_payload(payload))
@@ -155,7 +166,11 @@ class ClassifyProtocolTests(unittest.TestCase):
                     validate_process_payload(value)
         with self.assertRaises(ClassifyProtocolError):
             ClassifyProcessRequestV1.from_dict(
-                {"schemaVersion": 1, "payloadType": "classify_process_request", "items": [_item().to_dict()] * 2}
+                {"schemaVersion": 1, "payloadType": "classify_process_request", "items": [first.to_dict(), first.to_dict()]}
+            )
+        with self.assertRaises(ClassifyPayloadError):
+            validate_process_payload(
+                {"schemaVersion": 1, "payloadType": "classify_process_request", "items": [first.to_dict(), first.to_dict()]}
             )
 
     def test_result_issue_and_lease_identity_are_strict(self) -> None:
@@ -211,6 +226,49 @@ class ClassifyProtocolTests(unittest.TestCase):
         invalid_retry["repairStartModule"] = "classify"
         with self.assertRaises(ClassifyProtocolError):
             parse_classify_outcome(invalid_retry)
+
+    def test_batch_outcomes_are_unique_complete_and_returned_in_request_order(self) -> None:
+        first = _item()
+        second = ClassifyWorkItemV1(
+            sampleId=2,
+            leaseId="lease-2",
+            relativeImagePath="nested\\sample-2.png",
+            annotationKey="nested\\sample-2",
+            txtText="anima style, blue hair",
+            txtProvenance="module1_written",
+            originalCount=None,
+        )
+        projection = ClassifyProjectionV1((), "solo", "character_name", "", "", (), ("solo",), (), "")
+        first_result = ClassifyResultV1(1, "lease-1", "nested\\sample.png", projection, _decision(), 2, 2, 0)
+        second_issue = ClassifyIssueResultV1(
+            2, "lease-2", "nested\\sample-2.png", "classify_no_writable_tags", False, "no tags"
+        )
+        result = ClassifyProcessResultV1((second_issue, first_result))
+        self.assertEqual(
+            (first_result, second_issue),
+            validate_outcomes_for_items(result.outcomes, (first, second)),
+        )
+
+        duplicate = {
+            "schemaVersion": 1,
+            "payloadType": "classify_process_result",
+            "outcomes": [first_result.to_dict(), first_result.to_dict()],
+        }
+        with self.assertRaises(ClassifyProtocolError):
+            ClassifyProcessResultV1.from_dict(duplicate)
+        missing = {
+            "schemaVersion": 1,
+            "payloadType": "classify_process_result",
+            "outcomes": [first_result.to_dict()],
+        }
+        with self.assertRaises(ClassifyProtocolError):
+            validate_outcomes_for_items(ClassifyProcessResultV1.from_dict(missing).outcomes, (first, second))
+        with self.assertRaises(ClassifyProtocolError):
+            ClassifyProcessResultV1.from_dict({
+                "schemaVersion": 1,
+                "payloadType": "classify_process_result",
+                "outcomes": "not-a-list",
+            })
 
 
 if __name__ == "__main__":

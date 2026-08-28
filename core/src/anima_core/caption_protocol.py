@@ -16,6 +16,7 @@ MAX_FORMATTED_TXT_BYTES = 262_144
 MAX_PATH_BYTES = 16_384
 MAX_TRIGGER_TERMS = 64
 MAX_TRIGGER_TERM_BYTES = 512
+MAX_CAPTION_PROCESS_ITEMS = 64
 CAPTION_ISSUE_CODES = frozenset({
     "caption_image_decode_failed",
     "caption_inference_failed",
@@ -410,7 +411,7 @@ class CaptionWorkItemV1:
 
 @dataclass(frozen=True)
 class CaptionProcessRequestV1:
-    item: CaptionWorkItemV1
+    items: tuple[CaptionWorkItemV1, ...]
     schemaVersion: Literal[1] = 1
 
     @classmethod
@@ -421,12 +422,22 @@ class CaptionProcessRequestV1:
         if payload["payloadType"] != "caption_process_request":
             raise CaptionProtocolError("caption process payload type is invalid")
         items = payload["items"]
-        if not isinstance(items, list) or len(items) != 1:
-            raise CaptionProtocolError("caption process v1 requires exactly one item")
-        return cls(CaptionWorkItemV1.from_dict(items[0]))
+        if not isinstance(items, list) or not 1 <= len(items) <= MAX_CAPTION_PROCESS_ITEMS:
+            raise CaptionProtocolError(
+                f"caption process v1 requires 1..{MAX_CAPTION_PROCESS_ITEMS} items"
+            )
+        parsed = tuple(CaptionWorkItemV1.from_dict(item) for item in items)
+        identities = {(item.sampleId, item.leaseId) for item in parsed}
+        if len(identities) != len(parsed):
+            raise CaptionProtocolError("caption process items contain duplicate sampleId and leaseId")
+        return cls(parsed)
 
     def to_dict(self) -> dict[str, object]:
-        return {"schemaVersion": 1, "payloadType": "caption_process_request", "items": [self.item.to_dict()]}
+        return {
+            "schemaVersion": 1,
+            "payloadType": "caption_process_request",
+            "items": [item.to_dict() for item in self.items],
+        }
 
 
 @dataclass(frozen=True)
@@ -583,6 +594,37 @@ class CaptionIssueResultV1:
         return value
 
 
+@dataclass(frozen=True)
+class CaptionProcessResultV1:
+    outcomes: tuple[CaptionResultV1 | CaptionIssueResultV1, ...]
+    schemaVersion: Literal[1] = 1
+
+    @classmethod
+    def from_dict(cls, value: object) -> "CaptionProcessResultV1":
+        payload = _object(value, "caption process result")
+        _schema(payload)
+        _keys(payload, required={"schemaVersion", "payloadType", "outcomes"})
+        if payload["payloadType"] != "caption_process_result":
+            raise CaptionProtocolError("caption process result payload type is invalid")
+        values = payload["outcomes"]
+        if not isinstance(values, list) or not 1 <= len(values) <= MAX_CAPTION_PROCESS_ITEMS:
+            raise CaptionProtocolError(
+                f"caption process result requires 1..{MAX_CAPTION_PROCESS_ITEMS} outcomes"
+            )
+        outcomes = tuple(parse_caption_outcome(item) for item in values)
+        identities = {(item.sampleId, item.leaseId) for item in outcomes}
+        if len(identities) != len(outcomes):
+            raise CaptionProtocolError("caption process result contains duplicate sampleId and leaseId")
+        return cls(outcomes)
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "schemaVersion": 1,
+            "payloadType": "caption_process_result",
+            "outcomes": [outcome.to_dict() for outcome in self.outcomes],
+        }
+
+
 def parse_caption_outcome(value: object) -> CaptionResultV1 | CaptionIssueResultV1:
     payload = _object(value, "caption outcome")
     payload_type = payload.get("payloadType")
@@ -591,6 +633,26 @@ def parse_caption_outcome(value: object) -> CaptionResultV1 | CaptionIssueResult
     if payload_type == "caption_issue":
         return CaptionIssueResultV1.from_dict(payload)
     raise CaptionProtocolError("unknown caption outcome payloadType")
+
+
+def validate_outcomes_for_items(
+    outcomes: tuple[CaptionResultV1 | CaptionIssueResultV1, ...],
+    items: tuple[CaptionWorkItemV1, ...],
+) -> tuple[CaptionResultV1 | CaptionIssueResultV1, ...]:
+    if len(outcomes) != len(items):
+        raise CaptionProtocolError("caption process result count does not match the request")
+    expected = {(item.sampleId, item.leaseId): item for item in items}
+    actual = {(outcome.sampleId, outcome.leaseId): outcome for outcome in outcomes}
+    if len(actual) != len(outcomes):
+        raise CaptionProtocolError("caption process result contains duplicate sampleId and leaseId")
+    if set(actual) != set(expected):
+        raise CaptionProtocolError("caption process result identities do not match the request")
+    ordered: list[CaptionResultV1 | CaptionIssueResultV1] = []
+    for identity, item in expected.items():
+        outcome = actual[identity]
+        validate_outcome_for_item(outcome, item)
+        ordered.append(outcome)
+    return tuple(ordered)
 
 
 def validate_outcome_for_item(

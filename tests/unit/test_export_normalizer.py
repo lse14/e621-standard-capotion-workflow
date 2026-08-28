@@ -14,7 +14,7 @@ from anima_export_worker.normalizer import CaptionDisplayPolicy, MAX_JSON_BYTES,
 from anima_export_worker.flat_txt import FlatTextSerializationError, serialize_flat_txt
 
 
-POLICY = CaptionDisplayPolicy(True, True, True, ("anima_style",))
+POLICY = CaptionDisplayPolicy(True, True, True, ("anima_style",), "nl_newline")
 
 
 def _payload(**changes: object) -> dict[str, object]:
@@ -117,7 +117,7 @@ class ExportNormalizerTests(unittest.TestCase):
         self.assertTrue(result.valid)
         output = serialize_flat_txt(result.payload, POLICY).decode("utf-8")
         self.assertEqual(
-            "anima style, high quality, \n\nsolo, \n\namy rose, blaze, \n\nsonic, \n\nartist \\(name\\), \n\nblue eyes, \n\nsmile, \n\noutdoors, \n\nA smile, outside.",
+            "anima style, high quality, solo, amy rose, blaze, sonic, artist \\(name\\), blue eyes, smile, outdoors\nA smile, outside.",
             output,
         )
         self.assertEqual(output, serialize_flat_txt(result.payload, POLICY).decode("utf-8"))
@@ -138,9 +138,9 @@ class ExportNormalizerTests(unittest.TestCase):
         output = serialize_flat_txt(result.payload, POLICY).decode("utf-8")
         self.assertIn("high quality, best quality", output)
         self.assertIn("amy rose, blaze", output)
-        self.assertIn(", \n\nsolo, \n\namy rose, blaze, \n\n", output)
+        self.assertIn("best quality, solo, amy rose, blaze", output)
         self.assertTrue(output.endswith("Amy smiles. She rests, quietly."))
-        self.assertEqual(7, output.count(", \n\n"))
+        self.assertEqual(1, output.count("\n"))
 
     def test_flat_txt_serializer_does_not_invoke_semantic_normalization(self) -> None:
         payload = _payload(count="2 characters", tags=["tag_two"])

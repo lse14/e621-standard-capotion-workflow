@@ -10,6 +10,7 @@ from typing import Protocol
 
 from .classify_overlay import ClassifyJsonError, parse_annotation_json
 from .contracts import (
+    CURRENT_JOB_CONFIG_SCHEMA_VERSION,
     ProgressEvent,
     SampleIssue,
     WorkLease,
@@ -89,7 +90,7 @@ class PolicyRunner:
         if (
             not isinstance(config, dict)
             or sha256_json(config) != job["config_hash"]
-            or schema_version != 9
+            or schema_version != CURRENT_JOB_CONFIG_SCHEMA_VERSION
             or "profile" in config
             or schema_version != int(job["config_schema_version"])
             or not isinstance(config.get("dropout"), dict)

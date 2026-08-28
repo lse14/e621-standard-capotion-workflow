@@ -20,12 +20,35 @@ LEGACY_PIPELINE_MODULE_IDS = ("caption", "classify", "replace", "nl", "dropout",
 CURRENT_PIPELINE_MODULE_IDS = ("caption", "classify", "replace", "nl", "count_review", "dropout", "export")
 OCR_PIPELINE_MODULE_IDS = ("caption", "classify", "replace", "ocr", "nl", "count_review", "dropout", "export")
 TOKEN_BUDGET_PIPELINE_MODULE_IDS = ("caption", "classify", "replace", "ocr", "nl", "count_review", "dropout", "token_budget", "export")
-COUNT_REVIEW_SCHEMA_VERSIONS = frozenset({3, 4, 5, 6, 7, 8, 9})
-OCR_JOB_CONFIG_SCHEMA_VERSIONS = frozenset({5, 6, 7, 8, 9})
-OCR_DEVICE_JOB_CONFIG_SCHEMA_VERSIONS = frozenset({7, 8, 9})
-CAPTION_INPUT_TXT_MODE_SCHEMA_VERSIONS = frozenset({8, 9})
-NL_V4_JOB_CONFIG_SCHEMA_VERSIONS = frozenset({6, 7, 8, 9})
-TOKEN_BUDGET_JOB_CONFIG_SCHEMA_VERSIONS = frozenset({6, 7, 8, 9})
+CURRENT_JOB_CONFIG_SCHEMA_VERSION = 10
+COUNT_REVIEW_SCHEMA_VERSIONS = frozenset({3, 4, 5, 6, 7, 8, 9, 10})
+OCR_JOB_CONFIG_SCHEMA_VERSIONS = frozenset({5, 6, 7, 8, 9, 10})
+OCR_DEVICE_JOB_CONFIG_SCHEMA_VERSIONS = frozenset({7, 8, 9, 10})
+CAPTION_INPUT_TXT_MODE_SCHEMA_VERSIONS = frozenset({8, 9, 10})
+NL_V4_JOB_CONFIG_SCHEMA_VERSIONS = frozenset({6, 7, 8, 9, 10})
+TOKEN_BUDGET_JOB_CONFIG_SCHEMA_VERSIONS = frozenset({6, 7, 8, 9, 10})
+MODULE_BATCH_SIZE_BOUNDS: dict[str, tuple[int, int]] = {
+    "caption": (1, 64),
+    "classify": (1, 500),
+    "replace": (1, 500),
+    "ocr": (1, 1024),
+    "nl": (1, 16),
+    "countReview": (1, 500),
+    "dropout": (1, 16),
+    "tokenBudget": (1, 500),
+    "export": (1, 500),
+}
+DEFAULT_MODULE_BATCH_SIZE: dict[str, int] = {
+    "caption": 4,
+    "classify": 128,
+    "replace": 128,
+    "ocr": 4,
+    "nl": 3,
+    "countReview": 100,
+    "dropout": 4,
+    "tokenBudget": 128,
+    "export": 500,
+}
 RESOURCE_ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,127}$")
 TOKENIZER_RESOURCE_ID = re.compile(r"^[a-z0-9][a-z0-9.-]{0,127}$")
 RESOURCE_FINGERPRINT = re.compile(r"^[0-9a-f]{64}$")
@@ -106,6 +129,7 @@ class CaptionFormatPolicy:
     preserveEscapes: bool = True
     triggersEnabled: bool = False
     triggerTerms: tuple[str, ...] = ()
+    flatTxtLayout: Literal["single_line", "nl_newline"] = "nl_newline"
 
 
 @dataclass(frozen=True)
@@ -193,7 +217,8 @@ class JobConfig:
     })
     export: dict[str, Any] = field(default_factory=lambda: {"format": "both"})
     tokenBudget: dict[str, Any] | None = None
-    schemaVersion: int = 9
+    moduleBatchSize: dict[str, int] = field(default_factory=lambda: dict(DEFAULT_MODULE_BATCH_SIZE))
+    schemaVersion: int = CURRENT_JOB_CONFIG_SCHEMA_VERSION
     profile: Profile | None = None
 
     def __post_init__(self) -> None:
@@ -226,9 +251,12 @@ class JobConfig:
 
     def to_dict(self) -> dict[str, Any]:
         value = asdict(self)
-        if self.schemaVersion == 9:
+        if self.schemaVersion == CURRENT_JOB_CONFIG_SCHEMA_VERSION:
             value.pop("profile")
         value["captionFormat"]["triggerTerms"] = list(self.captionFormat.triggerTerms)
+        if self.schemaVersion != CURRENT_JOB_CONFIG_SCHEMA_VERSION:
+            value["captionFormat"].pop("flatTxtLayout", None)
+            value.pop("moduleBatchSize", None)
         if not job_config_supports_ocr(self.schemaVersion):
             value.pop("ocr")
         if not job_config_supports_token_budget(self.schemaVersion):
@@ -361,7 +389,7 @@ def validate_job_config(
     allow_unavailable_profile: bool = False,
     adjustable_categories: tuple[str, ...] | None = None,
 ) -> None:
-    if config.schemaVersion not in {2, 3, 4, 5, 6, 7, 8, 9}:
+    if config.schemaVersion not in {2, 3, 4, 5, 6, 7, 8, 9, CURRENT_JOB_CONFIG_SCHEMA_VERSION}:
         raise ValueError("unsupported JobConfig schemaVersion")
     if config.schemaVersion == 2:
         if config.countReview is not None:
@@ -405,7 +433,19 @@ def validate_job_config(
         length_seed = nl.get("lengthSeed")
         if not isinstance(length_seed, str) or not length_seed.strip() or len(length_seed.encode("utf-8")) > 256:
             raise ValueError("nl lengthSeed must be non-blank and at most 256 UTF-8 bytes")
-    if config.schemaVersion != 9:
+    if config.schemaVersion == CURRENT_JOB_CONFIG_SCHEMA_VERSION:
+        api_policy = nl.get("apiPolicy")
+        if api_policy is not None and (not isinstance(api_policy, dict) or "concurrency" in api_policy):
+            raise ValueError("NL concurrency is controlled by moduleBatchSize.nl")
+        if config.profile is not None:
+            raise ValueError("task profile is not supported by JobConfig v10")
+        if not isinstance(config.moduleBatchSize, dict) or set(config.moduleBatchSize) != set(MODULE_BATCH_SIZE_BOUNDS):
+            raise ValueError("moduleBatchSize must contain each module exactly once")
+        for module_name, (minimum, maximum) in MODULE_BATCH_SIZE_BOUNDS.items():
+            value = config.moduleBatchSize[module_name]
+            if type(value) is not int or not minimum <= value <= maximum:
+                raise ValueError(f"moduleBatchSize.{module_name} must be between {minimum} and {maximum}")
+    elif config.schemaVersion != 9:
         if config.profile not in ("e621", "danbooru"):
             raise ValueError("unsupported profile")
         if config.profile == "danbooru" and config.schemaVersion in {2, 3} and not allow_unavailable_profile:
@@ -499,7 +539,7 @@ def validate_job_config(
         "enabled", "indexMode", "overwriteJson", "overwriteCount",
         "resourceId", "customResourcePath", "customResourceContentSha256",
     }
-    if config.schemaVersion == 9:
+    if config.schemaVersion in {9, CURRENT_JOB_CONFIG_SCHEMA_VERSION}:
         if (
             not isinstance(classify, dict)
             or set(classify) - (classify_base_fields | classify_frozen_fields)
@@ -552,7 +592,7 @@ def validate_job_config(
         or len(wiki_data_source_id) > 128
     ):
         raise ValueError("classify wikiDataSourceId is invalid")
-    if config.schemaVersion != 9:
+    if config.schemaVersion not in {9, CURRENT_JOB_CONFIG_SCHEMA_VERSION}:
         resource_reference(classify, "classify")
     elif "resourceManifestRelativePath" in classify:
         resource_reference(classify, "classify", resource_id_required=True)
@@ -701,10 +741,6 @@ def validate_job_config(
             raise ValueError("custom replace index digest is invalid")
         if "customIndexRuleCount" in replace and (type(replace["customIndexRuleCount"]) is not int or not 1 <= replace["customIndexRuleCount"] <= 250_000):
             raise ValueError("custom replace index rule count is invalid")
-    if config.schemaVersion != 9 and config.profile == "danbooru" and (
-        replace.get("enabled") is not False or replace_mode != "bundled"
-    ):
-        raise ValueError("Danbooru replacement must be disabled and use the profile-skipped bundled mode")
     if config.annotationBackup != "required":
         raise ValueError("annotation backup is required")
     if tuple(config.imageDecode.extensions) != (".jpg", ".jpeg", ".png", ".webp", ".bmp"):
@@ -722,6 +758,8 @@ def validate_job_config(
     ):
         if type(value) is not bool:
             raise ValueError(f"{name} must be boolean")
+    if config.captionFormat.flatTxtLayout not in {"single_line", "nl_newline"}:
+        raise ValueError("caption flatTxtLayout is invalid")
     if len(config.captionFormat.triggerTerms) > 64:
         raise ValueError("at most 64 trigger terms are allowed")
     if config.captionFormat.triggersEnabled and not config.captionFormat.triggerTerms:

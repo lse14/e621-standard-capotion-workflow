@@ -70,7 +70,7 @@ const lifecycleStateMatrix = [
 
 test.describe("task status and issue characterization", () => {
   test("rejects obsolete JobConfig snapshot fixtures", () => {
-    expect(() => makeSnapshot({ schemaVersion: 8 })).toThrow("only supports JobConfig schema v9");
+    expect(() => makeSnapshot({ schemaVersion: 8 })).toThrow("only supports JobConfig schema v10");
   });
 
   test("keeps the task monitor idle when no recent task exists", async ({ page, api }) => {
@@ -154,7 +154,7 @@ test.describe("task status and issue characterization", () => {
     await page.getByRole("button", { name: "Preflight", exact: true }).click();
     await expect.poll(() => mutationsFor(api, "POST", "/api/jobs/preflight").length).toBe(1);
     expect(mutationsFor(api, "POST", "/api/jobs/preflight")[0]?.body).toMatchObject({
-      config: { schemaVersion: 9, ocr: { enabled: true, device: "cuda" } },
+      config: { schemaVersion: 10, ocr: { enabled: true, device: "cuda" } },
       ocrExecution: {
         textDetLimitSideLen: { mode: "manual", value: 2560 },
         textBatchSize: { mode: "manual", value: 4 },
@@ -167,7 +167,7 @@ test.describe("task status and issue characterization", () => {
   });
 
   test("shows the backend CUDA failure guidance in the OCR step", async ({ page, api }) => {
-    const snapshot = makeSnapshot({ status: "failed", currentModuleId: "ocr", schemaVersion: 9 });
+    const snapshot = makeSnapshot({ status: "failed", currentModuleId: "ocr", schemaVersion: 10 });
     snapshot.events = [{
       event_id: 8,
       module_id: "ocr",
@@ -187,7 +187,7 @@ test.describe("task status and issue characterization", () => {
     setJobSnapshot(api, makeSnapshot({
       status: "running",
       currentModuleId: "caption",
-      schemaVersion: 9,
+      schemaVersion: 10,
       captionDiagnostics: [{ code: "caption_gpu_fallback", severity: "warning", count: 1 }],
     }));
     await openTrackedJob(page, "running");
@@ -195,7 +195,7 @@ test.describe("task status and issue characterization", () => {
   });
 
   test("task lifecycle exposes only global pause and resume controls", async ({ page, api }) => {
-    const snapshot = makeSnapshot({ status: "running", currentModuleId: "caption", schemaVersion: 9 });
+    const snapshot = makeSnapshot({ status: "running", currentModuleId: "caption", schemaVersion: 10 });
     setJobSnapshot(api, snapshot);
     await openTrackedJob(page, "running");
 
@@ -288,7 +288,7 @@ test.describe("task status and issue characterization", () => {
   });
 
   test("retries the selected current-page NL issues as one child after Export succeeds", async ({ page, api }) => {
-    const snapshot = makeSnapshot({ status: "succeeded", currentModuleId: "export", schemaVersion: 9 });
+    const snapshot = makeSnapshot({ status: "succeeded", currentModuleId: "export", schemaVersion: 10 });
     snapshot.issues = [
       { issue_id: "nl-failed-1", sample_id: 1, module_id: "nl", code: "nl_api_unavailable", severity: "error", message: "provider unavailable", retriable: 0, attempt: 1 },
       { issue_id: "nl-failed-2", sample_id: 2, module_id: "nl", code: "nl_response_invalid", severity: "error", message: "invalid provider response", retriable: 0, attempt: 1 },
@@ -312,7 +312,7 @@ test.describe("task status and issue characterization", () => {
   });
 
   test("disables individual NL actions while a selected batch retry is pending", async ({ page, api }) => {
-    const snapshot = makeSnapshot({ status: "succeeded", currentModuleId: "export", schemaVersion: 9 });
+    const snapshot = makeSnapshot({ status: "succeeded", currentModuleId: "export", schemaVersion: 10 });
     snapshot.issues = [
       { issue_id: "nl-failed-1", sample_id: 1, module_id: "nl", code: "nl_api_unavailable", severity: "error", message: "provider unavailable", retriable: 0, attempt: 1 },
       { issue_id: "nl-failed-2", sample_id: 2, module_id: "nl", code: "nl_response_invalid", severity: "error", message: "invalid provider response", retriable: 0, attempt: 1 },
@@ -448,7 +448,7 @@ test.describe("task status and issue characterization", () => {
   });
 
   test("shows OCR diagnostics and starts OCR repair through the existing endpoint", async ({ page, api }) => {
-    const snapshot = makeSnapshot({ status: "failed", currentModuleId: "ocr", schemaVersion: 9 });
+    const snapshot = makeSnapshot({ status: "failed", currentModuleId: "ocr", schemaVersion: 10 });
     snapshot.ocrDiagnostics = [
       { code: "ocr_total", severity: "info", count: 3 },
       { code: "ocr_new", severity: "info", count: 1 },

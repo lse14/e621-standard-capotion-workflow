@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from collections.abc import Sequence
 from typing import Literal, Protocol
 
 from .resource import OcrResource
@@ -31,6 +32,21 @@ class PaddleOcrModel:
             raise OcrModelError("NumPy is unavailable in the OCR runtime") from exc
         except Exception as exc:
             raise OcrModelError("PaddleOCR inference failed") from exc
+
+    def predict_batch(self, images: Sequence[object]) -> list[object]:
+        """Run PaddleOCR's list-of-images entry point once for a module batch."""
+        if len(images) == 1:
+            return self.predict(images[0])
+        try:
+            model_input: object = images
+            if self._convert_input_to_array:
+                import numpy as np
+                model_input = [np.asarray(image) for image in images]
+            return list(self._engine.predict(model_input))
+        except ImportError as exc:
+            raise OcrModelError("NumPy is unavailable in the OCR runtime") from exc
+        except Exception as exc:
+            raise OcrModelError("PaddleOCR batch inference failed") from exc
 
 
 class ModelFactory(Protocol):

@@ -14,15 +14,17 @@ from .caption_protocol import (
     CaptionFormatPolicyV1,
     CaptionHelloRequestV1,
     CaptionHelloResultV1,
+    CaptionProcessRequestV1,
+    CaptionProcessResultV1,
     CaptionProtocolError,
     CaptionResultV1,
     CaptionThresholdPolicyV1,
     CaptionWorkItemV1,
     ImageDecodePolicyV1,
-    parse_caption_outcome,
-    validate_outcome_for_item,
+    validate_outcomes_for_items,
 )
 from .contracts import (
+    CURRENT_JOB_CONFIG_SCHEMA_VERSION,
     ProgressEvent,
     SampleIssue,
     WorkLease,
@@ -300,7 +302,7 @@ class CaptionRunner:
             )
         config_schema_version = config.get("schemaVersion")
         if (
-            config_schema_version != 9
+            config_schema_version != CURRENT_JOB_CONFIG_SCHEMA_VERSION
             or "profile" in config
             or config_schema_version != int(job["config_schema_version"])
         ):
@@ -311,6 +313,9 @@ class CaptionRunner:
         caption = config.get("caption")
         if not isinstance(caption, dict) or caption.get("enabled") is not True:
             raise CaptionRunnerFatalError("caption_protocol_violation", "caption runner cannot execute a disabled module")
+        caption_format = config.get("captionFormat")
+        if not isinstance(caption_format, dict):
+            raise CaptionRunnerFatalError("caption_protocol_violation", "frozen caption format is invalid")
         image_decode = config.get("imageDecode")
         if not isinstance(image_decode, dict):
             raise CaptionRunnerFatalError("caption_protocol_violation", "frozen image decode policy is invalid")
@@ -345,7 +350,15 @@ class CaptionRunner:
                 "resourceManifestRelativePath": self.resource_manifest_relative_path,
                 "resourceFingerprint": self.resource_fingerprint,
                 "thresholdPolicy": CaptionThresholdPolicyV1.from_dict(threshold_value).to_dict(),
-                "captionFormat": CaptionFormatPolicyV1.from_dict(config.get("captionFormat")).to_dict(),
+                "captionFormat": CaptionFormatPolicyV1.from_dict({
+                    key: caption_format.get(key)
+                    for key in (
+                        "replaceUnderscoresWithSpaces",
+                        "preserveEscapes",
+                        "triggersEnabled",
+                        "triggerTerms",
+                    )
+                }).to_dict(),
                 "imageDecode": ImageDecodePolicyV1.from_dict({
                     key: image_decode.get(key)
                     for key in ("extensions", "rejectMultiFrame", "applyExifTranspose", "alphaBackground")
@@ -519,51 +532,55 @@ class CaptionRunner:
             ),
         )
 
-    def _process(self, lease: WorkLease, item: CaptionWorkItemV1) -> None:
+    def _process_batch(self, batch: list[tuple[WorkLease, CaptionWorkItemV1]]) -> None:
+        if not batch:
+            return
         self.process_requests += 1
+        request = CaptionProcessRequestV1(tuple(item for _, item in batch))
         response = self._exchange(
             "process_batch",
-            {"schemaVersion": 1, "payloadType": "caption_process_request", "items": [item.to_dict()]},
+            request.to_dict(),
         )
         try:
-            outcome = parse_caption_outcome(response.payload)
-            validate_outcome_for_item(outcome, item)
+            result = CaptionProcessResultV1.from_dict(response.payload)
+            outcomes = validate_outcomes_for_items(result.outcomes, request.items)
         except CaptionProtocolError as exc:
-            raise CaptionRunnerFatalError("caption_protocol_violation", f"caption outcome is invalid: {exc}") from exc
-        if isinstance(outcome, CaptionResultV1):
-            if self._hello_result is None or outcome.provider != self._hello_result.provider:
-                raise CaptionRunnerFatalError("caption_protocol_violation", "caption result provider changed after hello")
-            if len(outcome.tags) > self._hello_result.tagCount:
-                raise CaptionRunnerFatalError(
-                    "caption_protocol_violation",
-                    "caption result contains more tags than the initialized model",
-                )
-            try:
-                self.result_consumer(item, outcome)
-            except Exception as exc:
-                raise CaptionRunnerFatalError(
-                    "caption_result_persistence_failed",
-                    "caption result consumer failed before lease completion",
-                ) from exc
-            self.scheduler.complete(lease, txt_provenance="module1_written")
-            return
-        self.scheduler.fail_with_issue(
-            lease,
-            SampleIssue(
-                issueId=stable_caption_issue_id(self.job_id, item.sampleId, outcome.code),
-                jobId=self.job_id,
-                sampleId=item.sampleId,
-                relativeImagePath=item.relativeImagePath,
-                moduleId="caption",
-                code=outcome.code,
-                severity="error",
-                blocking=True,
-                retriable=outcome.retriable,
-                message=outcome.message,
-                attempt=lease.attempt,
-                repairStartModule=outcome.repairStartModule,
-            ),
-        )
+            raise CaptionRunnerFatalError("caption_protocol_violation", f"caption batch outcome is invalid: {exc}") from exc
+        for (lease, item), outcome in zip(batch, outcomes, strict=True):
+            if isinstance(outcome, CaptionResultV1):
+                if self._hello_result is None or outcome.provider != self._hello_result.provider:
+                    raise CaptionRunnerFatalError("caption_protocol_violation", "caption result provider changed after hello")
+                if len(outcome.tags) > self._hello_result.tagCount:
+                    raise CaptionRunnerFatalError(
+                        "caption_protocol_violation",
+                        "caption result contains more tags than the initialized model",
+                    )
+                try:
+                    self.result_consumer(item, outcome)
+                except Exception as exc:
+                    raise CaptionRunnerFatalError(
+                        "caption_result_persistence_failed",
+                        "caption result consumer failed before lease completion",
+                    ) from exc
+                self.scheduler.complete(lease, txt_provenance="module1_written")
+                continue
+            self.scheduler.fail_with_issue(
+                lease,
+                SampleIssue(
+                    issueId=stable_caption_issue_id(self.job_id, item.sampleId, outcome.code),
+                    jobId=self.job_id,
+                    sampleId=item.sampleId,
+                    relativeImagePath=item.relativeImagePath,
+                    moduleId="caption",
+                    code=outcome.code,
+                    severity="error",
+                    blocking=True,
+                    retriable=outcome.retriable,
+                    message=outcome.message,
+                    attempt=lease.attempt,
+                    repairStartModule=outcome.repairStartModule,
+                ),
+            )
 
     def _release(self, leases: list[WorkLease]) -> None:
         for lease in leases:
@@ -655,11 +672,11 @@ class CaptionRunner:
                     )
                     publisher.publish(status, force=True)
                     return self._report(status)
-                for index, lease in enumerate(batch):
+                pending: list[tuple[WorkLease, CaptionWorkItemV1]] = []
+                for lease in batch:
                     job = self.database.get_job(self.job_id)
                     if job["status"] in {"cancelling", "paused"}:
-                        remaining = batch[index:]
-                        self._release(remaining)
+                        self._release(active)
                         active = []
                         return self._report(str(job["status"]))
                     if job["status"] != "running" or job["current_module_id"] != "caption":
@@ -667,14 +684,11 @@ class CaptionRunner:
                             "caption_protocol_violation",
                             "caption job identity changed before a worker request",
                         )
-                    remaining_ids = [item.leaseId for item in batch[index:] if item.leaseId]
-                    self.scheduler.heartbeat(self.job_id, self.worker_instance_id, remaining_ids)
                     row = self._leased_row(lease)
                     try:
                         raw_e621 = self._raw_e621_annotation(row)
                     except RawE621JsonError as exc:
                         self._raw_e621_issue(lease, row, exc)
-                        active = batch[index + 1 :]
                         publisher.publish("running", attempt=lease.attempt)
                         continue
                     if raw_e621 is not None:
@@ -686,7 +700,6 @@ class CaptionRunner:
                             severity="info",
                             amount=1,
                         )
-                        active = batch[index + 1 :]
                         publisher.publish("running", attempt=lease.attempt)
                         continue
                     if not self._requires_inference(row, execution_policy):
@@ -698,15 +711,31 @@ class CaptionRunner:
                             self._missing_txt_without_tagger_fallback_issue(lease, row)
                         else:
                             self.scheduler.skip_caption(lease)
-                        active = batch[index + 1 :]
                         publisher.publish("running", attempt=lease.attempt)
                         continue
+                    item = self._work_item(lease, row)
+                    pending.append((lease, item))
+                if pending:
+                    job = self.database.get_job(self.job_id)
+                    if job["status"] in {"cancelling", "paused"}:
+                        self._release(active)
+                        active = []
+                        return self._report(str(job["status"]))
+                    if job["status"] != "running" or job["current_module_id"] != "caption":
+                        raise CaptionRunnerFatalError(
+                            "caption_protocol_violation",
+                            "caption job identity changed before a worker request",
+                        )
                     if self._hello_result is None:
                         self._initialize_worker(hello)
-                    item = self._work_item(lease, row)
-                    self._process(lease, item)
-                    active = batch[index + 1 :]
-                    publisher.publish("running", attempt=lease.attempt)
+                    self.scheduler.heartbeat(
+                        self.job_id,
+                        self.worker_instance_id,
+                        [lease.leaseId for lease, _ in pending if lease.leaseId],
+                    )
+                    self._process_batch(pending)
+                    for lease, _ in pending:
+                        publisher.publish("running", attempt=lease.attempt)
                 active = []
         except CaptionRunnerFatalError as exc:
             self._fail_module(active, publisher)

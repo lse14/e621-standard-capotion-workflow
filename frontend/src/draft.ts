@@ -8,8 +8,22 @@ export type ReplaceIndexMode = "bundled" | "custom";
 export type InvalidImageAction = "block" | "skip";
 export type QualityDevice = "auto" | "cuda" | "cpu";
 export type ExportFormat = "both" | "json" | "flat_txt";
+export type FlatTxtLayout = "single_line" | "nl_newline";
+
+export type ModuleBatchSize = {
+  caption: number;
+  classify: number;
+  replace: number;
+  ocr: number;
+  nl: number;
+  countReview: number;
+  dropout: number;
+  tokenBudget: number;
+  export: number;
+};
 
 export type CaptionFormatDraft = {
+  flatTxtLayout: FlatTxtLayout;
   replaceUnderscoresWithSpaces: boolean;
   preserveEscapes: boolean;
   triggersEnabled: boolean;
@@ -61,7 +75,6 @@ export type OcrDraft = {
 };
 
 export type NlApiPolicyDraft = {
-  concurrency: number;
   maxRequestsPerMinute: number | "unlimited";
   backupEnabled: boolean;
   maxHttpAttempts?: number;
@@ -132,7 +145,8 @@ export type ExportDraft = {
 };
 
 export type Draft = {
-  schemaVersion: 9;
+  schemaVersion: 10;
+  moduleBatchSize: ModuleBatchSize;
   workMode: WorkMode;
   overwriteMode: OverwriteMode;
   sourceRoot: string;
@@ -167,14 +181,16 @@ export type DraftSectionKey =
 
 export function newDraft(): Draft {
   return {
-    schemaVersion: 9, workMode: "in_place", overwriteMode: "incremental", sourceRoot: "", annotationBackup: "required", recursive: false,
-    captionFormat: { replaceUnderscoresWithSpaces: true, preserveEscapes: true, triggersEnabled: false, triggerTerms: [] },
+    schemaVersion: 10,
+    moduleBatchSize: { caption: 4, classify: 128, replace: 128, ocr: 4, nl: 3, countReview: 100, dropout: 4, tokenBudget: 128, export: 500 },
+    workMode: "in_place", overwriteMode: "incremental", sourceRoot: "", annotationBackup: "required", recursive: false,
+    captionFormat: { flatTxtLayout: "nl_newline", replaceUnderscoresWithSpaces: true, preserveEscapes: true, triggersEnabled: false, triggerTerms: [] },
     imageDecode: { extensions: [".jpg", ".jpeg", ".png", ".webp", ".bmp"], rejectMultiFrame: true, applyExifTranspose: true, alphaBackground: "#FFFFFF", invalidImageAction: "block" },
     caption: { enabled: true, thresholdMode: "model_default", overwriteTxt: false, inputTxtMode: "tag", taggerFallbackOnMissingTxt: true, resourceId: "caption-e621-eva02-large-full-v1" },
     classify: { enabled: true, indexMode: "bundled", overwriteJson: false, overwriteCount: false, resourceId: "classify-e621-20260724-v1" },
     replace: { enabled: true, indexMode: "bundled", resourceId: "replace-e621-20260726-v2" },
     ocr: { enabled: false, device: "auto", llmMinConfidence: 0.5, forceReprocess: false, resourceId: "ocr-ppocrv5-server-paddle-v1" },
-    nl: { enabled: true, reuseOriginalNl: true, apiEnabled: true, useImage: true, useFullJson: false, systemPrompt: "", promptVersion: "nl-default-prompt-v4", captionPreset: "general", lengthDistribution: { short: 33, medium: 34, long: 33 }, lengthSeed: "anima-nl-length-v1", apiProfileId: "default", apiPolicy: { concurrency: 3, maxRequestsPerMinute: 60, backupEnabled: false } },
+    nl: { enabled: true, reuseOriginalNl: true, apiEnabled: true, useImage: true, useFullJson: false, systemPrompt: "", promptVersion: "nl-default-prompt-v4", captionPreset: "general", lengthDistribution: { short: 33, medium: 34, long: 33 }, lengthSeed: "anima-nl-length-v1", apiProfileId: "default", apiPolicy: { maxRequestsPerMinute: 60, backupEnabled: false } },
     countReview: { enabled: true, protocolVersion: "count-review-v1" },
     dropout: {
       enabled: false, policyVersion: "dataset-batch-policy-v1", seed: "anima-policy-default-v1",
