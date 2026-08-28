@@ -180,6 +180,25 @@ class ControlPlaneApiTests(unittest.TestCase):
         scheduler.start_module("job-api", "nl", enabled=True, profile="e621")
         database.close()
 
+    def _wait_for_pipeline_completion(self, job_id: str, expected_status: str) -> list[object]:
+        deadline = time.monotonic() + 10.0
+        while True:
+            database = StateDatabase.open(self.database_path)
+            try:
+                job = database.get_job(job_id)
+                summaries = database.module_summaries(job_id)
+                status = str(job["status"])
+            finally:
+                database.close()
+            if status == expected_status and not self.pipeline.is_running(job_id):
+                return summaries
+            if status in {"failed", "cancelled", "cancelled_recoverable"}:
+                self.fail(f"pipeline reached unexpected terminal status: {status}")
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                self.fail(f"pipeline did not reach {expected_status} after its worker thread exited")
+            time.sleep(min(0.02, remaining))
+
     def test_job_list_and_snapshot_do_not_expose_task_profile(self) -> None:
         list_jobs = _endpoint(self.app, "/api/jobs", "GET")
         snapshot = _endpoint(self.app, "/api/jobs/{job_id}", "GET")
@@ -214,6 +233,7 @@ class ControlPlaneApiTests(unittest.TestCase):
         self.assertTrue(all(value == 1 for key, value in result["moduleBatchSize"].items() if key != "nl"))
 
     def tearDown(self) -> None:
+        self.pipeline.close()
         self.preparation.close()
         self.temporary.cleanup()
 
@@ -1122,17 +1142,8 @@ class ControlPlaneApiTests(unittest.TestCase):
             start(job_id)
         confirm(job_id, _WorkspaceBody(confirmed=True, confirmedRebuild=False))
         self.assertEqual({"jobId": job_id, "started": True}, start(job_id))
-        for _ in range(100):
-            database = StateDatabase.open(self.database_path)
-            try:
-                if database.get_job(job_id)["status"] == "succeeded":
-                    self.assertEqual(9, len(database.module_summaries(job_id)))
-                    break
-            finally:
-                database.close()
-            time.sleep(0.01)
-        else:
-            self.fail("disabled module pipeline did not reach successful export")
+        summaries = self._wait_for_pipeline_completion(job_id, "succeeded")
+        self.assertEqual(9, len(summaries))
 
     def test_restore_original_annotations_requires_confirmation_and_uses_task_backup(self) -> None:
         restore = _endpoint(self.app, "/api/jobs/{job_id}/restore-original-annotations", "POST")

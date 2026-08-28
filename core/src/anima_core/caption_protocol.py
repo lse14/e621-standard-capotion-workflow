@@ -21,7 +21,9 @@ CAPTION_ISSUE_CODES = frozenset({
     "caption_image_decode_failed",
     "caption_inference_failed",
     "caption_no_tags",
+    "caption_result_too_large",
 })
+CAPTION_NON_RETRIABLE_ISSUES = frozenset({"caption_no_tags", "caption_result_too_large"})
 IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
 CATEGORY_ID = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
@@ -526,7 +528,7 @@ class CaptionIssueResultV1:
     sampleId: int
     leaseId: str
     relativeImagePath: str
-    code: Literal["caption_image_decode_failed", "caption_inference_failed", "caption_no_tags"]
+    code: Literal["caption_image_decode_failed", "caption_inference_failed", "caption_no_tags", "caption_result_too_large"]
     retriable: bool
     message: str
     source: Literal["e621", "danbooru"] = "e621"
@@ -557,7 +559,7 @@ class CaptionIssueResultV1:
         ):
             raise CaptionProtocolError("caption issue identity is invalid")
         retriable = _bool(item["retriable"], "retriable")
-        expected_retriable = code != "caption_no_tags"
+        expected_retriable = code not in CAPTION_NON_RETRIABLE_ISSUES
         if retriable != expected_retriable:
             raise CaptionProtocolError("caption issue retriable flag does not match its code")
         repair = item.get("repairStartModule")

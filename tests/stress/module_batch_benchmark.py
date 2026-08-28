@@ -352,6 +352,8 @@ def validate_report(report: object) -> None:
         raise ValueError("report.schemaVersion must be 1")
     if document.get("benchmarkVersion") != "module-batching-v1":
         raise ValueError("report.benchmarkVersion is unsupported")
+    if document.get("status") != "validated":
+        raise ValueError("report.status must be validated")
     dataset = _require_mapping(document.get("dataset"), "report.dataset")
     before = _validate_snapshot(dataset.get("before"), "report.dataset.before")
     after = _validate_snapshot(dataset.get("after"), "report.dataset.after")
@@ -372,38 +374,64 @@ def validate_report(report: object) -> None:
             raise ValueError(f"modules.{module}.batch1OutputDigest must be a SHA-256 digest")
         if type(result.get("recommendation")) is not int or result["recommendation"] < 1:
             raise ValueError(f"modules.{module}.recommendation must be a positive integer")
+        recommendation = int(result["recommendation"])
         runs = result.get("runs")
         if not isinstance(runs, list):
             raise ValueError(f"modules.{module}.runs must be a list")
         validated_runs = [_validate_run(run, module) for run in runs]
-        candidates = result.get("candidates")
-        if candidates is not None:
-            candidate_map = _require_mapping(candidates, f"modules.{module}.candidates")
-            for candidate_key, candidate in candidate_map.items():
-                candidate_result = _require_mapping(candidate, f"modules.{module}.candidates.{candidate_key}")
-                candidate_runs = candidate_result.get("runs")
-                if not isinstance(candidate_runs, list):
-                    raise ValueError(f"modules.{module}.candidates.{candidate_key}.runs must be a list")
-                try:
-                    candidate_batch = int(candidate_key)
-                except (TypeError, ValueError) as exc:
-                    raise ValueError(f"modules.{module}.candidates.{candidate_key} has an invalid batch key") from exc
-                if candidate_batch < 1:
-                    raise ValueError(f"modules.{module}.candidates.{candidate_key} has an invalid batch key")
-                formal_candidate_runs: list[Mapping[str, Any]] = []
-                for candidate_run in candidate_runs:
-                    validated_candidate_run = _validate_run(candidate_run, module)
-                    if not validated_candidate_run["warmup"]:
-                        formal_candidate_runs.append(validated_candidate_run)
-                if len(formal_candidate_runs) < 3:
-                    raise ValueError(f"modules.{module}.candidates.{candidate_key} requires at least three formal runs")
-                if any(run["batchSize"] != candidate_batch for run in formal_candidate_runs):
-                    raise ValueError(f"modules.{module}.candidates.{candidate_key} batch size is inconsistent")
-        batch_one_formal = [run for run in validated_runs if run["batchSize"] == 1 and not run["warmup"]]
-        if len(batch_one_formal) < 3:
-            raise ValueError(f"modules.{module} requires at least three formal batch 1 runs")
+        expected_batches = candidate_batches_for(module)
+        candidates = _require_mapping(result.get("candidates"), f"modules.{module}.candidates")
+        expected_keys = {str(batch) for batch in expected_batches}
+        if set(candidates) != expected_keys:
+            raise ValueError(
+                f"modules.{module}.candidates must match the complete candidate grid "
+                f"{sorted(expected_keys, key=int)}"
+            )
+        candidate_map: dict[str, Mapping[str, Any]] = {}
+        for candidate_batch in expected_batches:
+            candidate_key = str(candidate_batch)
+            candidate_result = _require_mapping(candidates[candidate_key], f"modules.{module}.candidates.{candidate_key}")
+            candidate_runs = candidate_result.get("runs")
+            if not isinstance(candidate_runs, list):
+                raise ValueError(f"modules.{module}.candidates.{candidate_key}.runs must be a list")
+            validated_candidate_runs = [_validate_run(run, module) for run in candidate_runs]
+            formal_candidate_runs = [run for run in validated_candidate_runs if not run["warmup"]]
+            if len(formal_candidate_runs) != 3:
+                raise ValueError(
+                    f"modules.{module}.candidates.{candidate_key} requires exactly three formal runs"
+                )
+            if any(run["batchSize"] != candidate_batch for run in validated_candidate_runs):
+                raise ValueError(f"modules.{module}.candidates.{candidate_key} batch size is inconsistent")
+            candidate_map[candidate_key] = {"runs": validated_candidate_runs}
+
+        formal_by_batch: dict[int, list[Mapping[str, Any]]] = {batch: [] for batch in expected_batches}
+        for run in validated_runs:
+            batch_size = int(run["batchSize"])
+            if batch_size not in formal_by_batch:
+                raise ValueError(f"modules.{module}.runs contains a batch outside the candidate grid")
+            if not run["warmup"]:
+                formal_by_batch[batch_size].append(run)
+        if any(len(formal_by_batch[batch]) != 3 for batch in expected_batches):
+            raise ValueError(f"modules.{module}.runs requires exactly three formal runs per candidate")
+        batch_one_formal = formal_by_batch[1]
         if any(run["outputDigest"] != baseline_digest for run in batch_one_formal):
             raise ValueError(f"modules.{module} batch 1 output digest is inconsistent")
+        if any(run["outputDigest"] != baseline_digest for run in candidate_map["1"]["runs"] if not run["warmup"]):
+            raise ValueError(f"modules.{module}.candidates.1 output digest is inconsistent")
+
+        stable_value = result.get("stableBatchSizes")
+        if not isinstance(stable_value, list) or any(type(batch) is not int or batch < 1 for batch in stable_value):
+            raise ValueError(f"modules.{module}.stableBatchSizes must be a list of positive integers")
+        if stable_value != sorted(set(stable_value)):
+            raise ValueError(f"modules.{module}.stableBatchSizes must be sorted and unique")
+        if recommendation not in expected_batches or recommendation not in set(stable_value):
+            raise ValueError(f"modules.{module}.recommendation must belong to candidates and stableBatchSizes")
+        expected_recommendation, expected_stable, _ = select_stable_recommendation(
+            candidate_map,
+            baseline_digest=str(baseline_digest),
+        )
+        if recommendation != expected_recommendation or stable_value != expected_stable:
+            raise ValueError(f"modules.{module} has a recomputed recommendation or stable candidate mismatch")
 
 
 @dataclass(frozen=True)

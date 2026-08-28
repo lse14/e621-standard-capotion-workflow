@@ -27,6 +27,61 @@ from tests.stress.module_batch_benchmark import (
 )
 
 
+def _valid_run(batch_size: int, *, warmup: bool, speed: float = 1.0, digest: str = "0" * 64) -> dict[str, object]:
+    return {
+        "batchSize": batch_size,
+        "warmup": warmup,
+        "totalSeconds": 1.0,
+        "samplesPerSecond": speed,
+        "cpuPercent": 0.0,
+        "peakMemoryBytes": 0,
+        "gpuUtilizationPercent": 0.0,
+        "peakVramBytes": 0,
+        "failures": 0,
+        "timeouts": 0,
+        "oom": 0,
+        "crashed": 0,
+        "outputDigest": digest,
+        "failureDetails": [],
+    }
+
+
+def _valid_report() -> dict[str, object]:
+    digest = "0" * 64
+    modules: dict[str, object] = {}
+    for module in BENCHMARK_MODULES:
+        candidates: dict[str, object] = {}
+        runs: list[dict[str, object]] = []
+        batches = candidate_batches_for(module)
+        for batch_size in batches:
+            candidate_runs = [
+                _valid_run(batch_size, warmup=True, digest=digest),
+                *[_valid_run(batch_size, warmup=False, digest=digest) for _ in range(3)],
+            ]
+            candidates[str(batch_size)] = {"runs": candidate_runs}
+            runs.extend(candidate_runs)
+        modules[module] = {
+            "batch1OutputDigest": digest,
+            "runs": runs,
+            "recommendation": 1,
+            "recommendationReason": "fixture",
+            "stableBatchSizes": list(batches),
+            "workerEvidence": {},
+            "candidates": candidates,
+        }
+    return {
+        "schemaVersion": 1,
+        "benchmarkVersion": "module-batching-v1",
+        "status": "validated",
+        "dataset": {
+            "before": {"fileCount": 0, "totalBytes": 0, "treeSha256": digest},
+            "after": {"fileCount": 0, "totalBytes": 0, "treeSha256": digest},
+        },
+        "nlRequests": 0,
+        "modules": modules,
+    }
+
+
 class ModuleBatchBenchmarkContractTests(unittest.TestCase):
     def test_state_artifact_records_validated_completion(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -58,6 +113,52 @@ class ModuleBatchBenchmarkContractTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "unsupported benchmark module"):
             candidate_batches_for("nl")
 
+    def test_report_requires_validated_status(self) -> None:
+        report = _valid_report()
+        report["status"] = "not_validated"
+        with self.assertRaisesRegex(ValueError, "status"):
+            validate_report(report)
+
+    def test_report_requires_the_complete_candidate_grid(self) -> None:
+        report = _valid_report()
+        candidates = report["modules"]["caption"]["candidates"]  # type: ignore[index]
+        candidates.pop("2")
+        with self.assertRaisesRegex(ValueError, "candidate grid"):
+            validate_report(report)
+
+        report = _valid_report()
+        candidates = report["modules"]["caption"]["candidates"]  # type: ignore[index]
+        candidates["999"] = candidates["1"]
+        with self.assertRaisesRegex(ValueError, "candidate grid"):
+            validate_report(report)
+
+    def test_report_requires_exactly_three_formal_runs_per_candidate(self) -> None:
+        report = _valid_report()
+        candidate = report["modules"]["caption"]["candidates"]["1"]  # type: ignore[index]
+        candidate["runs"].append(_valid_run(1, warmup=False))  # type: ignore[index]
+        with self.assertRaisesRegex(ValueError, "exactly three formal"):
+            validate_report(report)
+
+    def test_report_requires_recommendation_in_candidate_and_stable_sets(self) -> None:
+        report = _valid_report()
+        report["modules"]["caption"]["recommendation"] = 999999  # type: ignore[index]
+        with self.assertRaisesRegex(ValueError, "recommendation"):
+            validate_report(report)
+
+        report = _valid_report()
+        report["modules"]["caption"]["stableBatchSizes"] = [2]  # type: ignore[index]
+        with self.assertRaisesRegex(ValueError, "recommendation"):
+            validate_report(report)
+
+    def test_report_recomputes_recommendation_and_stable_candidates(self) -> None:
+        report = _valid_report()
+        candidate = report["modules"]["caption"]["candidates"]["2"]  # type: ignore[index]
+        for run in candidate["runs"]:  # type: ignore[index]
+            if not run["warmup"]:
+                run["samplesPerSecond"] = 2.0
+        with self.assertRaisesRegex(ValueError, "recomputed recommendation"):
+            validate_report(report)
+
     def test_report_contract_requires_all_non_nl_modules_and_three_formal_runs(self) -> None:
         self.assertEqual(
             (
@@ -73,46 +174,14 @@ class ModuleBatchBenchmarkContractTests(unittest.TestCase):
             BENCHMARK_MODULES,
         )
         self.assertEqual((1, 2, 4, 8, 16, 32, 64, 128, 256, 500), CANDIDATE_BATCHES)
-        report = {
-            "schemaVersion": 1,
-            "benchmarkVersion": "module-batching-v1",
-            "dataset": {
-                "before": {"fileCount": 0, "totalBytes": 0, "treeSha256": "0" * 64},
-                "after": {"fileCount": 0, "totalBytes": 0, "treeSha256": "0" * 64},
-            },
-            "nlRequests": 0,
-            "modules": {
-                module: {
-                    "batch1OutputDigest": "0" * 64,
-                    "runs": [
-                        {
-                            "batchSize": 1,
-                            "warmup": False,
-                            "totalSeconds": 1.0,
-                            "samplesPerSecond": 1.0,
-                            "cpuPercent": 0.0,
-                            "peakMemoryBytes": 0,
-                            "gpuUtilizationPercent": 0.0,
-                            "peakVramBytes": 0,
-                            "failures": 0,
-                            "timeouts": 0,
-                            "oom": 0,
-                            "crashed": 0,
-                            "outputDigest": "0" * 64,
-                            "failureDetails": [],
-                        }
-                    ] * 3,
-                    "recommendation": 1,
-                }
-                for module in BENCHMARK_MODULES
-            },
-        }
+        report = _valid_report()
         validate_report(report)
 
     def test_report_rejects_nonzero_nl_requests_and_mismatched_dataset_snapshots(self) -> None:
         report = {
             "schemaVersion": 1,
             "benchmarkVersion": "module-batching-v1",
+            "status": "validated",
             "dataset": {
                 "before": {"fileCount": 1, "totalBytes": 1, "treeSha256": "0" * 64},
                 "after": {"fileCount": 1, "totalBytes": 1, "treeSha256": "1" * 64},
@@ -300,43 +369,13 @@ class ModuleBatchBenchmarkContractTests(unittest.TestCase):
         self.assertNotEqual(_json_digest({"score": 0.1234561}), _json_digest({"score": 0.12356}))
 
     def test_report_keeps_batch_one_baseline_when_recommendation_is_larger(self) -> None:
-        digest = "0" * 64
-        run = {
-            "batchSize": 1,
-            "warmup": False,
-            "totalSeconds": 1.0,
-            "samplesPerSecond": 1.0,
-            "cpuPercent": 0.0,
-            "peakMemoryBytes": 0,
-            "gpuUtilizationPercent": 0.0,
-            "peakVramBytes": 0,
-            "failures": 0,
-            "timeouts": 0,
-            "oom": 0,
-            "crashed": 0,
-            "outputDigest": digest,
-            "failureDetails": [],
-        }
-        candidate = {"runs": [run] * 3, "batch1OutputDigest": digest, "recommendation": 2}
-        candidate_two = {"runs": [{**run, "batchSize": 2}] * 3, "batch1OutputDigest": digest, "recommendation": 2}
-        report = {
-            "schemaVersion": 1,
-            "benchmarkVersion": "module-batching-v1",
-            "dataset": {
-                "before": {"fileCount": 0, "totalBytes": 0, "treeSha256": digest},
-                "after": {"fileCount": 0, "totalBytes": 0, "treeSha256": digest},
-            },
-            "nlRequests": 0,
-            "modules": {
-                module: {
-                    "batch1OutputDigest": digest,
-                    "runs": [run] * 3 + [{**run, "batchSize": 2}],
-                    "recommendation": 2,
-                    "candidates": {"1": candidate, "2": candidate_two},
-                }
-                for module in BENCHMARK_MODULES
-            },
-        }
+        report = _valid_report()
+        for module in BENCHMARK_MODULES:
+            result = report["modules"][module]  # type: ignore[index]
+            for candidate_run in result["candidates"]["2"]["runs"]:  # type: ignore[index]
+                if not candidate_run["warmup"]:
+                    candidate_run["samplesPerSecond"] = 2.0
+            result["recommendation"] = 2
         validate_report(report)
 
     def test_failure_details_preserve_sample_identity_and_overflow_category(self) -> None:
@@ -357,50 +396,20 @@ class ModuleBatchBenchmarkContractTests(unittest.TestCase):
         self.assertEqual("deterministic_fixture", details[1]["category"])
 
     def test_report_requires_failure_details_and_three_formal_runs_for_each_candidate(self) -> None:
-        digest = "0" * 64
-        run = {
-            "batchSize": 1,
-            "warmup": False,
-            "totalSeconds": 1.0,
-            "samplesPerSecond": 1.0,
-            "cpuPercent": 0.0,
-            "peakMemoryBytes": 0,
-            "gpuUtilizationPercent": 0.0,
-            "peakVramBytes": 0,
-            "failures": 0,
-            "timeouts": 0,
-            "oom": 0,
-            "crashed": 0,
-            "outputDigest": digest,
-            "failureDetails": [],
-        }
-        report = {
-            "schemaVersion": 1,
-            "benchmarkVersion": "module-batching-v1",
-            "dataset": {
-                "before": {"fileCount": 0, "totalBytes": 0, "treeSha256": digest},
-                "after": {"fileCount": 0, "totalBytes": 0, "treeSha256": digest},
-            },
-            "nlRequests": 0,
-            "modules": {
-                module: {
-                    "batch1OutputDigest": digest,
-                    "runs": [run] * 3,
-                    "recommendation": 1,
-                    "candidates": {"1": {"runs": [run]}},
-                }
-                for module in BENCHMARK_MODULES
-            },
-        }
+        report = _valid_report()
+        report["modules"]["caption"]["candidates"]["1"]["runs"] = [  # type: ignore[index]
+            _valid_run(1, warmup=False),
+            _valid_run(1, warmup=False),
+        ]
         with self.assertRaisesRegex(ValueError, "three formal"):
             validate_report(report)
 
-        invalid_run = {**run, "failureDetails": [{
+        report = _valid_report()
+        invalid_run = {**_valid_run(1, warmup=False), "failureDetails": [{
             "sampleId": 1, "relativePath": "sample.png", "category": "deterministic_fixture",
             "code": "fixture_failure", "reason": "fixture", "status": "issue",
         }]}
-        report["modules"]["caption"]["runs"] = [invalid_run] * 3
-        report["modules"]["caption"].pop("candidates")
+        report["modules"]["caption"]["runs"][1] = invalid_run  # type: ignore[index]
         with self.assertRaisesRegex(ValueError, "failureDetails"):
             validate_report(report)
 

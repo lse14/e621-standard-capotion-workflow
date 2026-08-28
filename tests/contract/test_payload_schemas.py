@@ -506,6 +506,11 @@ def _payloads() -> list[tuple[str, str, dict]]:
             relativeImagePath=caption_item.relativeImagePath, code="caption_no_tags", retriable=False,
             message="No model tags matched the frozen thresholds.",
         ).to_dict()),
+        ("caption-worker-v1", "caption_oversize_issue", CaptionIssueResultV1(
+            sampleId=caption_item.sampleId, leaseId=caption_item.leaseId,
+            relativeImagePath=caption_item.relativeImagePath, code="caption_result_too_large", retriable=False,
+            message="Caption result exceeds the 1 MiB worker response limit.",
+        ).to_dict()),
         ("caption-worker-v1", "caption_process_result", CaptionProcessResultV1((
             CaptionResultV1(
                 sampleId=caption_item.sampleId, leaseId=caption_item.leaseId,

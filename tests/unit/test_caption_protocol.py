@@ -73,6 +73,17 @@ def _work_item() -> CaptionWorkItemV1:
     )
 
 
+def _reply_result(sample_id: int, lease_id: str, *, tag_count: int = 1) -> dict[str, object]:
+    return CaptionResultV1(
+        sampleId=sample_id,
+        leaseId=lease_id,
+        relativeImagePath=f"sample-{sample_id}.png",
+        tags=tuple(CaptionTagV1(f"tag-{index}", 0.5, "general") for index in range(tag_count)),
+        formattedTxt="tag",
+        provider="CPUExecutionProvider",
+    ).to_dict()
+
+
 class CaptionProtocolTests(unittest.TestCase):
     def test_caption_reply_converts_oversize_result_to_bounded_protocol_error(self) -> None:
         entry = importlib.import_module("anima_caption_worker.entry")
@@ -89,6 +100,51 @@ class CaptionProtocolTests(unittest.TestCase):
         self.assertEqual("error", response["method"])
         self.assertEqual({"code": "caption_protocol_violation"}, response["payload"])
         self.assertLessEqual(len(output.getvalue()), entry.MAX_FRAME_BYTES + 1)
+
+    def test_caption_reply_isolates_one_oversized_item_and_keeps_other_outcomes(self) -> None:
+        entry = importlib.import_module("anima_caption_worker.entry")
+        request = {"messageId": "process-1", "jobId": "job-1", "configHash": "a" * 64}
+        payload = {
+            "schemaVersion": 1,
+            "payloadType": "caption_process_result",
+            "outcomes": [
+                _reply_result(1, "lease-1", tag_count=30_000),
+                _reply_result(2, "lease-2"),
+            ],
+        }
+        output = io.BytesIO()
+
+        entry._reply(request, "result", payload, output=output)
+
+        frame = output.getvalue()
+        self.assertLessEqual(len(frame), entry.MAX_FRAME_BYTES + 1)
+        response = json.loads(frame)
+        self.assertEqual("result", response["method"])
+        parsed = CaptionProcessResultV1.from_dict(response["payload"])
+        self.assertEqual(2, len(parsed.outcomes))
+        self.assertEqual("caption_result_too_large", parsed.outcomes[0].code)
+        self.assertFalse(parsed.outcomes[0].retriable)
+        self.assertIsInstance(parsed.outcomes[1], CaptionResultV1)
+        self.assertEqual(2, parsed.outcomes[1].sampleId)
+
+    def test_caption_reply_returns_an_item_issue_when_the_only_item_exceeds_frame_limit(self) -> None:
+        entry = importlib.import_module("anima_caption_worker.entry")
+        request = {"messageId": "process-1", "jobId": "job-1", "configHash": "a" * 64}
+        payload = {
+            "schemaVersion": 1,
+            "payloadType": "caption_process_result",
+            "outcomes": [_reply_result(1, "lease-1", tag_count=30_000)],
+        }
+        output = io.BytesIO()
+
+        entry._reply(request, "result", payload, output=output)
+
+        response = json.loads(output.getvalue())
+        self.assertEqual("result", response["method"])
+        parsed = CaptionProcessResultV1.from_dict(response["payload"])
+        self.assertEqual(1, len(parsed.outcomes))
+        self.assertEqual("caption_result_too_large", parsed.outcomes[0].code)
+        self.assertEqual((1, "lease-1"), (parsed.outcomes[0].sampleId, parsed.outcomes[0].leaseId))
 
     def test_hello_roundtrip_and_worker_validator_agree(self) -> None:
         payload = _hello()

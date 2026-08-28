@@ -15,6 +15,57 @@ PROTOCOL_VERSION = "1.0"
 RUNTIME_ID = "caption-e621"
 OWNER = "caption"
 MAX_FRAME_BYTES = 1_048_576
+CAPTION_RESULT_TOO_LARGE_CODE = "caption_result_too_large"
+CAPTION_RESULT_TOO_LARGE_MESSAGE = "Caption result exceeds the 1 MiB worker response limit."
+
+
+def _encoded(value: object) -> bytes:
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode("utf-8")
+
+
+def _oversize_issue(outcome: object) -> dict[str, object] | None:
+    if not isinstance(outcome, dict) or outcome.get("payloadType") != "caption_result":
+        return None
+    required = ("sampleId", "leaseId", "source", "relativeImagePath")
+    if any(field not in outcome for field in required):
+        return None
+    return {
+        "schemaVersion": 1,
+        "payloadType": "caption_issue",
+        "sampleId": outcome["sampleId"],
+        "leaseId": outcome["leaseId"],
+        "source": outcome["source"],
+        "relativeImagePath": outcome["relativeImagePath"],
+        "code": CAPTION_RESULT_TOO_LARGE_CODE,
+        "severity": "error",
+        "blocking": True,
+        "retriable": False,
+        "message": CAPTION_RESULT_TOO_LARGE_MESSAGE,
+    }
+
+
+def _fit_caption_result_payload(message: dict[str, object], payload: dict[str, object]) -> tuple[dict[str, object], bytes]:
+    outcomes = payload.get("outcomes")
+    if not isinstance(outcomes, list):
+        return payload, _encoded(message)
+    fitted = dict(payload)
+    fitted_outcomes = list(outcomes)
+    fitted["outcomes"] = fitted_outcomes
+    message["payload"] = fitted
+    encoded = _encoded(message)
+    if len(encoded) <= MAX_FRAME_BYTES:
+        return fitted, encoded
+    candidates: list[tuple[int, int, dict[str, object]]] = []
+    for index, outcome in enumerate(fitted_outcomes):
+        issue = _oversize_issue(outcome)
+        if issue is not None:
+            candidates.append((len(_encoded(outcome)), index, issue))
+    for _, index, issue in sorted(candidates, key=lambda value: (-value[0], value[1])):
+        fitted_outcomes[index] = issue
+        encoded = _encoded(message)
+        if len(encoded) <= MAX_FRAME_BYTES:
+            return fitted, encoded
+    return fitted, encoded
 
 
 def _reply(
@@ -38,11 +89,14 @@ def _reply(
         message["jobId"] = request["jobId"]
     if isinstance(request.get("configHash"), str):
         message["configHash"] = request["configHash"]
-    encoded = json.dumps(message, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode("utf-8")
+    encoded = _encoded(message)
     if len(encoded) > MAX_FRAME_BYTES:
-        message["method"] = "error"
-        message["payload"] = {"code": "caption_protocol_violation"}
-        encoded = json.dumps(message, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode("utf-8")
+        if method == "result" and payload.get("payloadType") == "caption_process_result":
+            _, encoded = _fit_caption_result_payload(message, payload)
+        if len(encoded) > MAX_FRAME_BYTES:
+            message["method"] = "error"
+            message["payload"] = {"code": "caption_protocol_violation"}
+            encoded = _encoded(message)
     stream = output or sys.stdout.buffer
     stream.write(encoded + b"\n")
     stream.flush()
