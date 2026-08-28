@@ -4,11 +4,13 @@ import json
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "core" / "src"))
 
+import anima_core.device_recommendation as device_recommendation
 from anima_core.device_recommendation import DeviceRecommendationService, GpuFacts
 
 
@@ -25,6 +27,18 @@ def _baseline(path: Path) -> None:
 
 
 class DeviceRecommendationTests(unittest.TestCase):
+    def test_missing_psutil_uses_windows_physical_core_probe(self) -> None:
+        with mock.patch.dict(sys.modules, {"psutil": None}), mock.patch.object(
+            device_recommendation, "_windows_physical_core_count", return_value=6
+        ), mock.patch.object(device_recommendation.os, "cpu_count", return_value=12):
+            self.assertEqual((6, 12), device_recommendation._default_cpu_probe())
+
+    def test_physical_core_probe_failure_does_not_reuse_logical_count(self) -> None:
+        with mock.patch.dict(sys.modules, {"psutil": None}), mock.patch.object(
+            device_recommendation, "_windows_physical_core_count", return_value=None
+        ), mock.patch.object(device_recommendation.os, "cpu_count", return_value=12):
+            self.assertEqual((1, 12), device_recommendation._default_cpu_probe())
+
     def test_cpu_only_selects_cpu_rows_and_nl_respects_rpm(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             baseline = Path(temporary) / "baseline.json"

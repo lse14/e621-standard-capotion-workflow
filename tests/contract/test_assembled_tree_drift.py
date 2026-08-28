@@ -54,6 +54,7 @@ OPTIONAL_RUNTIME_PACKAGES = {
 }
 SHARED_CAPTION_SOURCE = ROOT / "shared" / "anima_caption_format" / "anima_caption_format"
 SHARED_CAPTION_RUNTIMES = ("core", "export", "token-budget")
+RUNTIME_DATA_FILES = {"core": ("benchmark_baseline_v1.json",)}
 OCR_ONLY_IMPORTS = frozenset({"paddle", "paddleocr", "paddlex", "anima_ocr_worker"})
 
 
@@ -304,6 +305,12 @@ class AssembledRuntimeDriftTests(unittest.TestCase):
                     if not filecmp.cmp(source / relative, assembled / relative, shallow=False)
                 ]
                 self.assertEqual([], stale, f"{runtime_id} needs re-assembly")
+                for relative in RUNTIME_DATA_FILES.get(runtime_id, ()):
+                    source_asset = source / relative
+                    assembled_asset = assembled / relative
+                    self.assertTrue(source_asset.is_file(), f"{runtime_id} source asset is missing: {relative}")
+                    self.assertTrue(assembled_asset.is_file(), f"{runtime_id} assembled asset is missing: {relative}")
+                    self.assertTrue(filecmp.cmp(source_asset, assembled_asset, shallow=False), relative)
 
     def test_runtime_manifest_hashes_describe_the_assembled_files(self) -> None:
         for runtime_id in _selected_runtime_packages():
@@ -311,6 +318,11 @@ class AssembledRuntimeDriftTests(unittest.TestCase):
                 manifest = json.loads(
                     (INSTALL_ROOT / "manifests" / "runtimes" / f"{runtime_id}.json").read_text(encoding="utf-8")
                 )
+                if runtime_id == "core":
+                    self.assertIn(
+                        "runtimes\\core\\Lib\\site-packages\\anima_core\\benchmark_baseline_v1.json",
+                        manifest["runtime"]["criticalFilesSha256"],
+                    )
                 for relative, expected in manifest["runtime"]["criticalFilesSha256"].items():
                     path = INSTALL_ROOT / relative.replace("\\", os.sep)
                     self.assertTrue(path.is_file(), f"{runtime_id}: {relative} is missing")

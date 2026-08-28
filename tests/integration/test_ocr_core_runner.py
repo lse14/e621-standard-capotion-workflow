@@ -135,7 +135,7 @@ class OcrCoreRunnerIntegrationTests(unittest.TestCase):
                 scheduler.complete(lease)
         return scheduler.finish_module(job_id, module_id)
 
-    def test_v9_ocr_and_nl_four_mode_matrix_keeps_ocr_independent_and_serial(self) -> None:
+    def test_v10_ocr_and_nl_four_mode_matrix_keeps_ocr_independent_and_serial(self) -> None:
         expected_order = ("caption", "classify", "replace", "ocr", "nl", "count_review", "dropout", "token_budget", "export")
         for ocr_enabled, nl_enabled in ((False, False), (True, False), (False, True), (True, True)):
             with self.subTest(ocr=ocr_enabled, nl=nl_enabled), tempfile.TemporaryDirectory() as temporary:

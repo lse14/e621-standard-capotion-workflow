@@ -53,15 +53,57 @@ class _BaselineRow:
     reason: str
 
 
+def _windows_physical_core_count() -> int | None:
+    if os.name != "nt":
+        return None
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        get_information = ctypes.WinDLL("kernel32", use_last_error=True).GetLogicalProcessorInformationEx
+        get_information.argtypes = [wintypes.DWORD, ctypes.c_void_p, ctypes.POINTER(wintypes.DWORD)]
+        get_information.restype = wintypes.BOOL
+        length = wintypes.DWORD(0)
+        get_information(0, None, ctypes.byref(length))
+        if length.value < 8:
+            return None
+        buffer = ctypes.create_string_buffer(length.value)
+        if not get_information(0, buffer, ctypes.byref(length)):
+            return None
+        offset = 0
+        count = 0
+        while offset < length.value:
+            if length.value - offset < 8:
+                return None
+            relationship = int.from_bytes(buffer.raw[offset:offset + 4], "little")
+            record_size = int.from_bytes(buffer.raw[offset + 4:offset + 8], "little")
+            if record_size < 8 or offset + record_size > length.value:
+                return None
+            if relationship == 0:
+                count += 1
+            offset += record_size
+        return count or None
+    except (AttributeError, OSError, TypeError, ValueError):
+        return None
+
+
 def _default_cpu_probe() -> tuple[int, int]:
     logical = max(1, int(os.cpu_count() or 1))
     try:
         import psutil  # type: ignore[import-not-found]
-
-        physical = int(psutil.cpu_count(logical=False) or logical)
     except Exception:
-        physical = logical
-    return max(1, physical), logical
+        physical = None
+    else:
+        try:
+            candidate = psutil.cpu_count(logical=False)
+            physical = candidate if type(candidate) is int and candidate > 0 else None
+        except Exception:
+            physical = None
+    if physical is None:
+        physical = _windows_physical_core_count()
+    if type(physical) is not int or physical < 1:
+        physical = 1
+    return min(physical, logical), logical
 
 
 def _parse_gpu_payload(value: object, source: str) -> GpuFacts | None:

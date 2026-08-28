@@ -58,6 +58,9 @@ RUNTIME_SHARED_PACKAGES = {
     "export": ("anima_caption_format",),
     "token-budget": ("anima_caption_format",),
 }
+RUNTIME_DATA_FILES = {
+    "core": ("Lib/site-packages/anima_core/benchmark_baseline_v1.json",),
+}
 
 
 def sha256(path: Path) -> str:
@@ -120,6 +123,7 @@ def manifest(
     critical.extend(sorted((runtime / "Lib" / "site-packages" / package).glob("**/*.py")))
     for shared_package in RUNTIME_SHARED_PACKAGES.get(runtime_id, ()):
         critical.extend(sorted((runtime / "Lib" / "site-packages" / shared_package).glob("**/*.py")))
+    critical.extend(runtime / relative_path for relative_path in RUNTIME_DATA_FILES.get(runtime_id, ()))
     values: dict[str, str] = {}
     for path in critical:
         if not path.is_file():

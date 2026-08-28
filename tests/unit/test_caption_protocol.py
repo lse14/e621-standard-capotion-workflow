@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import io
+import importlib
 import json
 import math
 import sys
@@ -72,6 +74,22 @@ def _work_item() -> CaptionWorkItemV1:
 
 
 class CaptionProtocolTests(unittest.TestCase):
+    def test_caption_reply_converts_oversize_result_to_bounded_protocol_error(self) -> None:
+        entry = importlib.import_module("anima_caption_worker.entry")
+        request = {
+            "messageId": "process-1",
+            "jobId": "job-1",
+            "configHash": "a" * 64,
+        }
+        output = io.BytesIO()
+
+        entry._reply(request, "result", {"value": "x" * entry.MAX_FRAME_BYTES}, output=output)
+
+        response = json.loads(output.getvalue())
+        self.assertEqual("error", response["method"])
+        self.assertEqual({"code": "caption_protocol_violation"}, response["payload"])
+        self.assertLessEqual(len(output.getvalue()), entry.MAX_FRAME_BYTES + 1)
+
     def test_hello_roundtrip_and_worker_validator_agree(self) -> None:
         payload = _hello()
         parsed = CaptionHelloRequestV1.from_dict(payload)

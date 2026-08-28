@@ -14,7 +14,10 @@ from tests.stress.module_batch_benchmark import (
     CANDIDATE_BATCHES,
     _WorkerSession,
     _create_overlay,
+    _failure_details,
+    _finalize_state,
     _json_digest,
+    _module_baseline_rows,
     _ocr_benchmark_runtime,
     _ocr_hello,
     _windows_process_memory_bytes,
@@ -25,6 +28,28 @@ from tests.stress.module_batch_benchmark import (
 
 
 class ModuleBatchBenchmarkContractTests(unittest.TestCase):
+    def test_state_artifact_records_validated_completion(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            state_path = Path(temporary) / "state.json"
+            before = {"fileCount": 0, "totalBytes": 0, "treeSha256": "0" * 64}
+            state = {"status": "running", "modules": {}, "overlayRoots": []}
+
+            _finalize_state(
+                state_path,
+                state,
+                dataset_root=Path(temporary) / "dataset",
+                before=before,
+                after=before,
+                report_path=Path(temporary) / "report.json",
+            )
+
+            persisted = json.loads(state_path.read_text(encoding="utf-8"))
+            self.assertEqual("validated", persisted["status"])
+            self.assertEqual(str(Path(temporary) / "report.json"), persisted["reportPath"])
+            self.assertEqual(before, persisted["dataset"]["before"])
+            self.assertEqual(before, persisted["dataset"]["after"])
+            self.assertEqual(list(BENCHMARK_MODULES), persisted["completedModules"])
+
     def test_candidate_batches_are_limited_by_each_module_protocol(self) -> None:
         self.assertEqual((1, 2, 4, 8, 16, 32, 64), candidate_batches_for("caption"))
         self.assertEqual((1, 2, 4, 8, 16), candidate_batches_for("dropout"))
@@ -74,6 +99,7 @@ class ModuleBatchBenchmarkContractTests(unittest.TestCase):
                             "oom": 0,
                             "crashed": 0,
                             "outputDigest": "0" * 64,
+                            "failureDetails": [],
                         }
                     ] * 3,
                     "recommendation": 1,
@@ -158,6 +184,37 @@ class ModuleBatchBenchmarkContractTests(unittest.TestCase):
         finally:
             shutil.rmtree(install, ignore_errors=True)
 
+    def test_baseline_rows_recognize_ocr_cuda_runtime_evidence(self) -> None:
+        report = {
+            "device": {
+                "cpuPhysicalCores": 6,
+                "cpuLogicalCores": 12,
+                "gpu": {
+                    "available": True,
+                    "totalVramBytes": 100,
+                    "freeVramBytes": 80,
+                },
+            },
+            "modules": {
+                module: {
+                    "recommendation": 1,
+                    "workerEvidence": {},
+                }
+                for module in BENCHMARK_MODULES
+            },
+        }
+        report["modules"]["ocr"]["workerEvidence"] = {
+            "observedDevice": "cuda",
+            "runtimeId": "ocr-paddle-gpu",
+        }
+
+        rows = {row["module"]: row for row in _module_baseline_rows(report)}
+
+        self.assertTrue(rows["ocr"]["gpuRequired"])
+        self.assertEqual(100, rows["ocr"]["minTotalVramBytes"])
+        self.assertEqual(80, rows["ocr"]["minFreeVramBytes"])
+        self.assertFalse(rows["classify"]["gpuRequired"])
+
     def test_recommendation_uses_average_stable_throughput_and_three_percent_tie_break(self) -> None:
         digest = "a" * 64
 
@@ -167,7 +224,7 @@ class ModuleBatchBenchmarkContractTests(unittest.TestCase):
                     {"batchSize": batch, "warmup": False, "totalSeconds": 1.0, "samplesPerSecond": speed,
                      "cpuPercent": 0.0, "peakMemoryBytes": 0, "gpuUtilizationPercent": 0.0,
                      "peakVramBytes": 0, "failures": 0, "timeouts": 0, "oom": 0, "crashed": 0,
-                     "outputDigest": digest}
+                     "outputDigest": digest, "failureDetails": []}
                     for speed in speeds
                 ]
             }
@@ -190,6 +247,10 @@ class ModuleBatchBenchmarkContractTests(unittest.TestCase):
                 "samplesPerSecond": speed, "cpuPercent": 0.0, "peakMemoryBytes": 0,
                 "gpuUtilizationPercent": 0.0, "peakVramBytes": 0, "failures": failures,
                 "timeouts": 0, "oom": 0, "crashed": 0, "outputDigest": digest,
+                "failureDetails": [{
+                    "sampleId": 1, "relativePath": "sample.png", "category": "deterministic_fixture",
+                    "code": "fixture_failure", "reason": "fixture", "status": "issue",
+                }] * failures,
             }] * 3}
 
         recommendation, stable, _ = select_stable_recommendation(
@@ -198,6 +259,41 @@ class ModuleBatchBenchmarkContractTests(unittest.TestCase):
         )
         self.assertEqual(4, recommendation)
         self.assertEqual([1, 4], stable)
+
+    def test_recommendation_rejects_a_different_failure_set_with_the_same_count(self) -> None:
+        digest = "a" * 64
+
+        def run(batch: int, sample_id: int, speed: float) -> dict[str, object]:
+            return {
+                "batchSize": batch,
+                "warmup": False,
+                "totalSeconds": 1.0,
+                "samplesPerSecond": speed,
+                "cpuPercent": 0.0,
+                "peakMemoryBytes": 0,
+                "gpuUtilizationPercent": 0.0,
+                "peakVramBytes": 0,
+                "failures": 1,
+                "timeouts": 0,
+                "oom": 0,
+                "crashed": 0,
+                "outputDigest": digest,
+                "failureDetails": [{
+                    "sampleId": sample_id,
+                    "relativePath": f"sample-{sample_id}.png",
+                    "category": "deterministic_fixture",
+                    "code": "fixture_failure",
+                    "reason": "fixture",
+                    "status": "issue",
+                }],
+            }
+
+        recommendation, stable, _ = select_stable_recommendation(
+            {"1": {"runs": [run(1, 1, 10.0)] * 3}, "4": {"runs": [run(4, 2, 20.0)] * 3}},
+            baseline_digest=digest,
+        )
+        self.assertEqual(1, recommendation)
+        self.assertEqual([1], stable)
 
     def test_digest_normalizes_only_cuda_float_tail_noise(self) -> None:
         self.assertEqual(_json_digest({"score": 0.1234561}), _json_digest({"score": 0.1234564}))
@@ -219,8 +315,10 @@ class ModuleBatchBenchmarkContractTests(unittest.TestCase):
             "oom": 0,
             "crashed": 0,
             "outputDigest": digest,
+            "failureDetails": [],
         }
         candidate = {"runs": [run] * 3, "batch1OutputDigest": digest, "recommendation": 2}
+        candidate_two = {"runs": [{**run, "batchSize": 2}] * 3, "batch1OutputDigest": digest, "recommendation": 2}
         report = {
             "schemaVersion": 1,
             "benchmarkVersion": "module-batching-v1",
@@ -234,12 +332,77 @@ class ModuleBatchBenchmarkContractTests(unittest.TestCase):
                     "batch1OutputDigest": digest,
                     "runs": [run] * 3 + [{**run, "batchSize": 2}],
                     "recommendation": 2,
-                    "candidates": {"1": candidate, "2": candidate},
+                    "candidates": {"1": candidate, "2": candidate_two},
                 }
                 for module in BENCHMARK_MODULES
             },
         }
         validate_report(report)
+
+    def test_failure_details_preserve_sample_identity_and_overflow_category(self) -> None:
+        samples = (
+            SimpleNamespace(sample_id=7, relative_path="nested/seven.png"),
+            SimpleNamespace(sample_id=8, relative_path="nested/eight.png"),
+        )
+        details = _failure_details(
+            "tokenBudget",
+            [{"sampleId": 7, "status": "overflow"}, {"sampleId": 8, "status": "failed", "code": "bad_input"}],
+            samples,
+        )
+        self.assertEqual(2, len(details))
+        self.assertEqual(7, details[0]["sampleId"])
+        self.assertEqual("nested/seven.png", details[0]["relativePath"])
+        self.assertEqual("overflow", details[0]["category"])
+        self.assertEqual("token_budget_overflow", details[0]["code"])
+        self.assertEqual("deterministic_fixture", details[1]["category"])
+
+    def test_report_requires_failure_details_and_three_formal_runs_for_each_candidate(self) -> None:
+        digest = "0" * 64
+        run = {
+            "batchSize": 1,
+            "warmup": False,
+            "totalSeconds": 1.0,
+            "samplesPerSecond": 1.0,
+            "cpuPercent": 0.0,
+            "peakMemoryBytes": 0,
+            "gpuUtilizationPercent": 0.0,
+            "peakVramBytes": 0,
+            "failures": 0,
+            "timeouts": 0,
+            "oom": 0,
+            "crashed": 0,
+            "outputDigest": digest,
+            "failureDetails": [],
+        }
+        report = {
+            "schemaVersion": 1,
+            "benchmarkVersion": "module-batching-v1",
+            "dataset": {
+                "before": {"fileCount": 0, "totalBytes": 0, "treeSha256": digest},
+                "after": {"fileCount": 0, "totalBytes": 0, "treeSha256": digest},
+            },
+            "nlRequests": 0,
+            "modules": {
+                module: {
+                    "batch1OutputDigest": digest,
+                    "runs": [run] * 3,
+                    "recommendation": 1,
+                    "candidates": {"1": {"runs": [run]}},
+                }
+                for module in BENCHMARK_MODULES
+            },
+        }
+        with self.assertRaisesRegex(ValueError, "three formal"):
+            validate_report(report)
+
+        invalid_run = {**run, "failureDetails": [{
+            "sampleId": 1, "relativePath": "sample.png", "category": "deterministic_fixture",
+            "code": "fixture_failure", "reason": "fixture", "status": "issue",
+        }]}
+        report["modules"]["caption"]["runs"] = [invalid_run] * 3
+        report["modules"]["caption"].pop("candidates")
+        with self.assertRaisesRegex(ValueError, "failureDetails"):
+            validate_report(report)
 
     def test_count_review_candidate_uses_real_sqlite_runner_and_cleans_lifecycle(self) -> None:
         """Count Review measurements must exercise the persisted application path."""

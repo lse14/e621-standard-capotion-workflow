@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import importlib.util
 import json
 import os
@@ -229,6 +230,42 @@ class AssembleRuntimeScriptTests(unittest.TestCase):
 
 
 class RuntimeManifestGenerationTests(unittest.TestCase):
+    def test_core_manifest_hashes_the_controlled_baseline_asset(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_name:
+            root = Path(temporary_name)
+            install = root / "install"
+            runtime = install / "runtimes" / "core"
+            package = runtime / "Lib" / "site-packages" / "anima_core"
+            package.mkdir(parents=True)
+            for filename in ("python.exe", "python311.dll", "python311._pth"):
+                (runtime / filename).write_bytes(filename.encode("ascii"))
+            (package / "__main__.py").write_text("VALUE = 1\n", encoding="ascii")
+            baseline = package / "benchmark_baseline_v1.json"
+            baseline.write_text('{"schemaVersion":1}\n', encoding="ascii")
+            requirements = root / "requirements"
+            requirements.mkdir()
+            (requirements / "core.lock").write_text("# fixture\n", encoding="ascii")
+
+            completed = subprocess.run(
+                [
+                    str(CORE_PYTHON), "-B", "-I", str(RUNTIME_MANIFEST_GENERATOR),
+                    "--install-root", str(install), "--requirements-root", str(requirements),
+                    "--runtime-id", "core",
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(0, completed.returncode, completed.stdout + completed.stderr)
+            manifest = json.loads(
+                (install / "manifests" / "runtimes" / "core.json").read_text(encoding="utf-8")
+            )
+            relative = "runtimes\\core\\Lib\\site-packages\\anima_core\\benchmark_baseline_v1.json"
+            critical = manifest["runtime"]["criticalFilesSha256"]
+            self.assertEqual(hashlib.sha256(baseline.read_bytes()).hexdigest(), critical.get(relative))
+
     def test_explicit_ocr_runtime_selection_writes_only_ocr_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_name:
             root = Path(temporary_name)
@@ -349,6 +386,7 @@ class SyncCoreRuntimeScriptTests(unittest.TestCase):
         self.target.mkdir(parents=True)
         (self.source / "kept.py").write_text("KEPT = 'source'\n", encoding="utf-8")
         (self.source / "changed.py").write_text("CHANGED = 'source'\n", encoding="utf-8")
+        (self.source / "benchmark_baseline_v1.json").write_text('{"baselineVersion":"fixture"}\n', encoding="utf-8")
         (self.target / "changed.py").write_text("CHANGED = 'stale'\n", encoding="utf-8")
         (self.target / "stale.py").write_text("STALE = True\n", encoding="utf-8")
         self.shared_source = self.root / "shared" / "anima_caption_format" / "anima_caption_format"
@@ -398,7 +436,7 @@ class SyncCoreRuntimeScriptTests(unittest.TestCase):
         completed = _powershell(command)
 
         self.assertEqual(0, completed.returncode, completed.stdout + completed.stderr)
-        self.assertIn("Core runtime sync plan: 1 add, 2 update, 1 remove,", completed.stdout)
+        self.assertIn("Core runtime sync plan: 2 add, 2 update, 1 remove,", completed.stdout)
         self.assertEqual("CHANGED = 'stale'\n", (self.target / "changed.py").read_text(encoding="utf-8"))
         self.assertFalse((self.target / "kept.py").exists())
         self.assertTrue((self.target / "stale.py").exists())
@@ -409,6 +447,10 @@ class SyncCoreRuntimeScriptTests(unittest.TestCase):
         self.assertEqual(0, completed.returncode, completed.stdout + completed.stderr)
         self.assertEqual((self.source / "kept.py").read_bytes(), (self.target / "kept.py").read_bytes())
         self.assertEqual((self.source / "changed.py").read_bytes(), (self.target / "changed.py").read_bytes())
+        self.assertEqual(
+            (self.source / "benchmark_baseline_v1.json").read_bytes(),
+            (self.target / "benchmark_baseline_v1.json").read_bytes(),
+        )
         self.assertFalse((self.target / "stale.py").exists())
 
     def test_apply_syncs_the_shared_formatter_required_by_token_budget_protocol(self) -> None:

@@ -86,6 +86,16 @@ FIELDS = ("quality", "count", "character", "series", "artist", "appearance", "ta
 ARRAY_FIELDS = {"quality", "appearance", "tags", "environment"}
 SHA256_EMPTY = hashlib.sha256(b"").hexdigest()
 _IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
+FAILURE_DETAIL_CATEGORIES = frozenset({
+    "deterministic_fixture",
+    "overflow",
+    "transport",
+    "timeout",
+    "oom",
+    "crash",
+})
+FAILURE_DETAIL_TEXT_LIMIT = 512
+BENCHMARK_BASELINE_VERSION = "module-batching-v1-validated-20260828"
 
 
 def candidate_batches_for(module: str) -> tuple[int, ...]:
@@ -109,6 +119,23 @@ def _formal_runs(result: Mapping[str, object]) -> tuple[Mapping[str, object], ..
     return tuple(formal)
 
 
+def _failure_signature(run: Mapping[str, object]) -> tuple[tuple[str, str, str, str], ...] | None:
+    details = run.get("failureDetails")
+    if not isinstance(details, list):
+        return None
+    values: list[tuple[str, str, str, str]] = []
+    for detail in details:
+        if not isinstance(detail, Mapping):
+            return None
+        values.append((
+            str(detail.get("sampleId")),
+            str(detail.get("relativePath")),
+            str(detail.get("category")),
+            str(detail.get("code")),
+        ))
+    return tuple(sorted(values))
+
+
 def select_stable_recommendation(
     candidates: Mapping[str, object],
     *,
@@ -130,6 +157,7 @@ def select_stable_recommendation(
         for name in ("timeouts", "oom", "crashed")
     ):
         return 1, [], "batch 1 baseline has timeout, OOM, or crash; fallback to 1"
+    baseline_failure_signature = _failure_signature(baseline_formal[0])
     stable: list[tuple[int, float]] = []
     for key, raw in candidates.items():
         try:
@@ -149,6 +177,10 @@ def select_stable_recommendation(
         ):
             continue
         if any(type(run.get("failures")) not in (int, float) or float(run["failures"]) != float(baseline_failures) for run in formal):
+            continue
+        if baseline_failure_signature is not None and any(
+            _failure_signature(run) != baseline_failure_signature for run in formal
+        ):
             continue
         if any(run.get("outputDigest") != baseline_digest for run in formal):
             continue
@@ -231,6 +263,30 @@ def _require_nonnegative_number(value: object, name: str) -> None:
         raise ValueError(f"{name} must be a non-negative number")
 
 
+def _validate_failure_detail(value: object, module: str, index: int) -> Mapping[str, Any]:
+    detail = _require_mapping(value, f"modules.{module}.runs.failureDetails[{index}]")
+    sample_id = detail.get("sampleId")
+    if sample_id is not None and (type(sample_id) is not int or sample_id < 1):
+        raise ValueError(f"modules.{module}.runs.failureDetails[{index}].sampleId is invalid")
+    relative_path = detail.get("relativePath")
+    if relative_path is not None and (not isinstance(relative_path, str) or not relative_path):
+        raise ValueError(f"modules.{module}.runs.failureDetails[{index}].relativePath is invalid")
+    category = detail.get("category")
+    if category not in FAILURE_DETAIL_CATEGORIES:
+        raise ValueError(f"modules.{module}.runs.failureDetails[{index}].category is invalid")
+    if category in {"deterministic_fixture", "overflow"} and (sample_id is None or relative_path is None):
+        raise ValueError(f"modules.{module}.runs.failureDetails[{index}] lacks fixture identity")
+    for key in ("code", "reason", "status"):
+        text = detail.get(key)
+        if not isinstance(text, str) or not text:
+            raise ValueError(f"modules.{module}.runs.failureDetails[{index}].{key} is invalid")
+        if len(text.encode("utf-8")) > FAILURE_DETAIL_TEXT_LIMIT:
+            raise ValueError(f"modules.{module}.runs.failureDetails[{index}].{key} is too long")
+    if not _IDENTIFIER.fullmatch(str(detail["code"])):
+        raise ValueError(f"modules.{module}.runs.failureDetails[{index}].code is invalid")
+    return detail
+
+
 def _validate_snapshot(value: object, name: str) -> Mapping[str, Any]:
     snapshot = _require_mapping(value, name)
     for key in ("fileCount", "totalBytes"):
@@ -279,6 +335,13 @@ def _validate_run(run: object, module: str) -> Mapping[str, Any]:
         _require_nonnegative_number(row.get(key), f"modules.{module}.runs.{key}")
     if not _is_sha256(row.get("outputDigest")):
         raise ValueError(f"modules.{module}.runs.outputDigest must be a SHA-256 digest")
+    failure_details = row.get("failureDetails")
+    if not isinstance(failure_details, list):
+        raise ValueError(f"modules.{module}.runs.failureDetails must be a list")
+    if len(failure_details) != row["failures"]:
+        raise ValueError(f"modules.{module}.runs.failureDetails must match failures")
+    for index, detail in enumerate(failure_details):
+        _validate_failure_detail(detail, module, index)
     return row
 
 
@@ -321,8 +384,21 @@ def validate_report(report: object) -> None:
                 candidate_runs = candidate_result.get("runs")
                 if not isinstance(candidate_runs, list):
                     raise ValueError(f"modules.{module}.candidates.{candidate_key}.runs must be a list")
+                try:
+                    candidate_batch = int(candidate_key)
+                except (TypeError, ValueError) as exc:
+                    raise ValueError(f"modules.{module}.candidates.{candidate_key} has an invalid batch key") from exc
+                if candidate_batch < 1:
+                    raise ValueError(f"modules.{module}.candidates.{candidate_key} has an invalid batch key")
+                formal_candidate_runs: list[Mapping[str, Any]] = []
                 for candidate_run in candidate_runs:
-                    _validate_run(candidate_run, module)
+                    validated_candidate_run = _validate_run(candidate_run, module)
+                    if not validated_candidate_run["warmup"]:
+                        formal_candidate_runs.append(validated_candidate_run)
+                if len(formal_candidate_runs) < 3:
+                    raise ValueError(f"modules.{module}.candidates.{candidate_key} requires at least three formal runs")
+                if any(run["batchSize"] != candidate_batch for run in formal_candidate_runs):
+                    raise ValueError(f"modules.{module}.candidates.{candidate_key} batch size is inconsistent")
         batch_one_formal = [run for run in validated_runs if run["batchSize"] == 1 and not run["warmup"]]
         if len(batch_one_formal) < 3:
             raise ValueError(f"modules.{module} requires at least three formal batch 1 runs")
@@ -363,6 +439,22 @@ def _atomic_json_write(path: Path, value: object) -> None:
     temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
     temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     os.replace(temporary, path)
+
+
+def _finalize_state(
+    state_path: Path,
+    state: dict[str, object],
+    *,
+    dataset_root: Path,
+    before: Mapping[str, object],
+    after: Mapping[str, object],
+    report_path: Path,
+) -> None:
+    state["status"] = "validated"
+    state["reportPath"] = str(report_path)
+    state["dataset"] = {"root": str(dataset_root), "before": before, "after": after}
+    state["completedModules"] = list(BENCHMARK_MODULES)
+    _atomic_json_write(state_path, state)
 
 
 def _json_digest(value: object) -> str:
@@ -721,20 +813,93 @@ def _outcome_digest(outcomes: Sequence[Mapping[str, object]]) -> str:
     return _json_digest(ordered)
 
 
-def _failure_count(module: str, outcomes: Sequence[Mapping[str, object]]) -> int:
-    count = 0
+def _is_failure_outcome(module: str, outcome: Mapping[str, object]) -> bool:
+    payload_type = outcome.get("payloadType")
+    if module in {"caption", "classify", "replace"}:
+        return isinstance(payload_type, str) and payload_type.endswith("_issue")
+    status = outcome.get("status")
+    if module == "ocr":
+        return status == "failed"
+    if module == "dropout":
+        return status == "issue"
+    if module == "tokenBudget":
+        return status in {"failed", "overflow"}
+    if module == "export":
+        return status == "issue"
+    return False
+
+
+def _bounded_detail_text(value: object, fallback: str) -> str:
+    text = value if isinstance(value, str) and value else fallback
+    encoded = text.encode("utf-8", errors="replace")[:FAILURE_DETAIL_TEXT_LIMIT]
+    return encoded.decode("utf-8", errors="ignore") or fallback[:FAILURE_DETAIL_TEXT_LIMIT]
+
+
+def _failure_details(
+    module: str,
+    outcomes: Sequence[Mapping[str, object]],
+    samples: Sequence[object],
+) -> list[dict[str, object]]:
+    sample_by_id = {
+        int(getattr(sample, "sample_id")): sample
+        for sample in samples
+        if type(getattr(sample, "sample_id", None)) is int
+    }
+    details: list[dict[str, object]] = []
     for outcome in outcomes:
-        if module in {"caption", "classify", "replace"}:
-            count += int(outcome.get("payloadType", "").endswith("_issue"))
-        elif module == "ocr":
-            count += int(outcome.get("status") == "failed")
-        elif module == "dropout":
-            count += int(outcome.get("status") == "issue")
-        elif module == "tokenBudget":
-            count += int(outcome.get("status") in {"failed", "overflow"})
-        elif module == "export":
-            count += int(outcome.get("status") == "issue")
-    return count
+        if not _is_failure_outcome(module, outcome):
+            continue
+        raw_sample_id = outcome.get("sampleId")
+        sample_id = raw_sample_id if type(raw_sample_id) is int and raw_sample_id > 0 else None
+        sample = sample_by_id.get(sample_id)
+        raw_path = outcome.get("relativeImagePath")
+        relative_path = raw_path if isinstance(raw_path, str) and raw_path else getattr(sample, "relative_path", None)
+        status = outcome.get("status")
+        status_text = status if isinstance(status, str) and status else outcome.get("payloadType")
+        status_text = _bounded_detail_text(status_text, "failed")
+        error = outcome.get("error")
+        error_code = error.get("code") if isinstance(error, Mapping) else None
+        error_message = error.get("message") if isinstance(error, Mapping) else None
+        code = outcome.get("code")
+        if not isinstance(code, str) or not code:
+            code = error_code
+        if not isinstance(code, str) or not code:
+            field_errors = outcome.get("fieldErrors")
+            if isinstance(field_errors, list):
+                code = next(
+                    (item.get("code") for item in field_errors if isinstance(item, Mapping) and isinstance(item.get("code"), str)),
+                    None,
+                )
+        if not isinstance(code, str) or not code:
+            code = "token_budget_overflow" if module == "tokenBudget" and status == "overflow" else "worker_failure"
+        reason = outcome.get("message")
+        if not isinstance(reason, str) or not reason:
+            reason = error_message
+        if not isinstance(reason, str) or not reason:
+            field_errors = outcome.get("fieldErrors")
+            if isinstance(field_errors, list):
+                codes = [
+                    str(item.get("code"))
+                    for item in field_errors
+                    if isinstance(item, Mapping) and isinstance(item.get("code"), str) and item.get("code")
+                ]
+                reason = ", ".join(codes) if codes else None
+        if not isinstance(reason, str) or not reason:
+            reason = f"{status_text} outcome"
+        category = "overflow" if module == "tokenBudget" and status == "overflow" else "deterministic_fixture"
+        details.append({
+            "sampleId": sample_id,
+            "relativePath": relative_path if isinstance(relative_path, str) and relative_path else None,
+            "category": category,
+            "code": _bounded_detail_text(code, "worker_failure"),
+            "reason": _bounded_detail_text(reason, "worker failure"),
+            "status": status_text,
+        })
+    return details
+
+
+def _failure_count(module: str, outcomes: Sequence[Mapping[str, object]]) -> int:
+    return sum(1 for outcome in outcomes if _is_failure_outcome(module, outcome))
 
 
 def _gpu_sample() -> tuple[float, int]:
@@ -1087,7 +1252,30 @@ class _WorkerSession:
                     pass
 
 
-def _error_run(batch_size: int, *, warmup: bool, error: str, metrics: _ResourceMetrics, failures: int = 1, timeouts: int = 0, oom: int = 0, crashed: int = 0) -> dict[str, object]:
+def _error_failure_detail(error: str, *, code: str, category: str) -> dict[str, object]:
+    return {
+        "sampleId": None,
+        "relativePath": None,
+        "category": category,
+        "code": _bounded_detail_text(code, "benchmark_error"),
+        "reason": _bounded_detail_text(error, "benchmark failure"),
+        "status": "error",
+    }
+
+
+def _error_run(
+    batch_size: int,
+    *,
+    warmup: bool,
+    error: str,
+    metrics: _ResourceMetrics,
+    failures: int = 1,
+    timeouts: int = 0,
+    oom: int = 0,
+    crashed: int = 0,
+    code: str = "benchmark_error",
+    category: str = "crash",
+) -> dict[str, object]:
     return {
         "batchSize": batch_size,
         "warmup": warmup,
@@ -1103,6 +1291,7 @@ def _error_run(batch_size: int, *, warmup: bool, error: str, metrics: _ResourceM
         "crashed": crashed,
         "outputDigest": _json_digest({"error": error}),
         "error": error,
+        "failureDetails": [] if failures == 0 else [_error_failure_detail(error, code=code, category=category)] * failures,
     }
 
 
@@ -1195,6 +1384,7 @@ def _run_worker_candidate(
                 "crashed": 0,
                 "outputDigest": _outcome_digest(outcomes),
                 "outputCount": len(outcomes),
+                "failureDetails": _failure_details(module, outcomes, samples),
             }
         except _WorkerSessionError as exc:
             elapsed = max(time.perf_counter() - started, 0.0) if started is not None else 0.0
@@ -1211,6 +1401,7 @@ def _run_worker_candidate(
                 text = f"{text}; stderr={stderr[-1024:]}"
             lowered = text.casefold()
             is_oom = int("out of memory" in lowered or "cuda" in lowered and "memory" in lowered or "oom" in lowered)
+            category = "timeout" if exc.timeout else "oom" if is_oom else "crash" if exc.code in {"worker_crashed", "runtime_unavailable"} else "transport"
             return {
                 "batchSize": batch_size,
                 "warmup": warmup,
@@ -1226,6 +1417,7 @@ def _run_worker_candidate(
                 "crashed": int(exc.code in {"worker_crashed", "runtime_unavailable"}),
                 "outputDigest": _json_digest({"error": text}),
                 "error": text,
+                "failureDetails": [_error_failure_detail(text, code=exc.code, category=category)],
             }
 
     try:
@@ -1472,6 +1664,7 @@ def _run_count_review_candidate(
                 "crashed": 0,
                 "outputDigest": _outcome_digest(outputs),
                 "outputCount": len(outputs),
+                "failureDetails": [],
             }
         finally:
             sampler.close()
@@ -1530,9 +1723,10 @@ def _device_snapshot() -> dict[str, object]:
             "probeErrors": list(facts.probe_errors),
         }
     except Exception as exc:
+        logical = max(1, int(os.cpu_count() or 1))
         return {
-            "cpuPhysicalCores": max(1, os.cpu_count() or 1),
-            "cpuLogicalCores": max(1, os.cpu_count() or 1),
+            "cpuPhysicalCores": 1,
+            "cpuLogicalCores": logical,
             "gpu": {"available": False, "name": None, "totalVramBytes": None, "freeVramBytes": None, "probeSource": "unavailable"},
             "probeErrors": [f"device_probe_failed:{exc}"],
         }
@@ -1547,7 +1741,7 @@ def _module_baseline_rows(report: Mapping[str, object]) -> list[dict[str, object
         result = report["modules"][module]  # type: ignore[index]
         assert isinstance(result, Mapping)
         evidence = result.get("workerEvidence") if isinstance(result.get("workerEvidence"), Mapping) else {}
-        gpu_used = str(evidence.get("provider", "")).casefold().find("cuda") >= 0 or str(evidence.get("device", "")).casefold() == "cuda"
+        gpu_used = _worker_evidence_uses_gpu(evidence)
         rows.append({
             "module": module,
             "minPhysicalCores": int(device.get("cpuPhysicalCores", 1)),
@@ -1559,6 +1753,18 @@ def _module_baseline_rows(report: Mapping[str, object]) -> list[dict[str, object
             "reason": str(result.get("recommendationReason", "validated benchmark candidate")),
         })
     return rows
+
+
+def _worker_evidence_uses_gpu(evidence: Mapping[str, object]) -> bool:
+    provider = evidence.get("provider")
+    if isinstance(provider, str) and "cuda" in provider.casefold():
+        return True
+    for key in ("device", "observedDevice"):
+        value = evidence.get(key)
+        if isinstance(value, str) and value.casefold() == "cuda":
+            return True
+    runtime_id = evidence.get("runtimeId")
+    return isinstance(runtime_id, str) and runtime_id.casefold().endswith("-gpu")
 
 
 def _create_overlay(dataset_root: Path, module: str, batch_size: int) -> Path:
@@ -1694,10 +1900,25 @@ def run_benchmark(
                 "overlayPolicy": "benchmark-only sibling overlay under E:\\Desktop; production path safety unchanged",
                 "formalRunsPerCandidate": formal_runs,
                 "candidateBatches": {module: list(candidate_batches_for(module)) for module in BENCHMARK_MODULES},
+                "failurePolicy": {
+                    "zeroFailuresRequired": False,
+                    "batchOneDeterministicFixtureFailuresMayBeBaseline": True,
+                    "transportTimeoutOomCrashDisqualifyCandidate": True,
+                    "failureDetailsAreBounded": True,
+                },
             },
+            "baselineVersion": BENCHMARK_BASELINE_VERSION,
         }
         validate_report(report)
         _atomic_json_write(report_path, report)
+        _finalize_state(
+            state_path,
+            state,
+            dataset_root=dataset_root,
+            before=before,
+            after=after,
+            report_path=report_path,
+        )
         return report
     finally:
         for path_value in state.get("overlayRoots", []):
@@ -1709,7 +1930,7 @@ def run_benchmark(
 def update_baseline_from_report(report: Mapping[str, object], baseline_path: Path) -> None:
     payload = {
         "schemaVersion": 1,
-        "baselineVersion": "module-batching-v1-validated-20260827",
+        "baselineVersion": str(report.get("baselineVersion") or BENCHMARK_BASELINE_VERSION),
         "status": "validated",
         "dataset": str(report.get("dataset", {}).get("root", "")) if isinstance(report.get("dataset"), Mapping) else "",
         "rows": _module_baseline_rows(report),

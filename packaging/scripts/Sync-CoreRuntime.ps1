@@ -139,6 +139,9 @@ $trees = @(
     @{ Source = 'core\src\anima_core'; Target = '.runtime-build\runtimes\core\Lib\site-packages\anima_core'; Label = 'Core owner' },
     @{ Source = 'shared\anima_caption_format\anima_caption_format'; Target = '.runtime-build\runtimes\core\Lib\site-packages\anima_caption_format'; Label = 'Core shared caption format' }
 )
+$controlledFiles = @(
+    @{ Source = 'core\src\anima_core\benchmark_baseline_v1.json'; Target = '.runtime-build\runtimes\core\Lib\site-packages\anima_core\benchmark_baseline_v1.json'; Label = 'Core baseline asset' }
+)
 
 if (-not $SkipManifestRefresh) {
     $installRoot = Assert-ExistingSafePath $project (Join-Path $project '.runtime-build') 'runtime install root' $true
@@ -194,6 +197,17 @@ foreach ($tree in $trees) {
             $target = $targetByRelative[$relative]
             $changes += [pscustomobject][ordered]@{ Action = 'Remove'; Source = $null; Target = $target.FullName; Bytes = [Int64]$target.Length }
         }
+    }
+}
+
+foreach ($controlledFile in $controlledFiles) {
+    $source = Assert-ExistingSafePath $project (Join-Path $project $controlledFile.Source) "$($controlledFile.Label) source file" $false
+    $target = Assert-PlannedTarget $project (Join-Path $project $controlledFile.Target)
+    if (-not (Test-Path -LiteralPath $target)) {
+        $changes += [pscustomobject][ordered]@{ Action = 'Add'; Source = $source; Target = $target; Bytes = [Int64](Get-Item -LiteralPath $source -Force).Length }
+    }
+    elseif (-not (Test-FileContentEqual $source $target)) {
+        $changes += [pscustomobject][ordered]@{ Action = 'Update'; Source = $source; Target = $target; Bytes = [Int64](Get-Item -LiteralPath $source -Force).Length }
     }
 }
 

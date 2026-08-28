@@ -4,6 +4,7 @@ import json
 import os
 import sys
 from pathlib import Path
+from typing import BinaryIO
 
 from .image import CaptionSourceFingerprintError
 from .protocol import CaptionPayloadError, validate_process_payload
@@ -16,8 +17,14 @@ OWNER = "caption"
 MAX_FRAME_BYTES = 1_048_576
 
 
-def _reply(request: dict[str, object], method: str, payload: dict[str, object]) -> None:
-    message = {
+def _reply(
+    request: dict[str, object],
+    method: str,
+    payload: dict[str, object],
+    *,
+    output: BinaryIO | None = None,
+) -> None:
+    message: dict[str, object] = {
         "protocolVersion": PROTOCOL_VERSION,
         "kind": "response",
         "messageId": f"reply-{request['messageId']}",
@@ -31,8 +38,14 @@ def _reply(request: dict[str, object], method: str, payload: dict[str, object]) 
         message["jobId"] = request["jobId"]
     if isinstance(request.get("configHash"), str):
         message["configHash"] = request["configHash"]
-    sys.stdout.buffer.write(json.dumps(message, ensure_ascii=False, separators=(",", ":")).encode("utf-8") + b"\n")
-    sys.stdout.buffer.flush()
+    encoded = json.dumps(message, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode("utf-8")
+    if len(encoded) > MAX_FRAME_BYTES:
+        message["method"] = "error"
+        message["payload"] = {"code": "caption_protocol_violation"}
+        encoded = json.dumps(message, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode("utf-8")
+    stream = output or sys.stdout.buffer
+    stream.write(encoded + b"\n")
+    stream.flush()
 
 
 def _valid_request(value: object) -> dict[str, object]:

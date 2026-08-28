@@ -6,83 +6,83 @@
   "rows": [
     {
       "module": "caption",
-      "minPhysicalCores": 12,
+      "minPhysicalCores": 6,
       "minLogicalCores": 12,
       "gpuRequired": true,
       "minTotalVramBytes": 25757220864,
-      "minFreeVramBytes": 24474812416,
+      "minFreeVramBytes": 22759342080,
       "stableBatchSize": 1,
-      "reason": "highest average samplesPerSecond=5.034; smallest batch within 3% is 1 (4.963)"
+      "reason": "highest average samplesPerSecond=4.226; smallest batch within 3% is 1 (4.195)"
     },
     {
       "module": "classify",
-      "minPhysicalCores": 12,
-      "minLogicalCores": 12,
-      "gpuRequired": false,
-      "minTotalVramBytes": 0,
-      "minFreeVramBytes": 0,
-      "stableBatchSize": 32,
-      "reason": "highest average samplesPerSecond=4787.035; smallest batch within 3% is 32 (4737.613)"
-    },
-    {
-      "module": "replace",
-      "minPhysicalCores": 12,
+      "minPhysicalCores": 6,
       "minLogicalCores": 12,
       "gpuRequired": false,
       "minTotalVramBytes": 0,
       "minFreeVramBytes": 0,
       "stableBatchSize": 64,
-      "reason": "highest average samplesPerSecond=12130.071; smallest batch within 3% is 64 (12130.071)"
+      "reason": "highest average samplesPerSecond=4679.806; smallest batch within 3% is 64 (4679.806)"
     },
     {
-      "module": "ocr",
-      "minPhysicalCores": 12,
+      "module": "replace",
+      "minPhysicalCores": 6,
       "minLogicalCores": 12,
       "gpuRequired": false,
       "minTotalVramBytes": 0,
       "minFreeVramBytes": 0,
+      "stableBatchSize": 64,
+      "reason": "highest average samplesPerSecond=10622.585; smallest batch within 3% is 64 (10622.585)"
+    },
+    {
+      "module": "ocr",
+      "minPhysicalCores": 6,
+      "minLogicalCores": 12,
+      "gpuRequired": true,
+      "minTotalVramBytes": 25757220864,
+      "minFreeVramBytes": 22759342080,
       "stableBatchSize": 1,
-      "reason": "highest average samplesPerSecond=3.308; smallest batch within 3% is 1 (3.259)"
+      "reason": "highest average samplesPerSecond=3.091; smallest batch within 3% is 1 (3.026)"
     },
     {
       "module": "countReview",
-      "minPhysicalCores": 12,
+      "minPhysicalCores": 6,
+      "minLogicalCores": 12,
+      "gpuRequired": false,
+      "minTotalVramBytes": 0,
+      "minFreeVramBytes": 0,
+      "stableBatchSize": 8,
+      "reason": "highest average samplesPerSecond=54.333; smallest batch within 3% is 8 (53.992)"
+    },
+    {
+      "module": "dropout",
+      "minPhysicalCores": 6,
+      "minLogicalCores": 12,
+      "gpuRequired": true,
+      "minTotalVramBytes": 25757220864,
+      "minFreeVramBytes": 22759342080,
+      "stableBatchSize": 16,
+      "reason": "highest average samplesPerSecond=5.548; smallest batch within 3% is 16 (5.548)"
+    },
+    {
+      "module": "tokenBudget",
+      "minPhysicalCores": 6,
+      "minLogicalCores": 12,
+      "gpuRequired": false,
+      "minTotalVramBytes": 0,
+      "minFreeVramBytes": 0,
+      "stableBatchSize": 64,
+      "reason": "highest average samplesPerSecond=1292.273; smallest batch within 3% is 64 (1292.273)"
+    },
+    {
+      "module": "export",
+      "minPhysicalCores": 6,
       "minLogicalCores": 12,
       "gpuRequired": false,
       "minTotalVramBytes": 0,
       "minFreeVramBytes": 0,
       "stableBatchSize": 16,
-      "reason": "highest average samplesPerSecond=66.231; smallest batch within 3% is 16 (64.287)"
-    },
-    {
-      "module": "dropout",
-      "minPhysicalCores": 12,
-      "minLogicalCores": 12,
-      "gpuRequired": true,
-      "minTotalVramBytes": 25757220864,
-      "minFreeVramBytes": 24474812416,
-      "stableBatchSize": 4,
-      "reason": "highest average samplesPerSecond=5.401; smallest batch within 3% is 4 (5.401)"
-    },
-    {
-      "module": "tokenBudget",
-      "minPhysicalCores": 12,
-      "minLogicalCores": 12,
-      "gpuRequired": false,
-      "minTotalVramBytes": 0,
-      "minFreeVramBytes": 0,
-      "stableBatchSize": 32,
-      "reason": "highest average samplesPerSecond=1252.864; smallest batch within 3% is 32 (1252.864)"
-    },
-    {
-      "module": "export",
-      "minPhysicalCores": 12,
-      "minLogicalCores": 12,
-      "gpuRequired": false,
-      "minTotalVramBytes": 0,
-      "minFreeVramBytes": 0,
-      "stableBatchSize": 256,
-      "reason": "highest average samplesPerSecond=116.898; smallest batch within 3% is 256 (116.796)"
+      "reason": "highest average samplesPerSecond=115.547; smallest batch within 3% is 16 (113.450)"
     }
   ]
 }
