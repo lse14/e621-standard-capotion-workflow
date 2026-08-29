@@ -37,6 +37,7 @@ RULES = ROOT / "RULES.md"
 MODELS_README = ROOT / "models" / "README.md"
 THIRD_PARTY_NOTICES = ROOT / "docs" / "THIRD_PARTY_NOTICES.md"
 PLAYWRIGHT_CONFIG = ROOT / "frontend" / "playwright.config.ts"
+VITE_CONFIG = ROOT / "frontend" / "vite.config.ts"
 E2E_MOCK_API = ROOT / "frontend" / "tests" / "e2e" / "mockApi.ts"
 E2E_GLOBAL_SETUP = ROOT / "frontend" / "tests" / "e2e" / "globalSetup.ts"
 BUILD_DISTRIBUTION_SCRIPT = ROOT / "packaging" / "scripts" / "build_distribution.ps1"
@@ -1344,6 +1345,14 @@ class VerifyProjectScriptTests(unittest.TestCase):
 
 
 class E2ePortConfigurationTests(unittest.TestCase):
+    def test_frontend_build_normalizes_generated_html_line_endings(self) -> None:
+        self.assertTrue(VITE_CONFIG.is_file(), f"missing Vite config: {VITE_CONFIG}")
+        config = VITE_CONFIG.read_text(encoding="utf-8")
+
+        self.assertIn('name: "normalize-html-line-endings"', config)
+        self.assertIn("transformIndexHtml: {", config)
+        self.assertIn("return html.replace(/\\r\\n?/g, \"\\n\")", config)
+
     def test_e2e_config_and_mock_share_the_optional_port_override(self) -> None:
         self.assertTrue(PLAYWRIGHT_CONFIG.is_file(), f"missing Playwright config: {PLAYWRIGHT_CONFIG}")
         self.assertTrue(E2E_MOCK_API.is_file(), f"missing E2E mock API: {E2E_MOCK_API}")
