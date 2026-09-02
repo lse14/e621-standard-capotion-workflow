@@ -849,7 +849,7 @@ from anima_ocr_worker.resource import load_ocr_resource
 root = Path(sys.argv[1])
 fingerprint = sys.argv[2]
 resource = load_ocr_resource(root, 'ocr-models\\\\ocr-ppocrv5-server-paddle-v1\\\\resource.json', fingerprint)
-engine = create_paddle_engine(resource)
+engine = create_paddle_engine(resource, device='cpu')
 result = engine.predict(Image.new('RGB', (64, 64), 'white'))
 if not isinstance(result, list) or len(result) != 1:
     raise RuntimeError('OCR functional sample returned an invalid result')

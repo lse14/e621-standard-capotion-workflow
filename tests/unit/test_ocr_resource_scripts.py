@@ -1,6 +1,7 @@
 """Fixture contracts for the preview-first OCR resource tooling."""
 from __future__ import annotations
 
+import ast
 import hashlib
 import importlib
 import json
@@ -544,6 +545,21 @@ class OcrResourceScriptTests(unittest.TestCase):
         self.assertIn("6171f69605215a85624d650e9079fa45f7c3eaf944296181bcc5395bf3ddc7f6", guide)
         for artifact in self.artifacts:
             self.assertIn(str(artifact["name"]), guide)
+
+    def test_cpu_offline_probe_passes_explicit_device_to_engine_factory(self) -> None:
+        source = self._module()._OFFLINE_PROBE
+        calls = [
+            node
+            for node in ast.walk(ast.parse(source))
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "create_paddle_engine"
+        ]
+
+        self.assertEqual(1, len(calls))
+        device = next((keyword.value for keyword in calls[0].keywords if keyword.arg == "device"), None)
+        self.assertIsInstance(device, ast.Constant)
+        self.assertEqual("cpu", device.value)
 
     @unittest.skipUnless(CORE_PYTHON.is_file(), "embedded Core runtime has not been installed")
     def test_root_batch_wrappers_run_their_default_read_only_previews(self) -> None:
